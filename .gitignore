@@ -1,3 +1,37 @@
+# --- C build artifacts ---
+bin/
+build/
+*.o
+*.a
+*.so
+*.dSYM/
+
+# Profiling outputs
+gmon.out
+perf.data
+perf.data.old
+callgrind.out.*
+cachegrind.out.*
+
+# Measurement and plot outputs (regenerated; tracked separately if needed)
+results/*.csv
+results/*.txt
+plots/*.png
+plots/*.pdf
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# --- Claude Code session state ---
+.claude/
+
+# --- Python (scripts/) ---
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
