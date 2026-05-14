@@ -24,7 +24,11 @@ LIBS    := -lm
 # -O0 is mandatory for Phase 1. -g for debugging symbols and meaningful
 # function names in gprof/perf reports. -fno-omit-frame-pointer makes
 # perf call-graphs work without DWARF unwinding.
-BASE_CFLAGS := $(CSTD) $(WARN) $(INCS) -O0 -g -fno-omit-frame-pointer
+# _POSIX_C_SOURCE=200809L is required so that glibc exposes clock_gettime
+# and CLOCK_MONOTONIC under -std=c11 (which otherwise hides POSIX-only
+# symbols).
+BASE_CFLAGS := $(CSTD) $(WARN) $(INCS) -O0 -g -fno-omit-frame-pointer \
+               -D_POSIX_C_SOURCE=200809L
 
 SRC_DIR  := src
 BIN_DIR  := bin
