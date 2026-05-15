@@ -1,29 +1,35 @@
 /*
- * bench_recursive.c - Driver that runs the iterated recursive matmul
- * benchmark for one problem size m and prints a CSV line to stdout.
- *
- * Same CLI, same warm-up + median pattern, and same CSV format as
- * bench_naive_O0. The only difference is that the inner kernel is
- * matmul_recursive (via benchmark_iterations_recursive).
+ * bench_loop.c - Benchmark driver for the six loop-order kernels.
  *
  * Usage:
- *   bench_recursive_O0 <m> [num_iters] [num_runs]
+ *   bench_loop_O0 <order> <m> [num_iters] [num_runs]
  *
- * Output: m,n,num_iters,median_seconds,gflops
+ *   order     : one of ijk ikj jik jki kij kji
+ *   m         : problem size (A is m x m, B is m x 128)
+ *   num_iters : iterations per run  (default: min(2m/n, 4))
+ *   num_runs  : measured runs for median (default: 5)
+ *
+ * Output (one CSV line on stdout):
+ *   kernel,m,n,num_iters,median_seconds,gflops
+ *
+ * The header line is NOT printed here; run_sweep_loop.sh prints it once
+ * before invoking this binary multiple times.
+ *
+ * One warm-up run precedes the measured runs to populate caches and
+ * resolve first-touch page faults.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "matmul_naive.h"       /* for scalar_t */
-#include "matmul_recursive.h"   /* for matmul_recursive + benchmark_iterations_recursive */
+#include "matmul_loop.h"
 #include "matrix_utils.h"
 #include "timing.h"
 
-#define BLOCK_SIZE_N    128u  /* n in the benchmark definition */
+#define BLOCK_SIZE_N    128u
 #define DEFAULT_RUNS    5
-#define MAX_MEAS_ITERS  4     /* Cap iterations for development runs */
+#define MAX_MEAS_ITERS  4
 
 static int compare_double(const void *a, const void *b)
 {
@@ -34,19 +40,27 @@ static int compare_double(const void *a, const void *b)
 
 int main(int argc, char **argv)
 {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <m> [num_iters] [num_runs]\n", argv[0]);
+    if (argc < 3) {
         fprintf(stderr,
+                "Usage: %s <order> <m> [num_iters] [num_runs]\n"
+                "  order     : ijk | ikj | jik | jki | kij | kji\n"
                 "  m         : problem size (m x m matrix A)\n"
-                "  num_iters : iterations of the benchmark per run "
-                "(default: min(2m/n, %d))\n"
-                "  num_runs  : number of measured runs for median timing "
-                "(default: %d)\n",
-                MAX_MEAS_ITERS, DEFAULT_RUNS);
+                "  num_iters : iterations per run (default: min(2m/n,%d))\n"
+                "  num_runs  : measured runs for median (default: %d)\n",
+                argv[0], MAX_MEAS_ITERS, DEFAULT_RUNS);
         return EXIT_FAILURE;
     }
 
-    long long m_in = atoll(argv[1]);
+    const char *order = argv[1];
+    matmul_fn_t kernel = matmul_loop_lookup(order);
+    if (kernel == NULL) {
+        fprintf(stderr,
+                "Error: unknown loop order '%s'. "
+                "Valid orders: ijk ikj jik jki kij kji\n", order);
+        return EXIT_FAILURE;
+    }
+
+    long long m_in = atoll(argv[2]);
     if (m_in <= 0) {
         fprintf(stderr, "Error: m must be a positive integer.\n");
         return EXIT_FAILURE;
@@ -62,9 +76,10 @@ int main(int argc, char **argv)
     }
 
     size_t I_full = 2 * m / n;
-    size_t I_meas = (I_full < (size_t)MAX_MEAS_ITERS) ? I_full : (size_t)MAX_MEAS_ITERS;
-    if (argc >= 3) {
-        long long i_in = atoll(argv[2]);
+    size_t I_meas = (I_full < (size_t)MAX_MEAS_ITERS)
+                    ? I_full : (size_t)MAX_MEAS_ITERS;
+    if (argc >= 4) {
+        long long i_in = atoll(argv[3]);
         if (i_in <= 0) {
             fprintf(stderr, "Error: num_iters must be positive.\n");
             return EXIT_FAILURE;
@@ -73,8 +88,8 @@ int main(int argc, char **argv)
     }
 
     size_t num_runs = (size_t)DEFAULT_RUNS;
-    if (argc >= 4) {
-        long long r_in = atoll(argv[3]);
+    if (argc >= 5) {
+        long long r_in = atoll(argv[4]);
         if (r_in <= 0) {
             fprintf(stderr, "Error: num_runs must be positive.\n");
             return EXIT_FAILURE;
@@ -86,13 +101,11 @@ int main(int argc, char **argv)
     scalar_t *Z     = xalloc_aligned(m * n);
     scalar_t *B_out = xalloc_aligned(I_meas * n * n);
 
-    /* Same reproducible seeds as bench_naive_O0 so cross-kernel comparison
-     * runs on identical inputs. */
     init_matrix_random(A, m, m, 42u);
     init_matrix_random(Z, m, n, 43u);
 
-    /* Warm-up (unmeasured). */
-    benchmark_iterations_recursive(B_out, A, Z, m, n, 1);
+    /* Warm-up: one short iteration, result discarded. */
+    benchmark_iterations_loop(B_out, A, Z, m, n, 1, kernel);
 
     double *times = (double *)malloc(num_runs * sizeof(double));
     if (times == NULL) {
@@ -101,7 +114,7 @@ int main(int argc, char **argv)
     }
     for (size_t r = 0; r < num_runs; ++r) {
         double t0 = now_seconds();
-        benchmark_iterations_recursive(B_out, A, Z, m, n, I_meas);
+        benchmark_iterations_loop(B_out, A, Z, m, n, I_meas, kernel);
         double t1 = now_seconds();
         times[r] = t1 - t0;
     }
@@ -113,7 +126,8 @@ int main(int argc, char **argv)
     double total_flops    = flops_per_iter * (double)I_meas;
     double gflops         = total_flops / median_seconds / 1.0e9;
 
-    printf("recursive,%llu,%llu,%llu,%.6f,%.6f\n",
+    printf("%s,%llu,%llu,%llu,%.6f,%.6f\n",
+           order,
            (unsigned long long)m,
            (unsigned long long)n,
            (unsigned long long)I_meas,

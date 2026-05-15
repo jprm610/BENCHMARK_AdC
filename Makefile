@@ -176,3 +176,76 @@ perf_compare: $(BENCH_NAIVE_O0) $(BENCH_RECURSIVE_O0) $(BENCH_MORTON_O0)
 
 plots_perf:
 	python3 scripts/plot_perf_compare.py
+
+# =====================================================================
+# Fase 1.1 - Cache-aware: loop reorder
+#
+# bench_loop_O0  : benchmark that selects kernel by name at runtime
+# validate_loop  : algebraic + cross-validation for all 6 orders
+# sweep_loop     : runs scripts/run_sweep_loop.sh -> results/loop_order.csv
+# =====================================================================
+
+LOOP_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_loop.c
+BENCH_LOOP_SRCS    := $(LOOP_COMMON_SRCS) $(SRC_DIR)/bench_loop.c
+VALIDATE_LOOP_SRCS := $(LOOP_COMMON_SRCS) $(SRC_DIR)/validate_loop.c
+
+BENCH_LOOP_O0      := $(BIN_DIR)/bench_loop_O0
+VALIDATE_LOOP_O0   := $(BIN_DIR)/validate_loop_O0
+
+.PHONY: bench_loop validate_loop \
+        sweep_loop_ijk sweep_loop_ikj sweep_loop_jik \
+        sweep_loop_jki sweep_loop_kij sweep_loop_kji \
+        sweep_loop_all
+
+bench_loop: $(BENCH_LOOP_O0)
+validate_loop: $(VALIDATE_LOOP_O0)
+
+$(BENCH_LOOP_O0): $(BENCH_LOOP_SRCS) | $(BIN_DIR)
+	$(CC) $(BASE_CFLAGS) $(BENCH_LOOP_SRCS) -o $@ $(LIBS)
+
+$(VALIDATE_LOOP_O0): $(VALIDATE_LOOP_SRCS) | $(BIN_DIR)
+	$(CC) $(BASE_CFLAGS) $(VALIDATE_LOOP_SRCS) -o $@ $(LIBS)
+
+# Per-order targets: each runs in its own process to avoid cross-contamination.
+sweep_loop_ijk: $(BENCH_LOOP_O0)
+	bash scripts/run_sweep_loop.sh ijk
+
+sweep_loop_ikj: $(BENCH_LOOP_O0)
+	bash scripts/run_sweep_loop.sh ikj
+
+sweep_loop_jik: $(BENCH_LOOP_O0)
+	bash scripts/run_sweep_loop.sh jik
+
+sweep_loop_jki: $(BENCH_LOOP_O0)
+	bash scripts/run_sweep_loop.sh jki
+
+sweep_loop_kij: $(BENCH_LOOP_O0)
+	bash scripts/run_sweep_loop.sh kij
+
+sweep_loop_kji: $(BENCH_LOOP_O0)
+	bash scripts/run_sweep_loop.sh kji
+
+# Runs all six orders sequentially (each as a separate process) and
+# concatenates the results into a single results/loop_order.csv.
+sweep_loop_all: sweep_loop_ijk sweep_loop_ikj sweep_loop_jik \
+                sweep_loop_jki sweep_loop_kij sweep_loop_kji
+	@echo "kernel,m,n,num_iters,median_seconds,gflops" > results/loop_order.csv
+	@for f in results/loop_ijk.csv results/loop_ikj.csv results/loop_jik.csv \
+	           results/loop_jki.csv results/loop_kij.csv results/loop_kji.csv; do \
+	    tail -n +2 "$$f" >> results/loop_order.csv; \
+	done
+	@echo "  -> results/loop_order.csv (combined)"
+
+# Plot targets for loop-order results.
+.PHONY: plot_loop plot_loop_vs_naive plot_naive
+
+plot_naive:
+	python3 scripts/plot_results.py
+
+plot_loop:
+	python3 scripts/plot_results.py results/loop_order.csv \
+	    --out plots/loop_orders --title "Loop-order kernels"
+
+plot_loop_vs_naive:
+	python3 scripts/plot_results.py results/naive_O0.csv results/loop_order.csv \
+	    --out plots/loop_vs_naive --title "Loop orders vs naive baseline"

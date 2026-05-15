@@ -312,7 +312,69 @@ Los defaults estan calibrados para la maquina de pruebas (AMD Ryzen 5 4600H): `-
 
 ---
 
-## 6. Roadmap de la API
+## 6. Modulo `matmul_loop` (Fase 1.1 — cache-aware)
+
+**Archivo:** [`src/matmul_loop.h`](../src/matmul_loop.h), [`src/matmul_loop.c`](../src/matmul_loop.c).
+
+Las seis variantes de orden de bucles de $C = A \cdot B$. Misma firma que `matmul_naive`.
+
+### 6.1 Tipo funcion-puntero
+
+```c
+typedef void (*matmul_fn_t)(scalar_t *C,
+                             const scalar_t *A,
+                             const scalar_t *B,
+                             size_t m, size_t k, size_t n);
+```
+
+### 6.2 Seis kernels
+
+```c
+void matmul_ijk(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, size_t k, size_t n);
+void matmul_ikj(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, size_t k, size_t n);
+void matmul_jik(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, size_t k, size_t n);
+void matmul_jki(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, size_t k, size_t n);
+void matmul_kij(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, size_t k, size_t n);
+void matmul_kji(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, size_t k, size_t n);
+```
+
+Precondiciones y postcondiciones identicas a `matmul_naive`. Las variantes con la dimension de reduccion no en el bucle interno (ikj, jki, kij, kji) hacen `memset(C, 0, ...)` internamente antes de acumular.
+
+### 6.3 `matmul_loop_lookup`
+
+```c
+matmul_fn_t matmul_loop_lookup(const char *name);
+```
+
+Devuelve el puntero de funcion para el nombre dado (`"ijk"`, `"ikj"`, `"jik"`, `"jki"`, `"kij"`, `"kji"`), o `NULL` si el nombre no es reconocido.
+
+### 6.4 `benchmark_iterations_loop`
+
+```c
+void benchmark_iterations_loop(scalar_t *B_out,
+                                const scalar_t *A,
+                                const scalar_t *Z,
+                                size_t m, size_t n,
+                                size_t num_iters,
+                                matmul_fn_t kernel);
+```
+
+Misma semantica que `benchmark_iterations` (Seccion 2.2) pero delegando cada paso $A \cdot B$ al `kernel` suministrado. Doble buffer + swap de punteros; aloja y libera los buffers internamente.
+
+### 6.5 Binarios
+
+| Binario | CLI | Salida |
+|---------|-----|--------|
+| `bin/bench_loop_O0` | `<order> <m> [num_iters] [num_runs]` | `kernel,m,n,num_iters,median_seconds,gflops` |
+| `bin/validate_loop_O0` | `[m]` (default 256) | 4 tests por variante (3 invariantes + cross-val vs naive) |
+
+| Script | Salida |
+|--------|--------|
+| `scripts/run_sweep_loop.sh [m_list]` | `results/loop_order.csv` |
+
+---
+
+## 7. Roadmap de la API
 
 A medida que se avancen las fases del proyecto se anadiran modulos manteniendo el mismo estilo:
 
