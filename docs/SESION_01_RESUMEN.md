@@ -50,7 +50,7 @@ Fuentes de la consigna:
 ```
 .
 |-- README.md                Setup completo de WSL2, build, run, profile.
-|-- Makefile                 Targets bench_O0, bench_pg, validate, sweep, profile_*.
+|-- Makefile                 Targets bench_naive_O0, bench_naive_pg, validate_naive, sweep_naive, profile_*_naive.
 |-- .gitignore               Artefactos C, profiling outputs, results/, plots/.
 |-- .gitattributes           Fuerza LF en .sh/.c/.h/.py/.md (evita CRLF en WSL2).
 |-- docs/
@@ -62,12 +62,12 @@ Fuentes de la consigna:
 |   |-- matrix_utils.h       Helpers de alocacion, init, comparacion.
 |   |-- matrix_utils.c       Implementacion (aligned_alloc 64B, LCG, comparacion mixta).
 |   |-- timing.h             clock_gettime(CLOCK_MONOTONIC) inline.
-|   |-- benchmark.c          Driver (m, num_iters, num_runs); imprime CSV.
-|   `-- validate.c           Tres invariantes algebraicos (A*0=0, I*Z=Z, linealidad).
+|   |-- bench_naive.c        Driver (m, num_iters, num_runs); imprime CSV.
+|   `-- validate_naive.c     Tres invariantes algebraicos (A*0=0, I*Z=Z, linealidad).
 |-- scripts/
-|   |-- run_sweep.sh         Loop sobre m: CSV + gprof + perf por cada m.
-|   |-- profile_gprof.sh     Standalone (m, iters, runs); produce gprof_m<m>.txt.
-|   |-- profile_perf.sh      Standalone (m, iters, runs); produce perf_m<m>.txt.
+|   |-- run_sweep_naive.sh         Loop sobre m: CSV + gprof + perf por cada m.
+|   |-- profile_gprof_naive.sh     Standalone (m, iters, runs); produce gprof_naive_m<m>.txt.
+|   |-- profile_perf_naive.sh      Standalone (m, iters, runs); produce perf_naive_m<m>.txt.
 |   `-- plot_results.py      Genera gflops-vs-m y time-vs-m con guias de cliffs.
 |-- results/                 CSV y reportes de profiling (gitignored).
 |-- plots/                   PNG generados (gitignored).
@@ -86,31 +86,31 @@ Kernel ingenuo, tres bucles en orden **ijk**, sin optimizacion. Es el baseline o
 
 Orquesta la recurrencia con dos buffers (`B_curr`, `B_next`) y swap de punteros. Aloja y libera los buffers internamente. Guarda las primeras $n$ filas de cada $B_{i+1}$ en `B_out`.
 
-### 4.3 `bench_O0` y `bench_pg` (binarios)
+### 4.3 `bench_naive_O0` y `bench_naive_pg` (binarios)
 
 CLI uniforme:
 ```
-./bin/bench_O0 <m> [num_iters] [num_runs]
-./bin/bench_pg <m> [num_iters] [num_runs]
+./bin/bench_naive_O0 <m> [num_iters] [num_runs]
+./bin/bench_naive_pg <m> [num_iters] [num_runs]
 ```
 - `num_iters` default: $\min(2m/n, 4)$.
 - `num_runs` default: 5 (para mediana). Profiling pasa 1.
 - Salida: una linea CSV `m,n,num_iters,median_seconds,gflops` en stdout.
 
-### 4.4 `make sweep` (entry point principal)
+### 4.4 `make sweep_naive` (entry point principal)
 
 Para cada $m$ del listado por defecto:
-1. Llama a `bench_O0 <m>` → linea en `results/baseline_O0.csv` (con 5 corridas + mediana).
-2. Llama a `profile_gprof.sh <m> 1 1` → `results/gprof_m<m>.txt`.
-3. Llama a `profile_perf.sh  <m> 1 1` → `results/perf_m<m>.txt`.
+1. Llama a `bench_naive_O0 <m>` → linea en `results/naive_O0.csv` (con 5 corridas + mediana).
+2. Llama a `profile_gprof_naive.sh <m> 1 1` → `results/gprof_naive_m<m>.txt`.
+3. Llama a `profile_perf_naive.sh  <m> 1 1` → `results/perf_naive_m<m>.txt`.
 
 Variables de entorno: `PROFILING={full,gprof,perf,0}`, `PROFILE_ITERS`, `PROFILE_RUNS`.
 
 ### 4.5 `scripts/plot_results.py`
 
 Defaults calibrados para Ryzen 5 4600H: `--l1-kb 32 --l2-kb 512 --l3-kb 4096`. Acepta `--cpu-label` para el subtitulo. Produce dos PNGs:
-- `plots/baseline_gflops_vs_m.png`: gflops vs $m$ con guias verticales en los cliffs de cache.
-- `plots/baseline_time_vs_m.png`: tiempo/iteracion vs $m$ en log-log, con la curva teorica $O(m^2 n)$ anclada en el menor $m$.
+- `plots/naive_gflops_vs_m.png`: gflops vs $m$ con guias verticales en los cliffs de cache.
+- `plots/naive_time_vs_m.png`: tiempo/iteracion vs $m$ en log-log, con la curva teorica $O(m^2 n)$ anclada en el menor $m$.
 
 ---
 
@@ -122,7 +122,7 @@ Defaults calibrados para Ryzen 5 4600H: `--l1-kb 32 --l2-kb 512 --l3-kb 4096`. A
 | `python3 -c "ast.parse"` sobre `plot_results.py` | OK |
 | `bash -n` sobre los 3 scripts | OK |
 | `make` en WSL2 (despues del fix `_POSIX_C_SOURCE`) | OK reportado por el usuario |
-| `./bin/validate_O0 256` | VALIDATION OK reportado por el usuario |
+| `./bin/validate_naive_O0 256` | VALIDATION OK reportado por el usuario |
 | Sweep + plots | Ejecutado por el usuario, plots generados |
 
 ---
@@ -164,11 +164,11 @@ ls plots/     # baseline_*.png
 # 4. (Si es necesario) recompilar
 make clean
 make
-make bench_pg
-./bin/validate_O0 256
+make bench_naive_pg
+./bin/validate_naive_O0 256
 
 # 5. (Si quieres rehacer mediciones)
-make sweep
+make sweep_naive
 source ~/venvs/matmul/bin/activate
 python3 scripts/plot_results.py
 ```
@@ -187,12 +187,12 @@ python3 scripts/plot_results.py
 4. **Agregar `matmul_transposed.c`** que pre-transpone $A$ una vez y luego usa el orden ganador con el patron de acceso transpuesto.
 5. **Sweep en $m$ para el orden ganador**, comparar contra el baseline ingenuo en la misma grafica.
 6. **Actualizar `docs/API.md`** con las nuevas firmas.
-7. **Actualizar `validate.c`** para que ademas de `matmul_naive`, valide los seis ordenes y la version transpuesta.
+7. **Actualizar `validate_naive.c`** para que ademas de `matmul_naive`, valide los seis ordenes y la version transpuesta.
 
 ### 8.2 Decisiones a tomar al inicio de la Fase 2
 
 - Si las seis variantes se exponen via una **enum** + dispatcher (`matmul_run(variant, ...)`) o como **seis funciones separadas**. Recomendacion: enum + dispatcher, mas limpio para el barrido experimental.
-- Si se actualiza el binario `bench_O0` para que acepte el `variant` como CLI arg, o si se crea un binario nuevo `bench_variants`.
+- Si se actualiza el binario `bench_naive_O0` para que acepte el `variant` como CLI arg, o si se crea un binario nuevo `bench_variants`.
 - Si la pre-transposicion se ejecuta dentro de `benchmark_iterations` (una vez antes del loop interno) o como funcion separada que el caller compone.
 
 ### 8.3 Entregables esperados de la Fase 2
@@ -208,7 +208,7 @@ python3 scripts/plot_results.py
 
 - A medida que se acumulan optimizaciones, las semillas 42 y 43 deben seguir produciendo los **mismos valores** en todas las versiones. Si alguna optimizacion futura hace `-ffast-math`, los resultados pueden diverger en los ultimos bits; revisar tolerancias.
 - Si `perf` deja de funcionar en WSL2 despues de algun update del sistema, tendras que recompilar `perf` desde `WSL2-Linux-Kernel` otra vez (recipe en README seccion 3.3).
-- Los CSV y reportes en `results/` no se versionan. Si quieres preservar mediciones de hito (por ejemplo el baseline final que vas a comparar contra Fase 2), considera duplicarlos a `results/baseline_O0_final.csv` o copiarlos a un repositorio aparte.
+- Los CSV y reportes en `results/` no se versionan. Si quieres preservar mediciones de hito (por ejemplo el baseline final que vas a comparar contra Fase 2), considera duplicarlos a `results/naive_O0_final.csv` o copiarlos a un repositorio aparte.
 
 ---
 
@@ -216,27 +216,31 @@ python3 scripts/plot_results.py
 
 ```bash
 # Compilacion
-make                  # bench_O0 + validate_O0
-make bench_pg         # variante con -pg (gprof)
-make clean            # borrar bin/ y profiling outputs
-make distclean        # ademas borra results/ y plots/
+make                       # bench_naive_O0 + validate_naive_O0
+make bench_naive_pg        # variante con -pg (gprof)
+make clean                 # borrar bin/ y profiling outputs
+make distclean             # ademas borra results/ y plots/
 
 # Ejecucion individual
-./bin/validate_O0 256              # validar (m=256)
-./bin/bench_O0 1024                # baseline (5 corridas + mediana)
-./bin/bench_O0 1024 4 1            # 4 iters, 1 corrida (modo profiling)
+./bin/validate_naive_O0 256              # validar (m=256)
+./bin/bench_naive_O0 1024                # baseline (5 corridas + mediana)
+./bin/bench_naive_O0 1024 4 1            # 4 iters, 1 corrida (modo profiling)
 
 # Profiling individual
-bash scripts/profile_gprof.sh 1024
-bash scripts/profile_perf.sh 1024
+bash scripts/profile_gprof_naive.sh 1024
+bash scripts/profile_perf_naive.sh 1024
 
 # Sweep y graficas (paso 1+2+3 de la fase 1, en una sola pasada)
-make sweep
+make sweep_naive
 source ~/venvs/matmul/bin/activate
 python3 scripts/plot_results.py
-explorer.exe plots/baseline_gflops_vs_m.png   # abre el PNG en Windows
+explorer.exe plots/naive_gflops_vs_m.png   # abre el PNG en Windows
 ```
 
 ---
 
 *Documento generado al final de la Sesion 01. Editalo o agregale notas conforme avances en sesiones futuras.*
+
+---
+
+**Nota (post-Sesion 01):** Los archivos baseline se renombraron en el PR de rename (`claude/rename-naive-baseline`) antes de iniciar la Sesion 02, sin cambios funcionales. Las referencias en este documento estan actualizadas.

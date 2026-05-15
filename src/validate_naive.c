@@ -1,5 +1,5 @@
 /*
- * validate.c - Sanity checks for the naive matmul kernel.
+ * validate_naive.c - Sanity checks for the naive matmul kernel.
  *
  * Three algebraic invariants are tested:
  *   1. A * 0 = 0
@@ -11,7 +11,7 @@
  * checks; for now it only exercises matmul_naive.
  *
  * Usage:
- *   validate_O0 [m]
+ *   validate_naive_O0 [m]
  *
  * Exit code is 0 on success, 1 on any failure.
  */

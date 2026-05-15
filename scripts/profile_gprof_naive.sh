@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# profile_gprof.sh - Run the -pg instrumented binary, then process gmon.out
-# with gprof to produce a flat and call-graph profile.
+# profile_gprof_naive.sh - Run the -pg instrumented naive binary, then
+# process gmon.out with gprof to produce a flat and call-graph profile.
 #
 # Step 2 of the project: gprof gives a function-level time breakdown.
 # Note that gprof reports wall time apportioned by sampling and call
@@ -9,10 +9,10 @@
 # the perf script instead.
 #
 # Usage:
-#   scripts/profile_gprof.sh                    # default m=2048, iters=1, runs=1
-#   scripts/profile_gprof.sh 1024               # custom m
-#   scripts/profile_gprof.sh 1024 2             # custom m and iters
-#   scripts/profile_gprof.sh 1024 2 3           # full control: m, iters, runs
+#   scripts/profile_gprof_naive.sh                    # default m=2048, iters=1, runs=1
+#   scripts/profile_gprof_naive.sh 1024               # custom m
+#   scripts/profile_gprof_naive.sh 1024 2             # custom m and iters
+#   scripts/profile_gprof_naive.sh 1024 2 3           # full control: m, iters, runs
 #
 # For sweeps, the typical invocation is `<m> 1 1` - one iteration of the
 # benchmark, one measured run. That keeps profiling cost bounded; the
@@ -23,16 +23,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BENCH_PG="$REPO_DIR/bin/bench_pg"
+BENCH_PG="$REPO_DIR/bin/bench_naive_pg"
 RESULTS_DIR="$REPO_DIR/results"
 
 M="${1:-2048}"
 ITERS="${2:-1}"
 RUNS="${3:-1}"
-OUT_TXT="$RESULTS_DIR/gprof_m${M}.txt"
+OUT_TXT="$RESULTS_DIR/gprof_naive_m${M}.txt"
 
 if [ ! -x "$BENCH_PG" ]; then
-    echo "Error: $BENCH_PG not found. Run 'make bench_pg' first." >&2
+    echo "Error: $BENCH_PG not found. Run 'make bench_naive_pg' first." >&2
     exit 1
 fi
 

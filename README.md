@@ -41,13 +41,13 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |   |-- matrix_utils.h      -> Helpers (alocacion, init, comparacion)
 |   |-- matrix_utils.c      -> Implementacion de los helpers
 |   |-- timing.h            -> clock_gettime(CLOCK_MONOTONIC) inline
-|   |-- benchmark.c         -> Driver de medicion (binario bench_O0)
-|   `-- validate.c          -> Verificador algebraico (binario validate_O0)
+|   |-- bench_naive.c       -> Driver de medicion (binario bench_naive_O0)
+|   `-- validate_naive.c    -> Verificador algebraico (binario validate_naive_O0)
 |-- scripts/
-|   |-- run_sweep.sh        -> Corre el benchmark variando m, escribe CSV
-|   |-- profile_gprof.sh    -> Lanza gmon.out y produce el reporte de gprof
-|   |-- profile_perf.sh     -> Captura contadores de hardware con perf
-|   `-- plot_results.py     -> Genera graficas a partir del CSV
+|   |-- run_sweep_naive.sh        -> Corre el benchmark variando m, escribe CSV
+|   |-- profile_gprof_naive.sh    -> Lanza gmon.out y produce el reporte de gprof
+|   |-- profile_perf_naive.sh     -> Captura contadores de hardware con perf
+|   `-- plot_results.py           -> Genera graficas a partir del CSV
 |-- results/                -> CSV y reportes de profiling (gitignore)
 |-- plots/                  -> Imagenes generadas (gitignore)
 `-- bin/                    -> Binarios compilados (gitignore)
@@ -112,7 +112,7 @@ sudo cp perf /usr/local/bin/
 perf --version
 ```
 
-**Importante para WSL2:** los contadores de PMU disponibles dependen del soporte del hipervisor. En la practica funcionan al menos `instructions`, `cycles`, `branches`, `branch-misses`, `task-clock`, `page-faults`. Si algun evento devuelve `<not supported>`, no es un error tuyo, simplemente el evento no esta expuesto. El script `profile_perf.sh` ignora esos eventos.
+**Importante para WSL2:** los contadores de PMU disponibles dependen del soporte del hipervisor. En la practica funcionan al menos `instructions`, `cycles`, `branches`, `branch-misses`, `task-clock`, `page-faults`. Si algun evento devuelve `<not supported>`, no es un error tuyo, simplemente el evento no esta expuesto. El script `profile_perf_naive.sh` ignora esos eventos.
 
 Para bajar la restriccion de seguridad (necesario en muchos kernels):
 
@@ -132,7 +132,7 @@ sudo apt install -y valgrind
 Uso basico (no incluido en los scripts, util para diagnostico fino):
 
 ```bash
-valgrind --tool=cachegrind --cache-sim=yes ./bin/bench_O0 1024 1
+valgrind --tool=cachegrind --cache-sim=yes ./bin/bench_naive_O0 1024 1
 cg_annotate cachegrind.out.<pid>
 ```
 
@@ -177,17 +177,17 @@ Esto produce dos binarios en `bin/`:
 
 | Binario | Compilado con | Para |
 |---------|---------------|------|
-| `bin/bench_O0`    | `-O0 -g`      | Benchmark baseline, paso 1 y paso 3 |
-| `bin/validate_O0` | `-O0 -g`      | Verificador de correctitud |
+| `bin/bench_naive_O0`    | `-O0 -g`      | Benchmark baseline, paso 1 y paso 3 |
+| `bin/validate_naive_O0` | `-O0 -g`      | Verificador de correctitud |
 
 Targets individuales:
 
 ```bash
-make bench_O0      # solo el benchmark
-make validate      # solo el verificador
-make bench_pg      # version con -pg para gprof, paso 2
-make clean         # borra bin/ y build/
-make distclean     # clean + borra results/*.csv y plots/*
+make bench_naive_O0      # solo el benchmark
+make validate_naive      # solo el verificador
+make bench_naive_pg      # version con -pg para gprof, paso 2
+make clean               # borra bin/ y build/
+make distclean           # clean + borra results/*.csv y plots/*
 ```
 
 **Flags fijos en el Makefile** (`BASE_CFLAGS`):
@@ -207,8 +207,8 @@ make distclean     # clean + borra results/*.csv y plots/*
 ### 5.1 Validacion (verifica que el kernel computa bien)
 
 ```bash
-./bin/validate_O0          # m = 256 por defecto
-./bin/validate_O0 512      # m custom
+./bin/validate_naive_O0          # m = 256 por defecto
+./bin/validate_naive_O0 512      # m custom
 ```
 
 Pasa tres invariantes algebraicos:
@@ -233,9 +233,9 @@ Si alguno falla, el codigo de salida es 1 y se reporta el primer indice donde di
 ### 5.2 Una sola corrida del benchmark
 
 ```bash
-./bin/bench_O0 1024            # m=1024, iteraciones y corridas default
-./bin/bench_O0 1024 4          # m=1024, 4 iteraciones medidas por corrida
-./bin/bench_O0 1024 4 1        # m=1024, 4 iteraciones, 1 sola corrida medida
+./bin/bench_naive_O0 1024            # m=1024, iteraciones y corridas default
+./bin/bench_naive_O0 1024 4          # m=1024, 4 iteraciones medidas por corrida
+./bin/bench_naive_O0 1024 4 1        # m=1024, 4 iteraciones, 1 sola corrida medida
 ```
 
 Los tres argumentos posicionales son:
@@ -256,30 +256,30 @@ m,n,num_iters,median_seconds,gflops
 ### 5.3 Sweep completo: paso 3 del proyecto
 
 ```bash
-make sweep
+make sweep_naive
 ```
 
-Equivalente a `bash scripts/run_sweep.sh`. Corre el benchmark para los valores por defecto $m \in \{256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192\}$ y por cada uno produce **tres archivos**:
+Equivalente a `bash scripts/run_sweep_naive.sh`. Corre el benchmark para los valores por defecto $m \in \{256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192\}$ y por cada uno produce **tres archivos**:
 
-1. Una linea en `results/baseline_O0.csv` con la medicion de gflops.
-2. Un reporte `results/gprof_m<m>.txt` (perfil por funcion).
-3. Un reporte `results/perf_m<m>.txt` (contadores de hardware).
+1. Una linea en `results/naive_O0.csv` con la medicion de gflops.
+2. Un reporte `results/gprof_naive_m<m>.txt` (perfil por funcion).
+3. Un reporte `results/perf_naive_m<m>.txt` (contadores de hardware).
 
 Asi tienes registro completo de paso 1 (timing baseline), paso 2 (profiling) y paso 3 (escalamiento) en una sola corrida.
 
 Para un rango custom:
 
 ```bash
-bash scripts/run_sweep.sh "256 512 1024 2048"
+bash scripts/run_sweep_naive.sh "256 512 1024 2048"
 ```
 
 Controlar el profiling:
 
 ```bash
-PROFILING=0     bash scripts/run_sweep.sh                  # solo CSV, sin profiling
-PROFILING=gprof bash scripts/run_sweep.sh                  # CSV + solo gprof
-PROFILING=perf  bash scripts/run_sweep.sh                  # CSV + solo perf
-PROFILE_ITERS=2 PROFILE_RUNS=1 bash scripts/run_sweep.sh   # mas iteraciones para el profile
+PROFILING=0     bash scripts/run_sweep_naive.sh                  # solo CSV, sin profiling
+PROFILING=gprof bash scripts/run_sweep_naive.sh                  # CSV + solo gprof
+PROFILING=perf  bash scripts/run_sweep_naive.sh                  # CSV + solo perf
+PROFILE_ITERS=2 PROFILE_RUNS=1 bash scripts/run_sweep_naive.sh   # mas iteraciones para el profile
 ```
 
 Por defecto el profiling usa `iters=1, runs=1` (una sola corrida determinista) para no multiplicar los tiempos. La medicion del CSV sigue usando 5 corridas internas con mediana para tener un valor estadisticamente estable.
@@ -296,8 +296,8 @@ python3 scripts/plot_results.py
 
 Produce dos PNG en `plots/`:
 
-- `plots/baseline_gflops_vs_m.png`: gflops sostenidos vs $m$, con marcas verticales para las transiciones de cache.
-- `plots/baseline_time_vs_m.png`: tiempo por iteracion en escala log-log, con la curva teorica $2 m^2 n$ anclada en el $m$ mas pequeno. Sirve para comparar con la complejidad esperada.
+- `plots/naive_gflops_vs_m.png`: gflops sostenidos vs $m$, con marcas verticales para las transiciones de cache.
+- `plots/naive_time_vs_m.png`: tiempo por iteracion en escala log-log, con la curva teorica $2 m^2 n$ anclada en el $m$ mas pequeno. Sirve para comparar con la complejidad esperada.
 
 **Defaults calibrados para AMD Ryzen 5 4600H** (la maquina de pruebas inicial):
 
@@ -327,35 +327,35 @@ getconf -a | grep CACHE
 
 ## 6. Paso 2: profiling
 
-**Atajo:** `make sweep` corre los tres (CSV + gprof + perf) por cada valor de $m$ automaticamente. Las dos subsecciones siguientes describen como correr cada profiler por separado para un solo $m$, util durante el desarrollo o para inspeccionar un cliff concreto.
+**Atajo:** `make sweep_naive` corre los tres (CSV + gprof + perf) por cada valor de $m$ automaticamente. Las dos subsecciones siguientes describen como correr cada profiler por separado para un solo $m$, util durante el desarrollo o para inspeccionar un cliff concreto.
 
 ### 6.1 Perfil por funcion con gprof
 
 ```bash
-make bench_pg                              # compila bench con -pg
-bash scripts/profile_gprof.sh              # m=2048, iters=1, runs=1 por defecto
-bash scripts/profile_gprof.sh 1024         # m custom
-bash scripts/profile_gprof.sh 1024 2 1     # m, iteraciones, corridas medidas
+make bench_naive_pg                              # compila bench con -pg
+bash scripts/profile_gprof_naive.sh              # m=2048, iters=1, runs=1 por defecto
+bash scripts/profile_gprof_naive.sh 1024         # m custom
+bash scripts/profile_gprof_naive.sh 1024 2 1     # m, iteraciones, corridas medidas
 ```
 
-El reporte queda en `results/gprof_m<M>.txt`. Es esperable que **mas del 95% del tiempo** caiga en `matmul_naive`; eso confirma que esa funcion es el cuello de botella.
+El reporte queda en `results/gprof_naive_m<M>.txt`. Es esperable que **mas del 95% del tiempo** caiga en `matmul_naive`; eso confirma que esa funcion es el cuello de botella.
 
 Para inspeccionar manualmente:
 
 ```bash
-gprof bin/bench_pg gmon.out > results/gprof_manual.txt
+gprof bin/bench_naive_pg gmon.out > results/gprof_manual.txt
 less results/gprof_manual.txt
 ```
 
 ### 6.2 Contadores de hardware con perf
 
 ```bash
-bash scripts/profile_perf.sh               # m=2048, iters=1, runs=1
-bash scripts/profile_perf.sh 1024          # m custom
-bash scripts/profile_perf.sh 1024 2 1      # m, iteraciones, corridas
+bash scripts/profile_perf_naive.sh               # m=2048, iters=1, runs=1
+bash scripts/profile_perf_naive.sh 1024          # m custom
+bash scripts/profile_perf_naive.sh 1024 2 1      # m, iteraciones, corridas
 ```
 
-El reporte queda en `results/perf_m<M>.txt`. Los eventos solicitados cubren los cuatro puntos del paso 2:
+El reporte queda en `results/perf_naive_m<M>.txt`. Los eventos solicitados cubren los cuatro puntos del paso 2:
 
 | Pregunta del proyecto | Eventos de perf |
 |------------------------|-----------------|
@@ -372,7 +372,7 @@ Si un evento aparece como `<not supported>` en WSL2 es normal (limitacion del hi
 ### 6.3 (Opcional) Cachegrind
 
 ```bash
-valgrind --tool=cachegrind --cache-sim=yes ./bin/bench_O0 1024 1
+valgrind --tool=cachegrind --cache-sim=yes ./bin/bench_naive_O0 1024 1
 ls cachegrind.out.*
 cg_annotate cachegrind.out.<pid> | less
 ```
@@ -411,7 +411,7 @@ Cualquier proceso (Chrome con 80 pestanas, Slack, Zoom, Docker Desktop, OneDrive
 
 ### 7.4 Reporta la mediana
 
-`bench_O0` ya hace cinco corridas y reporta la mediana. Si quieres ser mas estricto, edita `DEFAULT_RUNS` en `src/benchmark.c` y recompila.
+`bench_naive_O0` ya hace cinco corridas y reporta la mediana. Si quieres ser mas estricto, edita `DEFAULT_RUNS` en `src/bench_naive.c` y recompila.
 
 ---
 
@@ -420,18 +420,18 @@ Cualquier proceso (Chrome con 80 pestanas, Slack, Zoom, Docker Desktop, OneDrive
 Resumen de un ciclo completo para los **tres primeros pasos**:
 
 ```bash
-# 1. Compilar todo (incluye bench_O0, bench_pg y validate_O0)
+# 1. Compilar todo (incluye bench_naive_O0, bench_naive_pg y validate_naive_O0)
 make
-make bench_pg
+make bench_naive_pg
 
 # 2. Verificar correctitud
-./bin/validate_O0 256
+./bin/validate_naive_O0 256
 
 # 3. Paso 1, 2 y 3 de una sola pasada:
 #    - CSV con gflops vs m (paso 3)
 #    - gprof por cada m (paso 2.a)
 #    - perf por cada m (paso 2.b)
-make sweep
+make sweep_naive
 
 # 4. Generar las graficas (paso 3)
 source ~/venvs/matmul/bin/activate
@@ -440,11 +440,11 @@ python3 scripts/plot_results.py
 
 Al terminar, en `results/` y `plots/` deberian estar:
 
-- `results/baseline_O0.csv` (datos del sweep)
-- `results/gprof_m256.txt`, `results/gprof_m384.txt`, ..., `results/gprof_m8192.txt`
-- `results/perf_m256.txt`, `results/perf_m384.txt`, ..., `results/perf_m8192.txt`
-- `plots/baseline_gflops_vs_m.png`
-- `plots/baseline_time_vs_m.png`
+- `results/naive_O0.csv` (datos del sweep)
+- `results/gprof_naive_m256.txt`, `results/gprof_naive_m384.txt`, ..., `results/gprof_naive_m8192.txt`
+- `results/perf_naive_m256.txt`, `results/perf_naive_m384.txt`, ..., `results/perf_naive_m8192.txt`
+- `plots/naive_gflops_vs_m.png`
+- `plots/naive_time_vs_m.png`
 
 ---
 
@@ -473,10 +473,10 @@ Necesitas instalarlo. Es la opcion acordada por compatibilidad con `gprof` y `pe
 WSL2 usa un kernel propio de Microsoft. La opcion mas robusta es compilar `perf` desde el repositorio `WSL2-Linux-Kernel` como muestra la seccion 3.3. Si no es viable, los tres puntos del paso 2 que se pueden medir tambien con `gprof` y `cachegrind` siguen siendo accesibles.
 
 **El sweep tarda mucho.**
-A `-O0` es esperable. Reduce el rango con `bash scripts/run_sweep.sh "256 512 1024 2048"` mientras desarrollas. El sweep completo se lanza una vez al final.
+A `-O0` es esperable. Reduce el rango con `bash scripts/run_sweep_naive.sh "256 512 1024 2048"` mientras desarrollas. El sweep completo se lanza una vez al final.
 
 **Quiero medir tambien con `-O3`.**
 Eso es parte de la Fase 4. Aqui no se hace para mantener el baseline limpio y el paso 1 explicito.
 
 **Como cambio de `float` a `double`?**
-Edita `typedef float scalar_t;` en `src/matmul_naive.h` y revisa las constantes `ABS_TOL`, `REL_TOL` en `src/validate.c`. La API queda igual gracias al alias.
+Edita `typedef float scalar_t;` en `src/matmul_naive.h` y revisa las constantes `ABS_TOL`, `REL_TOL` en `src/validate_naive.c`. La API queda igual gracias al alias.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# profile_perf.sh - Run the baseline binary under 'perf stat' to capture
-# hardware counters required by step 2 of the project:
+# profile_perf_naive.sh - Run the naive baseline binary under 'perf stat'
+# to capture hardware counters required by step 2 of the project:
 #
 #   * total instructions
 #   * average IPC (instructions per cycle)
@@ -10,10 +10,10 @@
 #   * cache references / misses (as bonus context)
 #
 # Usage:
-#   scripts/profile_perf.sh                  # default m=2048, iters=1, runs=1
-#   scripts/profile_perf.sh 1024             # custom m
-#   scripts/profile_perf.sh 1024 2           # custom m and iters
-#   scripts/profile_perf.sh 1024 2 3         # full control: m, iters, runs
+#   scripts/profile_perf_naive.sh                  # default m=2048, iters=1, runs=1
+#   scripts/profile_perf_naive.sh 1024             # custom m
+#   scripts/profile_perf_naive.sh 1024 2           # custom m and iters
+#   scripts/profile_perf_naive.sh 1024 2 3         # full control: m, iters, runs
 #
 # Notes for WSL2:
 #   - perf must be installed (sudo apt install linux-tools-generic or
@@ -29,16 +29,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BENCH_BIN="$REPO_DIR/bin/bench_O0"
+BENCH_BIN="$REPO_DIR/bin/bench_naive_O0"
 RESULTS_DIR="$REPO_DIR/results"
 
 M="${1:-2048}"
 ITERS="${2:-1}"
 RUNS="${3:-1}"
-OUT_TXT="$RESULTS_DIR/perf_m${M}.txt"
+OUT_TXT="$RESULTS_DIR/perf_naive_m${M}.txt"
 
 if [ ! -x "$BENCH_BIN" ]; then
-    echo "Error: $BENCH_BIN not found. Run 'make bench_O0' first." >&2
+    echo "Error: $BENCH_BIN not found. Run 'make bench_naive_O0' first." >&2
     exit 1
 fi
 
