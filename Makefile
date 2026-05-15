@@ -232,3 +232,42 @@ sweep_threshold: $(BENCH_MORTON_O3)
 
 plot_threshold:
 	python3 scripts/plot_threshold_sweep.py
+
+# ---------------------------------------------------------------------
+# Sesion 03 / Prompt 3 - AVX2 + FMA microkernel
+#
+# kernel_avx2.c uses immintrin.h. We compile it to an object with the
+# stage-A4 flag set (-march=znver2 -mavx2 -mfma -funroll-loops
+# -ffast-math) and link the test driver against it. -Wpedantic is
+# dropped here because immintrin types are GCC extensions and trigger
+# pedantic warnings on perfectly valid code. The audit script keeps
+# verifying that pdep/pext do not get emitted (criterion 4 / 5).
+# ---------------------------------------------------------------------
+
+CFLAGS_AVX2_KERNEL := $(CSTD) -Wall -Wextra $(INCS) \
+                      -O3 -march=znver2 -mavx2 -mfma \
+                      -funroll-loops -ffast-math
+
+KERNEL_AVX2_OBJ   := $(OBJ_DIR)/kernel_avx2.o
+TEST_KERNEL_AVX2  := $(BIN_DIR)/test_kernel_avx2
+
+.PHONY: test_kernel_avx2
+
+$(OBJ_DIR):
+	mkdir -p $(OBJ_DIR)
+
+$(KERNEL_AVX2_OBJ): $(SRC_DIR)/kernel_avx2.c $(SRC_DIR)/kernel_avx2.h \
+                    $(SRC_DIR)/matmul_naive.h | $(OBJ_DIR)
+	$(CC) $(CFLAGS_AVX2_KERNEL) -c -o $@ $<
+
+test_kernel_avx2: $(TEST_KERNEL_AVX2)
+	./$(TEST_KERNEL_AVX2)
+
+$(TEST_KERNEL_AVX2): $(SRC_DIR)/test_kernel_avx2.c $(KERNEL_AVX2_OBJ) \
+                     $(SRC_DIR)/matrix_utils.c $(SRC_DIR)/matrix_utils.h \
+                     $(SRC_DIR)/matmul_naive.h | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) \
+	      $(SRC_DIR)/test_kernel_avx2.c \
+	      $(SRC_DIR)/matrix_utils.c \
+	      $(KERNEL_AVX2_OBJ) \
+	      -o $@ $(LIBS)
