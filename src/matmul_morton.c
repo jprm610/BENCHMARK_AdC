@@ -22,7 +22,7 @@
  *         a_morton_offset + {0, 1, 2, 3} * (half * half).
  *     C splits into its top and bottom halves; B splits into top and
  *     bottom halves; four sub-matrix products combine into the result.
- *   - Leaf: m_block*k_block*n_block <= RECURSION_THRESHOLD, or the
+ *   - Leaf: m_block*k_block*n_block <= g_recursion_threshold, or the
  *     degenerate a_block_dim == 1 and n_block == 1 case.
  *
  * Two parallel variants exist for the recursion and the leaf kernel:
@@ -42,7 +42,33 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define RECURSION_THRESHOLD ((size_t)32 * 32 * 128)
+/*
+ * Recursion threshold: tunable at run time so that Prompt 2 of Sesion 03
+ * can sweep it without recompiling. The default mirrors the Sesion 02
+ * value (32 * 32 * 128 = 131072 element products), keeping behaviour
+ * unchanged for every caller that does not call the setter. Reads from
+ * within the recursion are unsynchronized; in practice the variable is
+ * set once before benchmark_iterations_morton_preorganized is invoked,
+ * so no fence is needed.
+ */
+size_t g_recursion_threshold = (size_t)32 * 32 * 128;
+
+void matmul_morton_set_threshold(size_t threshold)
+{
+    /* Guard against zero: a zero threshold would mean "never recurse",
+     * which makes the whole problem fall into the leaf kernel with the
+     * full m,k,n dimensions and defeats the purpose of the routine.
+     * Treat zero as a request for the default, with a warning so the
+     * caller does not silently get unexpected behaviour. */
+    if (threshold == 0) {
+        fprintf(stderr,
+                "Warning: matmul_morton_set_threshold(0) ignored; "
+                "keeping previous threshold (%llu).\n",
+                (unsigned long long)g_recursion_threshold);
+        return;
+    }
+    g_recursion_threshold = threshold;
+}
 
 /* Forward declarations of the internal helpers. */
 static void matmul_morton_inner(scalar_t *C,
@@ -119,7 +145,7 @@ static void matmul_morton_inner(scalar_t *C,
                                 size_t a_block_dim,
                                 size_t ldc, size_t ldb)
 {
-    if (m_block * k_block * n_block <= RECURSION_THRESHOLD) {
+    if (m_block * k_block * n_block <= g_recursion_threshold) {
         kernel_base_morton(C, A_morton, B,
                            m_block, k_block, n_block,
                            a_morton_offset, a_block_dim,
@@ -203,7 +229,7 @@ static void matmul_morton_inner_add(scalar_t *C,
                                     size_t a_block_dim,
                                     size_t ldc, size_t ldb)
 {
-    if (m_block * k_block * n_block <= RECURSION_THRESHOLD) {
+    if (m_block * k_block * n_block <= g_recursion_threshold) {
         kernel_base_morton_add(C, A_morton, B,
                                m_block, k_block, n_block,
                                a_morton_offset, a_block_dim,

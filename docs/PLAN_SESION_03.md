@@ -248,3 +248,63 @@ Por la regla del proyecto "baseline inmutable" y por coordinacion en paralelo co
 ---
 
 *Plan preparatorio de la Sesion 03. Ninguna linea de codigo se ha escrito todavia; la implementacion empieza al confirmar este plan e iniciar el Prompt 1 (`hwinfo`).*
+
+---
+
+## 8. Resultados del Prompt 2: tuning empirico de `RECURSION_THRESHOLD`
+
+Sweep ejecutado en la maquina real con `bin/bench_morton_O3` (compilado con `-O3 -march=znver2 -mavx2 -mfma`), `NUM_ITERS=1`, `NUM_RUNS=3` (1 warm-up + 3 corridas medidas, mediana). Diez thresholds en escala log $\in \{2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576\}$ elementos cruzados con $m \in \{1024, 2048, 4096\}$ = 30 mediciones. Tiempo total: 7 min 44 s (~15 s por punto). Archivo de datos: `results/threshold_sweep.csv`. Plot: `plots/threshold_sweep.png`.
+
+### 8.1 Argmax estricto por $m$
+
+| $m$ | argmax threshold (elementos) | GFLOPS mediana | min GFLOPS observado | variacion |
+|----:|-----------------------------:|---------------:|---------------------:|----------:|
+| 1024 | 1048576 | 0.5491 | 0.5057 | 7.9 % |
+| 2048 | 524288 | 0.5452 | 0.5078 | 6.8 % |
+| 4096 | 8192 | 0.5455 | 0.5104 | 6.4 % |
+
+Los tres argmaxes caen en thresholds distintos. En un primer sweep de control (mismo binario, otro instante) los argmaxes fueron 4096 / 4096 / 8192 — diferencia atribuible al ruido de timing y al ruido del scheduler del SO. La metrica de "argmax estricto" **no es robusta** en este regimen.
+
+### 8.2 Metrica robusta: media de GFLOPS por threshold sobre los tres $m$
+
+| threshold | media GFLOPS | observacion |
+|----------:|-------------:|-------------|
+| **1048576** | **0.5446** | top de cluster grande |
+| **524288**  | **0.5432** | top de cluster grande |
+| **8192**    | **0.5427** | top de cluster chico |
+| **16384**   | **0.5427** | top de cluster chico |
+| 262144 | 0.5381 | mid |
+| 65536 | 0.5331 | mid |
+| 2048 | 0.5322 | bottom |
+| 131072 | 0.5276 | bottom |
+| 32768 | 0.5273 | bottom |
+| 4096 | 0.5190 | worst |
+
+Aparecen dos **islas de buen rendimiento** separadas por un valle central:
+
+- **Isla chica** ($8192$–$16384$): leaf con working set $\sim 4$ a $8$ KiB, cabe holgado en L1d (32 KiB). Coherente con la prediccion teorica del Prompt 2 ($m_b \approx 32$ a $50$).
+- **Isla grande** ($524288$–$1048576$): casi sin recursion para $m \leq 4096$ (basta una o dos divisiones para caer al kernel base con bloques grandes). El compilador autovectoriza partes del kernel grande ligeramente mejor en este regimen.
+
+La diferencia entre las dos islas y el valle es del orden de $3$–$5$ %, **comparable al ruido entre runs** ($\sim 8$ % observado). En la practica los datos no distinguen un optimo claro.
+
+### 8.3 Lectura: por que la sensibilidad es baja
+
+Las GFLOPS se mueven en $\sim 0.53$ a $0.55$ a lo largo de todo el sweep porque el kernel base actual (`kernel_base_morton`: tres bucles `ijk` con `morton_encode` dentro del loop interno) impide la autovectorizacion de GCC. El bottleneck es el calculo del indice Morton elemento-a-elemento, no la profundidad de la recursion ni la localidad del sub-bloque. Consecuencias:
+
+- El threshold optimo es **insensible** a la jerarquia de cache en este regimen.
+- La curva esperada (knee abajo por overhead de recursion, knee arriba por spill de L1d) no aparece porque el kernel, saturado en el calculo del indice, nunca se vuelve memory-bound a esta escala.
+- Cualquier threshold en $\{8192, 16384, 524288, 1048576\}$ da rendimiento estadisticamente equivalente.
+
+### 8.4 Decision para el default de Sesion 03
+
+**Threshold optimo empirico para 4600H con el kernel ingenuo: $\mathbf{8192}$ elementos.** Justificacion:
+
+1. Es el menor de los thresholds de la "isla chica", consistente con la **prediccion teorica** (leaf working set en L1d).
+2. **Anticipa** el cambio de regimen que introduce el Prompt 3: cuando el microkernel AVX2 + FMA reemplace el `ijk + morton_encode` por un tile $4 \times 16$ con 8 acumuladores YMM, el kernel base sera $10$–$30\times$ mas rapido y el bottleneck pasara de "computo del indice" a "trafico desde L1d/L2/L3". En ese regimen los thresholds chicos (que mantienen el leaf en L1d) ganan claramente sobre los grandes.
+3. Es el valor mas chico que ya cabe en la geometria del microkernel: $4 \times 16 = 64$ multiplicaciones por iteracion del kernel interno; $8192 / 128 = 64$ elementos de $A$ por bloque hoja, suficiente para no fragmentar la recursion en exceso.
+
+`g_recursion_threshold` mantiene su default de codigo en $131072$ (Sesion 02) por compatibilidad binaria con `validate_morton_O0` y los scripts de Sesion 02. Para los benchmarks de Sesion 03 con el kernel ingenuo se pasa `--threshold 8192` explicito. Cuando llegue el microkernel AVX2 del Prompt 3, el sweep se repite con `bench_morton_avx2_O3` y el nuevo optimo se vuelve el default del modulo `matmul_morton_avx2`.
+
+### 8.5 Caveat sobre la utilidad del sweep en este regimen
+
+El sweep cumple su funcion de criterio de aceptacion del Prompt 2, pero el **valor cientifico** del numero elegido es marginal mientras el kernel base sea `ijk + morton_encode` sin vectorizar: cualquier threshold "razonable" produce el mismo rendimiento dentro del ruido. El **verdadero** sweep de tuning ocurre en el Prompt 4, donde se mide el threshold sobre `matmul_morton_avx2`. El procedimiento ya esta listo (`scripts/run_threshold_sweep.sh` parametrizado por `BENCH_BIN`, plot reutilizable), asi que el Prompt 4 solo necesita cambiar el binario y reescribir esta seccion.

@@ -191,7 +191,9 @@ plots_perf:
 #            CCX) o si BMI2 esta soportado en AMD pre-Zen3.
 # =====================================================================
 
-CFLAGS_O3 := $(CSTD) $(WARN) $(INCS) -O3
+CFLAGS_O3       := $(CSTD) $(WARN) $(INCS) -O3
+CFLAGS_O3_ZEN2  := $(CSTD) $(WARN) $(INCS) -O3 -march=znver2 -mavx2 -mfma \
+                   -D_POSIX_C_SOURCE=200809L
 
 HWINFO_BIN := $(BIN_DIR)/hwinfo
 
@@ -205,3 +207,28 @@ hwinfo: $(HWINFO_BIN)
 
 $(HWINFO_BIN): $(SRC_DIR)/hwinfo.c | $(BIN_DIR)
 	$(CC) $(CFLAGS_O3) -o $@ $< $(LIBS)
+
+# ---------------------------------------------------------------------
+# Sesion 03 / Prompt 2 - threshold sweep
+#
+# bench_morton_O3 is the same translation units as bench_morton_O0 but
+# compiled with -O3 -march=znver2 -mavx2 -mfma so that the sweep
+# measures the regime that will be used from Prompt 4 onward. The
+# baseline binaries (bench_morton_O0, validate_morton_O0) remain
+# unchanged for regression and for Sesion 02 reproducibility.
+# ---------------------------------------------------------------------
+
+BENCH_MORTON_O3 := $(BIN_DIR)/bench_morton_O3
+
+.PHONY: bench_morton_O3 sweep_threshold plot_threshold
+
+bench_morton_O3: $(BENCH_MORTON_O3)
+
+$(BENCH_MORTON_O3): $(BENCH_MORTON_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_MORTON_SRCS) -o $@ $(LIBS)
+
+sweep_threshold: $(BENCH_MORTON_O3)
+	bash scripts/run_threshold_sweep.sh
+
+plot_threshold:
+	python3 scripts/plot_threshold_sweep.py

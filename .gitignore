@@ -23,6 +23,12 @@ plots/*.pdf
 # machine used to derive the cache cliffs and the Roofline anchors.
 !results/hwinfo.csv
 
+# Exception: Prompt 2 threshold sweep is the empirical evidence behind
+# the g_recursion_threshold choice documented in PLAN_SESION_03.md.
+# Re-runs of the sweep auto-create results/threshold_sweep.csv.bak via
+# scripts/run_threshold_sweep.sh; the .bak stays gitignored.
+!results/threshold_sweep.csv
+
 # --- Editor / OS ---
 .vscode/
 .idea/
