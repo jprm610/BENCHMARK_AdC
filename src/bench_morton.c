@@ -11,7 +11,12 @@
  *      the GFLOP/s number comparable to the recursive row-major bench.
  *
  * Usage:
- *   bench_morton_O0 <m> [num_iters] [num_runs]
+ *   bench_morton_O0 <m> [num_iters] [num_runs] [--threshold N]
+ *
+ * The optional --threshold flag overrides g_recursion_threshold via
+ * matmul_morton_set_threshold(N) BEFORE the warm-up runs, so every
+ * timed iteration uses the requested value. Used by
+ * scripts/run_threshold_sweep.sh (Sesion 03 / Prompt 2).
  *
  * Output: m,n,num_iters,median_seconds,gflops
  */
@@ -37,21 +42,61 @@ static int compare_double(const void *a, const void *b)
     return (da > db) - (da < db);
 }
 
+static void usage(const char *progname)
+{
+    fprintf(stderr,
+            "Usage: %s <m> [num_iters] [num_runs] [--threshold N]\n"
+            "  m              : problem size (m x m matrix A; m must be a power of 2)\n"
+            "  num_iters      : iterations of the benchmark per run "
+            "(default: min(2m/n, %d))\n"
+            "  num_runs       : number of measured runs for median timing "
+            "(default: %d)\n"
+            "  --threshold N  : override g_recursion_threshold before the warm-up\n"
+            "                   (default: matmul_morton uses 32*32*128 = 131072)\n",
+            progname, MAX_MEAS_ITERS, DEFAULT_RUNS);
+}
+
 int main(int argc, char **argv)
 {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <m> [num_iters] [num_runs]\n", argv[0]);
-        fprintf(stderr,
-                "  m         : problem size (m x m matrix A; m must be a power of 2)\n"
-                "  num_iters : iterations of the benchmark per run "
-                "(default: min(2m/n, %d))\n"
-                "  num_runs  : number of measured runs for median timing "
-                "(default: %d)\n",
-                MAX_MEAS_ITERS, DEFAULT_RUNS);
+    /* Two-pass CLI parsing: first sweep the argv for --threshold and
+     * pull the value out, then process the remaining tokens as
+     * positional arguments. */
+    size_t threshold_override = 0;        /* 0 means "do not override" */
+    char *positional[3] = {NULL, NULL, NULL};
+    int n_positional = 0;
+
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--threshold") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --threshold requires a value.\n");
+                usage(argv[0]);
+                return EXIT_FAILURE;
+            }
+            long long t_in = atoll(argv[i + 1]);
+            if (t_in <= 0) {
+                fprintf(stderr,
+                        "Error: --threshold value must be a positive integer (got '%s').\n",
+                        argv[i + 1]);
+                return EXIT_FAILURE;
+            }
+            threshold_override = (size_t)t_in;
+            ++i;  /* skip the value */
+            continue;
+        }
+        if (n_positional >= 3) {
+            fprintf(stderr, "Error: too many positional arguments.\n");
+            usage(argv[0]);
+            return EXIT_FAILURE;
+        }
+        positional[n_positional++] = argv[i];
+    }
+
+    if (n_positional < 1) {
+        usage(argv[0]);
         return EXIT_FAILURE;
     }
 
-    long long m_in = atoll(argv[1]);
+    long long m_in = atoll(positional[0]);
     if (m_in <= 0) {
         fprintf(stderr, "Error: m must be a positive integer.\n");
         return EXIT_FAILURE;
@@ -74,8 +119,8 @@ int main(int argc, char **argv)
 
     size_t I_full = 2 * m / n;
     size_t I_meas = (I_full < (size_t)MAX_MEAS_ITERS) ? I_full : (size_t)MAX_MEAS_ITERS;
-    if (argc >= 3) {
-        long long i_in = atoll(argv[2]);
+    if (n_positional >= 2) {
+        long long i_in = atoll(positional[1]);
         if (i_in <= 0) {
             fprintf(stderr, "Error: num_iters must be positive.\n");
             return EXIT_FAILURE;
@@ -84,13 +129,19 @@ int main(int argc, char **argv)
     }
 
     size_t num_runs = (size_t)DEFAULT_RUNS;
-    if (argc >= 4) {
-        long long r_in = atoll(argv[3]);
+    if (n_positional >= 3) {
+        long long r_in = atoll(positional[2]);
         if (r_in <= 0) {
             fprintf(stderr, "Error: num_runs must be positive.\n");
             return EXIT_FAILURE;
         }
         num_runs = (size_t)r_in;
+    }
+
+    /* Apply the threshold override, if any, BEFORE the warm-up so every
+     * timed iteration sees the same recursion budget. */
+    if (threshold_override > 0) {
+        matmul_morton_set_threshold(threshold_override);
     }
 
     /* Allocate everything once. Same seeds as the other bench drivers

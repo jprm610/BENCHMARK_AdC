@@ -43,6 +43,20 @@ void matmul_morton(scalar_t *C,
                    size_t m, size_t k, size_t n);
 
 /*
+ * Runtime-configurable recursion threshold. Default is the Sesion 02
+ * value (32 * 32 * 128 = 131072 element products), preserved so that
+ * existing callers see the same behaviour as before this knob was added.
+ *
+ * The setter is the recommended interface for tooling such as
+ * scripts/run_threshold_sweep.sh, which iterates over thresholds to
+ * find the empirical optimum on the test machine (Sesion 03 / Prompt 2).
+ * Reading the variable directly is allowed but not part of the
+ * supported API contract.
+ */
+extern size_t g_recursion_threshold;
+void matmul_morton_set_threshold(size_t threshold);
+
+/*
  * benchmark_iterations_morton: run the recurrence B_{i+1} = A * B_i with
  * B_0 = Z, using matmul_morton as the inner kernel. A is supplied in
  * row-major; this function reorganizes it to Morton internally on every
