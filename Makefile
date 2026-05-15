@@ -75,7 +75,7 @@ profile_perf_naive: $(BENCH_NAIVE_O0)
 	bash scripts/profile_perf_naive.sh
 
 clean:
-	rm -rf $(BIN_DIR) $(OBJ_DIR) gmon.out perf.data perf.data.old cachegrind.out.*
+	rm -rf $(BIN_DIR) $(OBJ_DIR) build/audit gmon.out perf.data perf.data.old cachegrind.out.*
 
 distclean: clean
 	rm -f results/*.csv plots/*
@@ -176,3 +176,19 @@ perf_compare: $(BENCH_NAIVE_O0) $(BENCH_RECURSIVE_O0) $(BENCH_MORTON_O0)
 
 plots_perf:
 	python3 scripts/plot_perf_compare.py
+
+# =====================================================================
+# Sesion 03 targets - hardware correctness audits
+#
+# audit: verifies that the Morton modules do not use PDEP/PEXT
+# intrinsics in source nor get them emitted by the compiler. Critical
+# for AMD Zen 2 (Ryzen 5 4600H), where these instructions are
+# microcoded with ~18 cycles of latency instead of the ~3 cycles seen
+# on Zen 3 / Intel Haswell+. See scripts/audit_no_pdep.sh for the full
+# rationale.
+# =====================================================================
+
+.PHONY: audit
+
+audit:
+	bash scripts/audit_no_pdep.sh
