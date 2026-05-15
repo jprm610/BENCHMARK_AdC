@@ -131,7 +131,7 @@ int main(int argc, char **argv)
     double gflops         = total_flops / median_seconds / 1.0e9;
 
     /* CSV line on stdout: header lives in the sweep script. */
-    printf("%llu,%llu,%llu,%.6f,%.6f\n",
+    printf("naive,%llu,%llu,%llu,%.6f,%.6f\n",
            (unsigned long long)m,
            (unsigned long long)n,
            (unsigned long long)I_meas,
