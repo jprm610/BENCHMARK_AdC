@@ -19,6 +19,10 @@ results/*.txt
 plots/*.png
 plots/*.pdf
 
+# Exception: hardware fingerprint is committed as a snapshot of the test
+# machine used to derive the cache cliffs and the Roofline anchors.
+!results/hwinfo.csv
+
 # --- Editor / OS ---
 .vscode/
 .idea/

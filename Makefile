@@ -178,17 +178,30 @@ plots_perf:
 	python3 scripts/plot_perf_compare.py
 
 # =====================================================================
-# Sesion 03 targets - hardware correctness audits
+# Sesion 03 targets
 #
-# audit: verifies that the Morton modules do not use PDEP/PEXT
-# intrinsics in source nor get them emitted by the compiler. Critical
-# for AMD Zen 2 (Ryzen 5 4600H), where these instructions are
-# microcoded with ~18 cycles of latency instead of the ~3 cycles seen
-# on Zen 3 / Intel Haswell+. See scripts/audit_no_pdep.sh for the full
-# rationale.
+# Bloque para los entregables de la Sesion 03. Por ahora contiene:
+#   audit  - verifica que los modulos Morton no usan PDEP/PEXT ni los
+#            recibe del compilador (critico para AMD Zen 2; ver
+#            scripts/audit_no_pdep.sh para el rationale completo).
+#   hwinfo - imprime un fingerprint del hardware en tiempo de ejecucion
+#            (CPU model, cores/threads, tamanos L1d/L2/L3, RAM, soporte
+#            AVX2/FMA/BMI2). Modo --csv para el encabezado de los CSV
+#            de mediciones. Salida warning si L3 < 8 MiB (medicion por
+#            CCX) o si BMI2 esta soportado en AMD pre-Zen3.
 # =====================================================================
 
-.PHONY: audit
+CFLAGS_O3 := $(CSTD) $(WARN) $(INCS) -O3
+
+HWINFO_BIN := $(BIN_DIR)/hwinfo
+
+.PHONY: audit hwinfo
 
 audit:
 	bash scripts/audit_no_pdep.sh
+
+hwinfo: $(HWINFO_BIN)
+	./$(HWINFO_BIN)
+
+$(HWINFO_BIN): $(SRC_DIR)/hwinfo.c | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3) -o $@ $< $(LIBS)
