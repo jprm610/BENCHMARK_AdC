@@ -1,9 +1,9 @@
 /*
- * benchmark.c - Driver that runs the iterated matmul benchmark for one
- * problem size m and prints a CSV line to stdout.
+ * bench_naive.c - Driver that runs the iterated naive matmul benchmark for
+ * one problem size m and prints a CSV line to stdout.
  *
  * Usage:
- *   bench_O0 <m> [num_iters] [num_runs]
+ *   bench_naive_O0 <m> [num_iters] [num_runs]
  *
  * Output: m,n,num_iters,median_seconds,gflops
  *

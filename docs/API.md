@@ -18,7 +18,7 @@ Toda la implementacion usa `float` (IEEE 754 binary32, 4 bytes). Se centraliza c
 typedef float scalar_t;
 ```
 
-Definido en [`src/matmul_naive.h`](../src/matmul_naive.h). Cambiar a `double` requeriria reemplazar este `typedef` y revisar tolerancias en `validate.c`.
+Definido en [`src/matmul_naive.h`](../src/matmul_naive.h). Cambiar a `double` requeriria reemplazar este `typedef` y revisar tolerancias en `validate_naive.c`.
 
 ### 1.2 Tipos enteros
 
@@ -225,14 +225,14 @@ double elapsed = t1 - t0;
 
 ## 5. Binarios producidos
 
-### 5.1 `bin/bench_O0`
+### 5.1 `bin/bench_naive_O0`
 
 Compilado con `gcc -O0 -g`. Es el baseline obligatorio del proyecto.
 
 **Uso:**
 
 ```
-./bin/bench_O0 <m> [num_iters] [num_runs]
+./bin/bench_naive_O0 <m> [num_iters] [num_runs]
 ```
 
 - `<m>`: tamano del problema (entero positivo).
@@ -247,29 +247,29 @@ m,n,num_iters,median_seconds,gflops
 
 Internamente ejecuta una corrida de warm-up (no medida) y luego `num_runs` corridas medidas, reportando la mediana de los tiempos. Cuando `num_runs == 1` la "mediana" es trivialmente esa unica muestra.
 
-### 5.2 `bin/bench_pg`
+### 5.2 `bin/bench_naive_pg`
 
-Igual que `bench_O0` pero compilado adicionalmente con `-pg` para soportar `gprof`. Misma CLI. Produce `gmon.out` en el cwd al ejecutarse.
+Igual que `bench_naive_O0` pero compilado adicionalmente con `-pg` para soportar `gprof`. Misma CLI. Produce `gmon.out` en el cwd al ejecutarse.
 
-### 5.3 `bin/validate_O0`
+### 5.3 `bin/validate_naive_O0`
 
 Valida la implementacion sobre tres invariantes algebraicos: $A \cdot 0 = 0$, $I \cdot Z = Z$, $A \cdot (Z_1 + Z_2) = A \cdot Z_1 + A \cdot Z_2$. Imprime `VALIDATION OK` y retorna 0 si todas pasan; imprime detalles del fallo y retorna 1 en caso contrario.
 
 **Uso:**
 
 ```
-./bin/validate_O0 [m]
+./bin/validate_naive_O0 [m]
 ```
 
 Por defecto $m = 256$.
 
-### 5.4 `scripts/run_sweep.sh`
+### 5.4 `scripts/run_sweep_naive.sh`
 
 Orquesta los tres primeros pasos del proyecto en una sola pasada. Para cada $m$ del listado:
 
-1. Ejecuta `bin/bench_O0 <m>` (5 corridas + mediana) y agrega la linea CSV a `results/baseline_O0.csv`.
-2. Ejecuta `bin/bench_pg <m> <PROFILE_ITERS> <PROFILE_RUNS>` bajo `gprof`, guardando `results/gprof_m<m>.txt`.
-3. Ejecuta `bin/bench_O0 <m> <PROFILE_ITERS> <PROFILE_RUNS>` bajo `perf stat`, guardando `results/perf_m<m>.txt`.
+1. Ejecuta `bin/bench_naive_O0 <m>` (5 corridas + mediana) y agrega la linea CSV a `results/naive_O0.csv`.
+2. Ejecuta `bin/bench_naive_pg <m> <PROFILE_ITERS> <PROFILE_RUNS>` bajo `gprof`, guardando `results/gprof_naive_m<m>.txt`.
+3. Ejecuta `bin/bench_naive_O0 <m> <PROFILE_ITERS> <PROFILE_RUNS>` bajo `perf stat`, guardando `results/perf_naive_m<m>.txt`.
 
 **Variables de entorno:**
 
@@ -282,25 +282,25 @@ Orquesta los tres primeros pasos del proyecto en una sola pasada. Para cada $m$ 
 **Argumento posicional:**
 
 ```
-scripts/run_sweep.sh [m_list]
+scripts/run_sweep_naive.sh [m_list]
 ```
 
 Si se omite, usa el listado por defecto $\{256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192\}$.
 
-### 5.5 `scripts/profile_gprof.sh` y `scripts/profile_perf.sh`
+### 5.5 `scripts/profile_gprof_naive.sh` y `scripts/profile_perf_naive.sh`
 
 Scripts standalone equivalentes a un paso del sweep. CLI uniforme:
 
 ```
-scripts/profile_gprof.sh <m> [num_iters] [num_runs]
-scripts/profile_perf.sh  <m> [num_iters] [num_runs]
+scripts/profile_gprof_naive.sh <m> [num_iters] [num_runs]
+scripts/profile_perf_naive.sh  <m> [num_iters] [num_runs]
 ```
 
-Defaults: `m=2048, num_iters=1, num_runs=1`. Ambos respetan el contrato CLI extendido de `bench_O0`/`bench_pg`.
+Defaults: `m=2048, num_iters=1, num_runs=1`. Ambos respetan el contrato CLI extendido de `bench_naive_O0`/`bench_naive_pg`.
 
 ### 5.6 `scripts/plot_results.py`
 
-Lee `results/baseline_O0.csv` y produce las graficas de paso 3 en `plots/`.
+Lee `results/naive_O0.csv` y produce las graficas de paso 3 en `plots/`.
 
 ```
 scripts/plot_results.py [--csv ...] [--out-dir ...]

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-plot_results.py - Generate scaling plots from a baseline CSV.
+plot_results.py - Generate scaling plots from a naive baseline CSV.
 
-Reads results/baseline_O0.csv and produces:
-  1. plots/baseline_gflops_vs_m.png  - sustained gflops as a function of m,
+Reads results/naive_O0.csv and produces:
+  1. plots/naive_gflops_vs_m.png  - sustained gflops as a function of m,
      with vertical guides for L1, L2, L3 working-set transitions.
-  2. plots/baseline_time_vs_m.png    - per-iteration time on a log-log axis
+  2. plots/naive_time_vs_m.png    - per-iteration time on a log-log axis
      with the theoretical 2*m^2*n cubic-in-m reference line, so the user
      can compare measured complexity against the expected one.
 
@@ -32,7 +32,7 @@ import numpy as np
 
 
 def read_csv(path: str):
-    """Read the baseline CSV into a list of dicts keyed by column name."""
+    """Read the naive baseline CSV into a list of dicts keyed by column name."""
     rows = []
     with open(path, "r", newline="") as fh:
         reader = csv.DictReader(fh)
@@ -146,7 +146,7 @@ def plot_time(rows, args, out_path):
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--csv", default="results/baseline_O0.csv",
+    p.add_argument("--csv", default="results/naive_O0.csv",
                    help="path to the CSV with sweep results")
     p.add_argument("--out-dir", default="plots",
                    help="directory for the generated plots")
@@ -170,7 +170,7 @@ def main():
     args = parse_args()
     if not os.path.isfile(args.csv):
         print(f"Error: CSV file not found at {args.csv}", file=sys.stderr)
-        print("Hint: run 'make sweep' first.", file=sys.stderr)
+        print("Hint: run 'make sweep_naive' first.", file=sys.stderr)
         sys.exit(1)
     os.makedirs(args.out_dir, exist_ok=True)
     rows = read_csv(args.csv)
@@ -178,8 +178,8 @@ def main():
         print("Error: CSV is empty.", file=sys.stderr)
         sys.exit(1)
 
-    plot_gflops(rows, args, os.path.join(args.out_dir, "baseline_gflops_vs_m.png"))
-    plot_time(rows, args, os.path.join(args.out_dir, "baseline_time_vs_m.png"))
+    plot_gflops(rows, args, os.path.join(args.out_dir, "naive_gflops_vs_m.png"))
+    plot_time(rows, args, os.path.join(args.out_dir, "naive_time_vs_m.png"))
 
 
 if __name__ == "__main__":
