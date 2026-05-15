@@ -242,7 +242,7 @@ Compilado con `gcc -O0 -g`. Es el baseline obligatorio del proyecto.
 **Salida:** una linea CSV en `stdout`:
 
 ```
-m,n,num_iters,median_seconds,gflops
+kernel,m,n,num_iters,median_seconds,gflops
 ```
 
 Internamente ejecuta una corrida de warm-up (no medida) y luego `num_runs` corridas medidas, reportando la mediana de los tiempos. Cuando `num_runs == 1` la "mediana" es trivialmente esa unica muestra.
@@ -300,15 +300,33 @@ Defaults: `m=2048, num_iters=1, num_runs=1`. Ambos respetan el contrato CLI exte
 
 ### 5.6 `scripts/plot_results.py`
 
-Lee `results/naive_O0.csv` y produce las graficas de paso 3 en `plots/`.
+Graficador general para cualquier combinacion de CSVs del proyecto. Acepta uno o mas archivos CSV como argumentos posicionales, agrupa las filas por la columna `kernel` y produce tres archivos con el prefijo `--out`:
+
+- `<out>.png` — GFLOP/s vs m, una curva por kernel, eje x logaritmico base 2
+- `<out>_time.png` — tiempo por iteracion vs m (log-log) + referencia teorica $O(m^2 n)$
+- `<out>_combined.csv` — union de todas las filas de entrada, deduplicadas por `(kernel, m)`
 
 ```
-scripts/plot_results.py [--csv ...] [--out-dir ...]
+scripts/plot_results.py [csvs ...]
+                        [--out BASE_PATH]
+                        [--title STRING]
                         [--l1-kb K] [--l2-kb K] [--l3-kb K]
                         [--cpu-label STRING]
 ```
 
-Los defaults estan calibrados para la maquina de pruebas (AMD Ryzen 5 4600H): `--l1-kb 32 --l2-kb 512 --l3-kb 4096`. Ajusta los flags si corres en otra CPU.
+Sin argumentos posicionales lee `results/naive_O0.csv` (comportamiento compatible con versiones anteriores). Los defaults de cache estan calibrados para el Ryzen 5 4600H: `--l1-kb 32 --l2-kb 512 --l3-kb 4096`; ajusta los flags en otra CPU.
+
+Ejemplos:
+
+```bash
+# solo los seis ordenes de bucles
+python3 scripts/plot_results.py results/loop_order.csv \
+    --out plots/loop_orders --title "Loop-order kernels"
+
+# ordenes de bucles mas naive en la misma grafica
+python3 scripts/plot_results.py results/naive_O0.csv results/loop_order.csv \
+    --out plots/loop_vs_naive
+```
 
 ---
 
@@ -361,16 +379,24 @@ void benchmark_iterations_loop(scalar_t *B_out,
 
 Misma semantica que `benchmark_iterations` (Seccion 2.2) pero delegando cada paso $A \cdot B$ al `kernel` suministrado. Doble buffer + swap de punteros; aloja y libera los buffers internamente.
 
-### 6.5 Binarios
+### 6.5 Binarios y scripts
 
 | Binario | CLI | Salida |
 |---------|-----|--------|
 | `bin/bench_loop_O0` | `<order> <m> [num_iters] [num_runs]` | `kernel,m,n,num_iters,median_seconds,gflops` |
 | `bin/validate_loop_O0` | `[m]` (default 256) | 4 tests por variante (3 invariantes + cross-val vs naive) |
 
-| Script | Salida |
-|--------|--------|
-| `scripts/run_sweep_loop.sh [m_list]` | `results/loop_order.csv` |
+`run_sweep_loop.sh` requiere un orden como argumento obligatorio para evitar que los kernels se midan en el mismo proceso (lo que contamina el estado de cache y el presupuesto termico entre ordenes):
+
+```
+scripts/run_sweep_loop.sh <order> ["<m list>"]
+```
+
+- `<order>`: uno de `ijk ikj jik jki kij kji` (obligatorio)
+- `"<m list>"`: lista separada por espacios (opcional; default `256 384 512 768 1024 1536 2048 3072 4096`)
+- Salida: `results/loop_<order>.csv`
+
+Para correr los seis ordenes y obtener un CSV combinado usar `make sweep_loop_all`, que los encadena como procesos separados y concatena los resultados en `results/loop_order.csv`.
 
 ---
 
@@ -581,9 +607,9 @@ Misma logica que la anterior pero recibiendo $A$ **ya en Morton**. Usada por `be
 
 | Binario | Archivo fuente | CLI | Salida |
 |---------|----------------|-----|--------|
-| `bin/bench_recursive_O0`    | `bench_recursive.c`    | `<m> [num_iters] [num_runs]`           | linea CSV `m,n,num_iters,median_seconds,gflops` |
+| `bin/bench_recursive_O0`    | `bench_recursive.c`    | `<m> [num_iters] [num_runs]`           | linea CSV `recursive,m,n,num_iters,median_seconds,gflops` |
 | `bin/validate_recursive_O0` | `validate_recursive.c` | `[m]` (default 256)                    | 7 tests: 3 invariantes + 4 cross-validation contra `matmul_naive` |
-| `bin/bench_morton_O0`       | `bench_morton.c`       | `<m> [num_iters] [num_runs]`           | igual; aborta si $m$ no es potencia de 2 |
+| `bin/bench_morton_O0`       | `bench_morton.c`       | `<m> [num_iters] [num_runs]`           | linea CSV `morton,m,n,num_iters,median_seconds,gflops`; aborta si $m$ no es potencia de 2 |
 | `bin/validate_morton_O0`    | `validate_morton.c`    | `[m]` (default 256, potencia de 2)     | 11 tests: 3 invariantes + 4 cross contra `matmul_naive` + 4 cross contra `matmul_recursive` |
 | `bin/test_morton`           | `test_morton.c`        | sin args                               | 4 grupos: tabla 4x4, round-trip encode/decode (4096 pares), contiguidad de cuadrantes para $m=8$, round-trip de reorganizacion para $m \in \{16, 64, 256\}$ |
 
@@ -629,6 +655,23 @@ make plots_comparison           -> python3 scripts/plot_comparison.py
 make sweep_full_santiago        -> los tres anteriores en cadena
 make perf_compare               -> bash scripts/profile_perf_compare.sh
 make plots_perf                 -> python3 scripts/plot_perf_compare.py
+```
+
+Targets de Fase 1.1 (loop-reorder):
+
+```
+make bench_loop                 -> bin/bench_loop_O0
+make validate_loop              -> bin/validate_loop_O0
+make sweep_loop_ijk             -> results/loop_ijk.csv  (proceso independiente)
+make sweep_loop_ikj             -> results/loop_ikj.csv
+make sweep_loop_jik             -> results/loop_jik.csv
+make sweep_loop_jki             -> results/loop_jki.csv
+make sweep_loop_kij             -> results/loop_kij.csv
+make sweep_loop_kji             -> results/loop_kji.csv
+make sweep_loop_all             -> los seis anteriores + results/loop_order.csv (combinado)
+make plot_naive                 -> plots/naive_O0.png  (solo baseline)
+make plot_loop                  -> plots/loop_orders.png  (6 ordenes desde loop_order.csv)
+make plot_loop_vs_naive         -> plots/loop_vs_naive.png  (naive + 6 ordenes)
 ```
 
 Todos extienden el Makefile **al final**, sin modificar las recetas del baseline (`bench_naive_O0`, `bench_naive_pg`, `validate_naive`, `sweep_naive`, `profile_*_naive`, `clean`, `distclean`).
