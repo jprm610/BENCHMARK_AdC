@@ -3,16 +3,19 @@
  * problem size m and prints a CSV line to stdout.
  *
  * Usage:
- *   bench_O0 <m> [num_iters]
+ *   bench_O0 <m> [num_iters] [num_runs]
  *
  * Output: m,n,num_iters,median_seconds,gflops
  *
- * The driver does one warm-up run (unmeasured) and five measured runs;
+ * The driver does one warm-up run (unmeasured) and num_runs measured runs;
  * it reports the median wall-clock time and derived sustained gflops.
  *
  * Why median and not mean: a single outlier (cron job, page fault burst,
  * frequency transient) skews the mean but not the median. Five runs is
- * the minimum to make the median meaningful.
+ * the default minimum to make the median meaningful. Profiling drivers
+ * (gprof, perf) typically pass num_runs=1 because they count absolute
+ * events and care about a single deterministic execution, not the
+ * statistical distribution of wall-clock times.
  */
 
 #include <stdio.h>
@@ -37,12 +40,14 @@ static int compare_double(const void *a, const void *b)
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <m> [num_iters]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <m> [num_iters] [num_runs]\n", argv[0]);
         fprintf(stderr,
                 "  m         : problem size (m x m matrix A)\n"
-                "  num_iters : number of iterations to measure "
-                "(default: min(2m/n, %d))\n",
-                MAX_MEAS_ITERS);
+                "  num_iters : iterations of the benchmark per run "
+                "(default: min(2m/n, %d))\n"
+                "  num_runs  : number of measured runs for median timing "
+                "(default: %d)\n",
+                MAX_MEAS_ITERS, DEFAULT_RUNS);
         return EXIT_FAILURE;
     }
 
@@ -75,6 +80,18 @@ int main(int argc, char **argv)
         I_meas = (size_t)i_in;
     }
 
+    /* Third optional argument: how many measured runs. Used by profiling
+     * scripts (gprof, perf) that prefer a single deterministic execution. */
+    size_t num_runs = (size_t)DEFAULT_RUNS;
+    if (argc >= 4) {
+        long long r_in = atoll(argv[3]);
+        if (r_in <= 0) {
+            fprintf(stderr, "Error: num_runs must be positive.\n");
+            return EXIT_FAILURE;
+        }
+        num_runs = (size_t)r_in;
+    }
+
     /* Allocate the three big buffers. A and Z are inputs; B_out collects
      * the first n rows of every B_{i+1}. */
     scalar_t *A     = xalloc_aligned(m * m);
@@ -89,18 +106,24 @@ int main(int argc, char **argv)
      * page faults. The result is discarded. */
     benchmark_iterations(B_out, A, Z, m, n, 1);
 
-    /* Measured runs. */
-    double times[DEFAULT_RUNS];
-    for (int r = 0; r < DEFAULT_RUNS; ++r) {
+    /* Measured runs. Allocated on the heap because num_runs is dynamic. */
+    double *times = (double *)malloc(num_runs * sizeof(double));
+    if (times == NULL) {
+        fprintf(stderr, "Error: out of memory for times array.\n");
+        return EXIT_FAILURE;
+    }
+    for (size_t r = 0; r < num_runs; ++r) {
         double t0 = now_seconds();
         benchmark_iterations(B_out, A, Z, m, n, I_meas);
         double t1 = now_seconds();
         times[r] = t1 - t0;
     }
 
-    /* Sort to extract the median (DEFAULT_RUNS / 2 index after sort). */
-    qsort(times, DEFAULT_RUNS, sizeof(double), compare_double);
-    double median_seconds = times[DEFAULT_RUNS / 2];
+    /* Sort to extract the median (num_runs / 2 index after sort). With
+     * num_runs == 1 the "median" is trivially the single sample, which
+     * is fine for profiling-driver callers. */
+    qsort(times, num_runs, sizeof(double), compare_double);
+    double median_seconds = times[num_runs / 2];
 
     /* Flop count for the benchmark: each iteration is 2 * m * m * n flops. */
     double flops_per_iter = 2.0 * (double)m * (double)m * (double)n;
@@ -120,6 +143,7 @@ int main(int argc, char **argv)
     volatile scalar_t sink = B_out[0];
     (void)sink;
 
+    free(times);
     xfree(A);
     xfree(Z);
     xfree(B_out);

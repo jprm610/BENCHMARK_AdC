@@ -232,11 +232,12 @@ Compilado con `gcc -O0 -g`. Es el baseline obligatorio del proyecto.
 **Uso:**
 
 ```
-./bin/bench_O0 <m> [num_iters]
+./bin/bench_O0 <m> [num_iters] [num_runs]
 ```
 
 - `<m>`: tamano del problema (entero positivo).
-- `[num_iters]`: opcional. Por defecto se usa $I_{\text{meas}} = \min(2m/n, 4)$ para mantener tiempos de medicion razonables durante el desarrollo.
+- `[num_iters]`: opcional. Iteraciones del benchmark dentro de cada corrida medida. Por defecto se usa $I_{\text{meas}} = \min(2m/n, 4)$ para mantener tiempos de medicion razonables durante el desarrollo.
+- `[num_runs]`: opcional. Numero de corridas medidas para la mediana. Por defecto 5 (estabilidad estadistica). Los scripts de profiling usan 1 (una corrida determinista basta, ya que `gprof`/`perf` cuentan eventos absolutos, no estiman distribuciones).
 
 **Salida:** una linea CSV en `stdout`:
 
@@ -244,11 +245,11 @@ Compilado con `gcc -O0 -g`. Es el baseline obligatorio del proyecto.
 m,n,num_iters,median_seconds,gflops
 ```
 
-Internamente ejecuta una corrida de warm-up (no medida) y luego cinco corridas medidas, reportando la mediana.
+Internamente ejecuta una corrida de warm-up (no medida) y luego `num_runs` corridas medidas, reportando la mediana de los tiempos. Cuando `num_runs == 1` la "mediana" es trivialmente esa unica muestra.
 
-### 5.2 `bin/bench_O0_pg`
+### 5.2 `bin/bench_pg`
 
-Igual que `bench_O0` pero compilado con `-pg` para soportar `gprof`. Misma CLI.
+Igual que `bench_O0` pero compilado adicionalmente con `-pg` para soportar `gprof`. Misma CLI. Produce `gmon.out` en el cwd al ejecutarse.
 
 ### 5.3 `bin/validate_O0`
 
@@ -261,6 +262,53 @@ Valida la implementacion sobre tres invariantes algebraicos: $A \cdot 0 = 0$, $I
 ```
 
 Por defecto $m = 256$.
+
+### 5.4 `scripts/run_sweep.sh`
+
+Orquesta los tres primeros pasos del proyecto en una sola pasada. Para cada $m$ del listado:
+
+1. Ejecuta `bin/bench_O0 <m>` (5 corridas + mediana) y agrega la linea CSV a `results/baseline_O0.csv`.
+2. Ejecuta `bin/bench_pg <m> <PROFILE_ITERS> <PROFILE_RUNS>` bajo `gprof`, guardando `results/gprof_m<m>.txt`.
+3. Ejecuta `bin/bench_O0 <m> <PROFILE_ITERS> <PROFILE_RUNS>` bajo `perf stat`, guardando `results/perf_m<m>.txt`.
+
+**Variables de entorno:**
+
+| Variable | Default | Efecto |
+|----------|---------|--------|
+| `PROFILING` | `full` | `full`/`gprof`/`perf`/`0` para escoger que profilers correr. |
+| `PROFILE_ITERS` | `1` | Iteraciones del benchmark dentro de cada corrida profileada. |
+| `PROFILE_RUNS` | `1` | Corridas medidas bajo el profiler (usar 1 minimiza overhead). |
+
+**Argumento posicional:**
+
+```
+scripts/run_sweep.sh [m_list]
+```
+
+Si se omite, usa el listado por defecto $\{256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192\}$.
+
+### 5.5 `scripts/profile_gprof.sh` y `scripts/profile_perf.sh`
+
+Scripts standalone equivalentes a un paso del sweep. CLI uniforme:
+
+```
+scripts/profile_gprof.sh <m> [num_iters] [num_runs]
+scripts/profile_perf.sh  <m> [num_iters] [num_runs]
+```
+
+Defaults: `m=2048, num_iters=1, num_runs=1`. Ambos respetan el contrato CLI extendido de `bench_O0`/`bench_pg`.
+
+### 5.6 `scripts/plot_results.py`
+
+Lee `results/baseline_O0.csv` y produce las graficas de paso 3 en `plots/`.
+
+```
+scripts/plot_results.py [--csv ...] [--out-dir ...]
+                        [--l1-kb K] [--l2-kb K] [--l3-kb K]
+                        [--cpu-label STRING]
+```
+
+Los defaults estan calibrados para la maquina de pruebas (AMD Ryzen 5 4600H): `--l1-kb 32 --l2-kb 512 --l3-kb 4096`. Ajusta los flags si corres en otra CPU.
 
 ---
 

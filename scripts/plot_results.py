@@ -9,7 +9,13 @@ Reads results/baseline_O0.csv and produces:
      with the theoretical 2*m^2*n cubic-in-m reference line, so the user
      can compare measured complexity against the expected one.
 
-Cache sizes default to common Intel values; the user can override via CLI:
+Default cache sizes are calibrated for the test machine:
+  AMD Ryzen 5 4600H (Renoir, Zen 2, 6 cores)
+    L1d : 32 KB per core   (192 KiB total / 6 instances)
+    L2  : 512 KB per core  (3 MiB total / 6 instances)
+    L3  : 4 MB shared      (4 MiB / 1 instance)
+
+The user can override via CLI for a different machine:
   --l1-kb 32 --l2-kb 1024 --l3-kb 32768
 """
 
@@ -66,13 +72,18 @@ def plot_gflops(rows, args, out_path):
     ms = np.array([r["m"] for r in rows], dtype=float)
     gflops = np.array([r["gflops"] for r in rows], dtype=float)
 
-    fig, ax = plt.subplots(figsize=(8.5, 5.5))
+    fig, ax = plt.subplots(figsize=(9.0, 5.8))
     ax.plot(ms, gflops, "o-", linewidth=1.6, markersize=6,
             label="Baseline -O0 (naive ijk)")
     ax.set_xscale("log", base=2)
     ax.set_xlabel("m")
     ax.set_ylabel("Sustained gflops")
-    ax.set_title("Naive matmul benchmark: sustained gflops vs m")
+    subtitle = (f"{args.cpu_label}  |  "
+                f"L1d={args.l1_kb} KB/core, "
+                f"L2={args.l2_kb} KB/core, "
+                f"L3={args.l3_kb // 1024} MB shared")
+    ax.set_title("Naive matmul benchmark: sustained gflops vs m\n" + subtitle,
+                 fontsize=11)
     ax.grid(True, which="both", alpha=0.3)
 
     # Vertical guides for cache transitions. Two flavors:
@@ -80,16 +91,17 @@ def plot_gflops(rows, args, out_path):
     #   * A row of A stops fitting in L1 (m = size / 4)
     n = rows[0]["n"] if rows else 128
     transitions = [
-        ("L1 (row of A)",  m_at_working_set(args.l1_kb * 1024, n),  "tab:red"),
         ("L2 (full A)",    m_at_full_a(args.l2_kb * 1024),          "tab:orange"),
         ("L3 (full A)",    m_at_full_a(args.l3_kb * 1024),          "tab:purple"),
+        ("L1 (row of A)",  m_at_working_set(args.l1_kb * 1024, n),  "tab:red"),
     ]
     y_top = ax.get_ylim()[1]
     for label, m_val, color in transitions:
         if m_val is None or m_val <= 0:
             continue
         ax.axvline(m_val, color=color, linestyle="--", alpha=0.6)
-        ax.text(m_val, y_top * 0.95, label, color=color, rotation=90,
+        ax.text(m_val, y_top * 0.95, f"{label}  m={m_val:.0f}",
+                color=color, rotation=90,
                 ha="right", va="top", fontsize=8)
 
     ax.legend(loc="best")
@@ -99,14 +111,14 @@ def plot_gflops(rows, args, out_path):
     print(f"Wrote {out_path}")
 
 
-def plot_time(rows, out_path):
+def plot_time(rows, args, out_path):
     """Per-iteration time vs m on log-log, with theoretical O(m^2 * n) ref."""
     ms = np.array([r["m"] for r in rows], dtype=float)
     n = rows[0]["n"] if rows else 128
     # Time per iteration = total_time / num_iters
     t_iter = np.array([r["median_seconds"] / r["num_iters"] for r in rows])
 
-    fig, ax = plt.subplots(figsize=(8.5, 5.5))
+    fig, ax = plt.subplots(figsize=(9.0, 5.8))
     ax.loglog(ms, t_iter, "o-", linewidth=1.6, markersize=6,
               label="Measured time per iteration")
 
@@ -122,7 +134,8 @@ def plot_time(rows, out_path):
 
     ax.set_xlabel("m")
     ax.set_ylabel("Time per iteration [s]")
-    ax.set_title("Measured time per iteration vs theoretical complexity")
+    ax.set_title("Measured time per iteration vs theoretical complexity\n"
+                 + args.cpu_label, fontsize=11)
     ax.grid(True, which="both", alpha=0.3)
     ax.legend(loc="best")
     fig.tight_layout()
@@ -137,12 +150,19 @@ def parse_args():
                    help="path to the CSV with sweep results")
     p.add_argument("--out-dir", default="plots",
                    help="directory for the generated plots")
+    # Defaults match the AMD Ryzen 5 4600H test machine. Override on the
+    # command line if you run on a different CPU.
     p.add_argument("--l1-kb", type=int, default=32,
-                   help="L1 data cache size in KB (default 32)")
-    p.add_argument("--l2-kb", type=int, default=1024,
-                   help="L2 cache size in KB (default 1024 = 1 MB)")
-    p.add_argument("--l3-kb", type=int, default=32768,
-                   help="L3 cache size in KB (default 32768 = 32 MB)")
+                   help="L1 data cache size per core in KB "
+                        "(default 32, Ryzen 5 4600H)")
+    p.add_argument("--l2-kb", type=int, default=512,
+                   help="L2 cache size per core in KB "
+                        "(default 512, Ryzen 5 4600H)")
+    p.add_argument("--l3-kb", type=int, default=4096,
+                   help="L3 cache size (shared) in KB "
+                        "(default 4096 = 4 MB, Ryzen 5 4600H)")
+    p.add_argument("--cpu-label", default="AMD Ryzen 5 4600H",
+                   help="CPU model name to embed in the plot subtitle")
     return p.parse_args()
 
 
@@ -159,7 +179,7 @@ def main():
         sys.exit(1)
 
     plot_gflops(rows, args, os.path.join(args.out_dir, "baseline_gflops_vs_m.png"))
-    plot_time(rows, os.path.join(args.out_dir, "baseline_time_vs_m.png"))
+    plot_time(rows, args, os.path.join(args.out_dir, "baseline_time_vs_m.png"))
 
 
 if __name__ == "__main__":

@@ -233,11 +233,18 @@ Si alguno falla, el codigo de salida es 1 y se reporta el primer indice donde di
 ### 5.2 Una sola corrida del benchmark
 
 ```bash
-./bin/bench_O0 1024            # m=1024, iteraciones default
-./bin/bench_O0 1024 4          # m=1024, exactamente 4 iteraciones medidas
+./bin/bench_O0 1024            # m=1024, iteraciones y corridas default
+./bin/bench_O0 1024 4          # m=1024, 4 iteraciones medidas por corrida
+./bin/bench_O0 1024 4 1        # m=1024, 4 iteraciones, 1 sola corrida medida
 ```
 
-Por defecto se ejecutan $\min(2m/n, 4)$ iteraciones medidas para mantener el tiempo de cada corrida razonable durante el desarrollo. El benchmark realiza ademas una corrida de calentamiento no medida y luego cinco corridas medidas, reportando la mediana.
+Los tres argumentos posicionales son:
+
+1. `m`: tamano del problema (obligatorio).
+2. `num_iters`: iteraciones del benchmark dentro de cada corrida medida. Default: $\min(2m/n, 4)$.
+3. `num_runs`: corridas medidas (sobre las que se toma la mediana). Default: 5.
+
+Independientemente de `num_runs`, el binario hace siempre **1 corrida de warm-up** (no medida) antes de medir.
 
 Salida (una linea CSV en stdout):
 
@@ -252,7 +259,13 @@ m,n,num_iters,median_seconds,gflops
 make sweep
 ```
 
-Equivalente a `bash scripts/run_sweep.sh`. Corre el benchmark para los valores por defecto $m \in \{256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192\}$ y escribe `results/baseline_O0.csv` con una linea por punto.
+Equivalente a `bash scripts/run_sweep.sh`. Corre el benchmark para los valores por defecto $m \in \{256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192\}$ y por cada uno produce **tres archivos**:
+
+1. Una linea en `results/baseline_O0.csv` con la medicion de gflops.
+2. Un reporte `results/gprof_m<m>.txt` (perfil por funcion).
+3. Un reporte `results/perf_m<m>.txt` (contadores de hardware).
+
+Asi tienes registro completo de paso 1 (timing baseline), paso 2 (profiling) y paso 3 (escalamiento) en una sola corrida.
 
 Para un rango custom:
 
@@ -260,7 +273,18 @@ Para un rango custom:
 bash scripts/run_sweep.sh "256 512 1024 2048"
 ```
 
-**Nota sobre tiempos esperados a `-O0`:** una corrida completa de baseline a `-O0` con $m = 8192$ puede tomar varios minutos por iteracion. Para el reporte final, el sweep completo del rango por defecto puede tardar entre 30 y 90 minutos dependiendo del hardware. Conviene lanzarlo y dejarlo correr.
+Controlar el profiling:
+
+```bash
+PROFILING=0     bash scripts/run_sweep.sh                  # solo CSV, sin profiling
+PROFILING=gprof bash scripts/run_sweep.sh                  # CSV + solo gprof
+PROFILING=perf  bash scripts/run_sweep.sh                  # CSV + solo perf
+PROFILE_ITERS=2 PROFILE_RUNS=1 bash scripts/run_sweep.sh   # mas iteraciones para el profile
+```
+
+Por defecto el profiling usa `iters=1, runs=1` (una sola corrida determinista) para no multiplicar los tiempos. La medicion del CSV sigue usando 5 corridas internas con mediana para tener un valor estadisticamente estable.
+
+**Nota sobre tiempos esperados a `-O0`:** una corrida completa de baseline a `-O0` con $m = 8192$ puede tomar varios minutos. Para el reporte final, el sweep completo del rango por defecto puede tardar entre 1 y 2 horas dependiendo del hardware. Conviene lanzarlo y dejarlo correr. Si solo necesitas el CSV (sin profiling), usa `PROFILING=0` para reducir el tiempo al minimo.
 
 ### 5.4 Graficas a partir del CSV
 
@@ -275,30 +299,43 @@ Produce dos PNG en `plots/`:
 - `plots/baseline_gflops_vs_m.png`: gflops sostenidos vs $m$, con marcas verticales para las transiciones de cache.
 - `plots/baseline_time_vs_m.png`: tiempo por iteracion en escala log-log, con la curva teorica $2 m^2 n$ anclada en el $m$ mas pequeno. Sirve para comparar con la complejidad esperada.
 
-Personalizar tamanos de cache si los tuyos difieren del default:
+**Defaults calibrados para AMD Ryzen 5 4600H** (la maquina de pruebas inicial):
+
+- L1d: 32 KB por core (192 KiB totales / 6 cores)
+- L2 : 512 KB por core (3 MiB totales / 6 cores)
+- L3 : 4 MB compartida (4 MiB / 1 instancia)
+
+Si corres en otra maquina personaliza los argumentos:
 
 ```bash
-python3 scripts/plot_results.py --l1-kb 32 --l2-kb 512 --l3-kb 8192
+python3 scripts/plot_results.py \
+    --cpu-label "Intel Core i7-XXXX" \
+    --l1-kb 32 --l2-kb 1024 --l3-kb 8192
 ```
 
 Para conocer los tamanos exactos de tu maquina:
 
 ```bash
-lscpu | grep -i cache
+lscpu | grep -E "cache|Model name"
 # o, mas explicito:
 getconf -a | grep CACHE
 ```
+
+**Importante:** los valores que pides en el script son **por core** para L1 y L2, y **totales (compartido)** para L3. `lscpu` reporta el total de L1/L2 sumado a traves de los cores ("192 KiB (6 instances)"); divide entre el numero de instancias para sacar el valor por core.
 
 ---
 
 ## 6. Paso 2: profiling
 
+**Atajo:** `make sweep` corre los tres (CSV + gprof + perf) por cada valor de $m$ automaticamente. Las dos subsecciones siguientes describen como correr cada profiler por separado para un solo $m$, util durante el desarrollo o para inspeccionar un cliff concreto.
+
 ### 6.1 Perfil por funcion con gprof
 
 ```bash
-make bench_pg                          # compila bench con -pg
-bash scripts/profile_gprof.sh          # m=2048, iters=2 por defecto
-bash scripts/profile_gprof.sh 1024 4   # m y iters custom
+make bench_pg                              # compila bench con -pg
+bash scripts/profile_gprof.sh              # m=2048, iters=1, runs=1 por defecto
+bash scripts/profile_gprof.sh 1024         # m custom
+bash scripts/profile_gprof.sh 1024 2 1     # m, iteraciones, corridas medidas
 ```
 
 El reporte queda en `results/gprof_m<M>.txt`. Es esperable que **mas del 95% del tiempo** caiga en `matmul_naive`; eso confirma que esa funcion es el cuello de botella.
@@ -313,8 +350,9 @@ less results/gprof_manual.txt
 ### 6.2 Contadores de hardware con perf
 
 ```bash
-bash scripts/profile_perf.sh             # m=2048, iters=2
-bash scripts/profile_perf.sh 1024 4      # personalizar
+bash scripts/profile_perf.sh               # m=2048, iters=1, runs=1
+bash scripts/profile_perf.sh 1024          # m custom
+bash scripts/profile_perf.sh 1024 2 1      # m, iteraciones, corridas
 ```
 
 El reporte queda en `results/perf_m<M>.txt`. Los eventos solicitados cubren los cuatro puntos del paso 2:
@@ -382,33 +420,29 @@ Cualquier proceso (Chrome con 80 pestanas, Slack, Zoom, Docker Desktop, OneDrive
 Resumen de un ciclo completo para los **tres primeros pasos**:
 
 ```bash
-# 1. Compilar todo
+# 1. Compilar todo (incluye bench_O0, bench_pg y validate_O0)
 make
+make bench_pg
 
 # 2. Verificar correctitud
 ./bin/validate_O0 256
 
-# 3. Paso 1: ya esta, compilado con -O0.
-#    El binario es bin/bench_O0; el codigo fuente es src/matmul_naive.c.
+# 3. Paso 1, 2 y 3 de una sola pasada:
+#    - CSV con gflops vs m (paso 3)
+#    - gprof por cada m (paso 2.a)
+#    - perf por cada m (paso 2.b)
+make sweep
 
-# 4. Paso 2a: profiling por funcion con gprof
-make bench_pg
-bash scripts/profile_gprof.sh 2048 2
-
-# 5. Paso 2b: profiling de hardware con perf
-bash scripts/profile_perf.sh 2048 2
-
-# 6. Paso 3: sweep en m y graficas
-make sweep                       # genera results/baseline_O0.csv
+# 4. Generar las graficas (paso 3)
 source ~/venvs/matmul/bin/activate
-python3 scripts/plot_results.py  # genera plots/*.png
+python3 scripts/plot_results.py
 ```
 
 Al terminar, en `results/` y `plots/` deberian estar:
 
 - `results/baseline_O0.csv` (datos del sweep)
-- `results/gprof_m2048.txt` (perfil por funcion)
-- `results/perf_m2048.txt` (contadores de hardware)
+- `results/gprof_m256.txt`, `results/gprof_m384.txt`, ..., `results/gprof_m8192.txt`
+- `results/perf_m256.txt`, `results/perf_m384.txt`, ..., `results/perf_m8192.txt`
 - `plots/baseline_gflops_vs_m.png`
 - `plots/baseline_time_vs_m.png`
 
