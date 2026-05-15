@@ -3,7 +3,7 @@
 **Curso:** Arquitectura de Computadores
 **Universidad:** Universidad Nacional de Colombia, Sede Medellin
 **Fecha:** Mayo 2026
-**Estado:** Fase 1 (baseline + profiling + escalamiento con $m$)
+**Estado:** Fase 1 cerrada (baseline + profiling + escalamiento con $m$); Fase 6 (cache-oblivious recursivo + Morton) con codigo y validacion completos, sweeps masivos pendientes para la Sesion 03.
 
 ---
 
@@ -31,26 +31,40 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 
 ```
 .
-|-- README.md               -> Este archivo
-|-- Makefile                -> Targets de compilacion y profiling
+|-- README.md                          -> Este archivo
+|-- Makefile                           -> Targets de compilacion y profiling
 |-- docs/
-|   `-- API.md              -> Contrato publico de las funciones
+|   |-- API.md                         -> Contrato publico de las funciones
+|   |-- SESION_01_RESUMEN.md           -> Resumen para retomar Fase 1
+|   |-- PLAN_FASE6.md                  -> Plan ejecutivo de la Fase 6
+|   `-- SESION_02_RESUMEN.md           -> Resumen para retomar Fase 6
 |-- src/
-|   |-- matmul_naive.h      -> Declaraciones del kernel y typedef scalar_t
-|   |-- matmul_naive.c      -> Kernel ijk + orquestador de iteraciones
-|   |-- matrix_utils.h      -> Helpers (alocacion, init, comparacion)
-|   |-- matrix_utils.c      -> Implementacion de los helpers
-|   |-- timing.h            -> clock_gettime(CLOCK_MONOTONIC) inline
-|   |-- bench_naive.c       -> Driver de medicion (binario bench_naive_O0)
-|   `-- validate_naive.c    -> Verificador algebraico (binario validate_naive_O0)
+|   |-- matmul_naive.{h,c}             -> Baseline ijk (Fase 1)
+|   |-- matrix_utils.{h,c}             -> Helpers (alocacion, init, comparacion)
+|   |-- timing.h                       -> clock_gettime(CLOCK_MONOTONIC) inline
+|   |-- bench_naive.c                  -> Driver baseline (bench_naive_O0)
+|   |-- validate_naive.c               -> Verificador baseline (validate_naive_O0)
+|   |-- matmul_recursive.{h,c}         -> Kernel recursivo row-major (Fase 6 A2)
+|   |-- morton.{h,c}                   -> Encoding Z-order + reorganizacion (Fase 6 A3)
+|   |-- matmul_morton.{h,c}            -> Kernel recursivo con A en Morton (Fase 6 A3)
+|   |-- test_morton.c                  -> Tests unitarios del modulo Morton
+|   |-- bench_recursive.c              -> Driver bench_recursive_O0
+|   |-- validate_recursive.c           -> Driver validate_recursive_O0
+|   |-- bench_morton.c                 -> Driver bench_morton_O0
+|   `-- validate_morton.c              -> Driver validate_morton_O0
 |-- scripts/
-|   |-- run_sweep_naive.sh        -> Corre el benchmark variando m, escribe CSV
-|   |-- profile_gprof_naive.sh    -> Lanza gmon.out y produce el reporte de gprof
-|   |-- profile_perf_naive.sh     -> Captura contadores de hardware con perf
-|   `-- plot_results.py           -> Genera graficas a partir del CSV
-|-- results/                -> CSV y reportes de profiling (gitignore)
-|-- plots/                  -> Imagenes generadas (gitignore)
-`-- bin/                    -> Binarios compilados (gitignore)
+|   |-- run_sweep_naive.sh             -> Sweep baseline + gprof + perf
+|   |-- profile_gprof_naive.sh         -> gprof standalone para baseline
+|   |-- profile_perf_naive.sh          -> perf standalone para baseline
+|   |-- plot_results.py                -> Graficas del baseline
+|   |-- run_sweep_recursive.sh         -> Sweep -> results/recursive_O0.csv
+|   |-- run_sweep_morton.sh            -> Sweep -> results/morton_O0.csv (potencias de 2)
+|   |-- plot_comparison.py             -> 3 CSV -> comparison_all.csv + 4 PNG
+|   |-- profile_perf_compare.sh        -> perf stat sobre los 3 binarios
+|   `-- plot_perf_compare.py           -> perf_compare.csv -> 3 PNG + tabla
+|-- results/                            -> CSV y reportes de profiling (gitignore)
+|-- plots/                              -> Imagenes generadas (gitignore)
+`-- bin/                                -> Binarios compilados (gitignore)
 ```
 
 ---
@@ -180,14 +194,32 @@ Esto produce dos binarios en `bin/`:
 | `bin/bench_naive_O0`    | `-O0 -g`      | Benchmark baseline, paso 1 y paso 3 |
 | `bin/validate_naive_O0` | `-O0 -g`      | Verificador de correctitud |
 
-Targets individuales:
+Targets individuales del baseline (Fase 1):
 
 ```bash
-make bench_naive_O0      # solo el benchmark
-make validate_naive      # solo el verificador
+make bench_naive_O0      # solo el benchmark baseline
+make validate_naive      # solo el verificador baseline
 make bench_naive_pg      # version con -pg para gprof, paso 2
 make clean               # borra bin/ y build/
 make distclean           # clean + borra results/*.csv y plots/*
+```
+
+Targets de Fase 6 (cache-oblivious recursivo + Morton):
+
+```bash
+make bench_recursive          # bin/bench_recursive_O0
+make validate_recursive       # bin/validate_recursive_O0
+make test_morton              # bin/test_morton (tests del modulo morton)
+make bench_morton             # bin/bench_morton_O0   (m debe ser potencia de 2)
+make validate_morton          # bin/validate_morton_O0 (idem)
+
+make sweep_recursive_run      # produce results/recursive_O0.csv
+make sweep_morton_run         # produce results/morton_O0.csv
+make plots_comparison         # consolida los 3 CSV y genera 4 PNG
+make sweep_full_santiago      # los tres anteriores en cadena
+
+make perf_compare             # produce results/perf_compare.csv
+make plots_perf               # genera 3 PNG + plots/perf_summary_table.txt
 ```
 
 **Flags fijos en el Makefile** (`BASE_CFLAGS`):
@@ -323,6 +355,66 @@ getconf -a | grep CACHE
 
 **Importante:** los valores que pides en el script son **por core** para L1 y L2, y **totales (compartido)** para L3. `lscpu` reporta el total de L1/L2 sumado a traves de los cores ("192 KiB (6 instances)"); divide entre el numero de instancias para sacar el valor por core.
 
+### 5.5 Flujo de Fase 6: recursivo + Morton
+
+#### 5.5.1 Validacion
+
+```bash
+./bin/validate_recursive_O0 256   # 3 invariantes + cross-validation contra naive
+./bin/validate_morton_O0    256   # idem + cross-validation contra recursive (m potencia de 2)
+./bin/test_morton                 # tests del modulo Morton (encode/decode/reorganize)
+```
+
+Cada uno imprime `VALIDATION OK` (o `MORTON TESTS OK`) y retorna 0 cuando todo pasa.
+
+#### 5.5.2 Bench individual
+
+```bash
+./bin/bench_recursive_O0 1024            # m=1024, defaults
+./bin/bench_recursive_O0 1024 4 1        # m, iters, runs
+./bin/bench_morton_O0    1024 4 1        # m debe ser potencia de 2
+```
+
+Misma CLI y mismo CSV de salida que `bench_naive_O0`. `bench_morton_O0` ejecuta `reorganize_to_morton(A)` una sola vez antes del warm-up, fuera del tiempo medido, para que las GFLOP/s reflejen solo el kernel.
+
+#### 5.5.3 Sweep comparativo
+
+```bash
+make sweep_full_santiago
+# equivalente a:
+bash scripts/run_sweep_recursive.sh           # 11 puntos, ~20 min a -O0
+bash scripts/run_sweep_morton.sh              # 4 potencias de 2, ~50 min a -O0
+source ~/venvs/matmul/bin/activate
+python3 scripts/plot_comparison.py
+```
+
+Asume `results/naive_O0.csv` existe (generalo con `make sweep_naive` si no). El plot produce:
+
+- `results/comparison_all.csv` — union de los tres CSV con columna `kernel` al inicio.
+- `plots/comparison_gflops_vs_m.png` — tres curvas, eje $x$ log, guias L1/L2/L3.
+- `plots/comparison_time_vs_m.png` — tres curvas tiempo/iter en log-log + curva teorica $O(m^2 n)$.
+- `plots/speedup_morton_vs_recursive.png` — cociente solo donde ambos existen.
+- `plots/speedup_morton_vs_naive.png` — analogo.
+
+Para un rango custom:
+
+```bash
+bash scripts/run_sweep_recursive.sh "1024 2048 4096"
+bash scripts/run_sweep_morton.sh    "1024 2048 4096 8192"
+```
+
+`run_sweep_morton.sh` filtra y omite con warning a stderr cualquier $m$ que no sea potencia de 2.
+
+#### 5.5.4 Perf comparativo
+
+```bash
+sudo sh -c 'echo 1 > /proc/sys/kernel/perf_event_paranoid'   # una vez por boot
+make perf_compare        # produce results/perf_compare.csv
+make plots_perf          # produce 3 PNG + plots/perf_summary_table.txt
+```
+
+Captura siete eventos (`L1-dcache-loads`, `L1-dcache-load-misses`, `LLC-loads`, `LLC-load-misses`, `dTLB-load-misses`, `cycles`, `instructions`) para los tres kernels en $m \in \{1024, 2048, 4096, 8192\}$. Si `perf` falla por permisos, el script imprime el comando exacto para arreglarlo (referencia a la seccion 3.3).
+
 ---
 
 ## 6. Paso 2: profiling
@@ -452,13 +544,13 @@ Al terminar, en `results/` y `plots/` deberian estar:
 
 Las fases siguientes mantendran la misma API descrita en `docs/API.md` y se sumaran como modulos independientes:
 
-| Fase | Que se agregara |
-|------|-----------------|
-| 2 | Reordenamiento de bucles (ikj, kij) + pre-transposicion de $A$ |
-| 3 | Tiling de un nivel para L2 + padding anti-conflict-misses |
-| 4 | Flags de compilador y auto-vectorizacion (`-O3 -march=native`) |
-| 5 | OpenMP + comparacion con OpenBLAS |
-| Opcional | Layout Morton sobre $A$ + matmul recursivo |
+| Fase | Que se agregara | Estado |
+|------|-----------------|--------|
+| 2 | Reordenamiento de bucles (ikj, kij) + pre-transposicion de $A$ | pendiente (Camino B, Juan Pablo) |
+| 3 | Tiling de un nivel para L2 + padding anti-conflict-misses | pendiente |
+| 4 | Flags de compilador y auto-vectorizacion (`-O3 -march=native`) | pendiente |
+| 5 | OpenMP + comparacion con OpenBLAS | pendiente |
+| 6 / Opcional | Matmul recursivo cache-oblivious + layout Morton sobre $A$ | **codigo y validacion COMPLETADOS** (Sesion 02); sweep masivo + perf compare pendientes para Sesion 03 |
 
 El proyecto **esta disenado para que cada fase se entregue de forma incremental** y se pueda comparar contra el baseline producido aqui.
 

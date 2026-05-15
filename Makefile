@@ -79,3 +79,100 @@ clean:
 
 distclean: clean
 	rm -f results/*.csv plots/*
+
+# =====================================================================
+# Fase 6 / Etapa A2 targets - cache-oblivious recursive kernel
+#
+# These build on top of the naive baseline without modifying any of
+# the targets above. The validate binary links matmul_naive.c too
+# because the cross-validation test compares the two kernels element
+# by element.
+# =====================================================================
+
+RECURSIVE_COMMON_SRCS    := $(COMMON_SRCS) $(SRC_DIR)/matmul_recursive.c
+BENCH_RECURSIVE_SRCS     := $(RECURSIVE_COMMON_SRCS) $(SRC_DIR)/bench_recursive.c
+VALIDATE_RECURSIVE_SRCS  := $(RECURSIVE_COMMON_SRCS) $(SRC_DIR)/validate_recursive.c
+
+BENCH_RECURSIVE_O0       := $(BIN_DIR)/bench_recursive_O0
+VALIDATE_RECURSIVE_O0    := $(BIN_DIR)/validate_recursive_O0
+
+.PHONY: bench_recursive validate_recursive
+
+bench_recursive: $(BENCH_RECURSIVE_O0)
+validate_recursive: $(VALIDATE_RECURSIVE_O0)
+
+$(BENCH_RECURSIVE_O0): $(BENCH_RECURSIVE_SRCS) | $(BIN_DIR)
+	$(CC) $(BASE_CFLAGS) $(BENCH_RECURSIVE_SRCS) -o $@ $(LIBS)
+
+$(VALIDATE_RECURSIVE_O0): $(VALIDATE_RECURSIVE_SRCS) | $(BIN_DIR)
+	$(CC) $(BASE_CFLAGS) $(VALIDATE_RECURSIVE_SRCS) -o $@ $(LIBS)
+
+# =====================================================================
+# Fase 6 / Etapa A3 support module - Morton (Z-order) encoding tests
+# =====================================================================
+
+TEST_MORTON_SRCS := $(SRC_DIR)/morton.c $(SRC_DIR)/matrix_utils.c $(SRC_DIR)/test_morton.c
+TEST_MORTON      := $(BIN_DIR)/test_morton
+
+.PHONY: test_morton
+
+test_morton: $(TEST_MORTON)
+
+$(TEST_MORTON): $(TEST_MORTON_SRCS) | $(BIN_DIR)
+	$(CC) $(BASE_CFLAGS) $(TEST_MORTON_SRCS) -o $@ $(LIBS)
+
+# =====================================================================
+# Fase 6 / Etapa A3 targets - Morton kernel bench and validate
+#
+# validate_morton links matmul_recursive.c too because Test 5 cross-
+# validates the Morton kernel against the recursive row-major one.
+# =====================================================================
+
+MORTON_KERNEL_SRCS       := $(SRC_DIR)/matmul_morton.c $(SRC_DIR)/morton.c
+BENCH_MORTON_SRCS        := $(COMMON_SRCS) $(MORTON_KERNEL_SRCS) $(SRC_DIR)/bench_morton.c
+VALIDATE_MORTON_SRCS     := $(COMMON_SRCS) $(MORTON_KERNEL_SRCS) \
+                            $(SRC_DIR)/matmul_recursive.c \
+                            $(SRC_DIR)/validate_morton.c
+
+BENCH_MORTON_O0          := $(BIN_DIR)/bench_morton_O0
+VALIDATE_MORTON_O0       := $(BIN_DIR)/validate_morton_O0
+
+.PHONY: bench_morton validate_morton
+
+bench_morton: $(BENCH_MORTON_O0)
+validate_morton: $(VALIDATE_MORTON_O0)
+
+$(BENCH_MORTON_O0): $(BENCH_MORTON_SRCS) | $(BIN_DIR)
+	$(CC) $(BASE_CFLAGS) $(BENCH_MORTON_SRCS) -o $@ $(LIBS)
+
+$(VALIDATE_MORTON_O0): $(VALIDATE_MORTON_SRCS) | $(BIN_DIR)
+	$(CC) $(BASE_CFLAGS) $(VALIDATE_MORTON_SRCS) -o $@ $(LIBS)
+
+# =====================================================================
+# Fase 6 / Prompt 6 - comparative sweeps and plots
+# =====================================================================
+
+.PHONY: sweep_recursive_run sweep_morton_run plots_comparison sweep_full_santiago
+
+sweep_recursive_run: $(BENCH_RECURSIVE_O0)
+	bash scripts/run_sweep_recursive.sh
+
+sweep_morton_run: $(BENCH_MORTON_O0)
+	bash scripts/run_sweep_morton.sh
+
+plots_comparison:
+	python3 scripts/plot_comparison.py
+
+sweep_full_santiago: sweep_recursive_run sweep_morton_run plots_comparison
+
+# =====================================================================
+# Fase 6 / Prompt 7 - hardware-event comparison via perf
+# =====================================================================
+
+.PHONY: perf_compare plots_perf
+
+perf_compare: $(BENCH_NAIVE_O0) $(BENCH_RECURSIVE_O0) $(BENCH_MORTON_O0)
+	bash scripts/profile_perf_compare.sh
+
+plots_perf:
+	python3 scripts/plot_perf_compare.py
