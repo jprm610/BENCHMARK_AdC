@@ -65,7 +65,7 @@ $(BENCH_PG): $(BENCH_SRCS) | $(BIN_DIR)
 $(VALIDATE_O0): $(VALIDATE_SRCS) | $(BIN_DIR)
 	$(CC) $(BASE_CFLAGS) $(VALIDATE_SRCS) -o $@ $(LIBS)
 
-sweep: $(BENCH_O0)
+sweep: $(BENCH_O0) $(BENCH_PG)
 	bash scripts/run_sweep.sh
 
 profile_gprof: $(BENCH_PG)

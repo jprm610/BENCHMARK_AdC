@@ -9,9 +9,14 @@
 # the perf script instead.
 #
 # Usage:
-#   scripts/profile_gprof.sh           # default m=2048, iters=2
-#   scripts/profile_gprof.sh 1024      # custom m
-#   scripts/profile_gprof.sh 1024 4    # custom m and iters
+#   scripts/profile_gprof.sh                    # default m=2048, iters=1, runs=1
+#   scripts/profile_gprof.sh 1024               # custom m
+#   scripts/profile_gprof.sh 1024 2             # custom m and iters
+#   scripts/profile_gprof.sh 1024 2 3           # full control: m, iters, runs
+#
+# For sweeps, the typical invocation is `<m> 1 1` - one iteration of the
+# benchmark, one measured run. That keeps profiling cost bounded; the
+# absolute event counts (calls, samples) are what matter, not statistics.
 #
 
 set -euo pipefail
@@ -22,7 +27,8 @@ BENCH_PG="$REPO_DIR/bin/bench_pg"
 RESULTS_DIR="$REPO_DIR/results"
 
 M="${1:-2048}"
-ITERS="${2:-2}"
+ITERS="${2:-1}"
+RUNS="${3:-1}"
 OUT_TXT="$RESULTS_DIR/gprof_m${M}.txt"
 
 if [ ! -x "$BENCH_PG" ]; then
@@ -43,8 +49,8 @@ mkdir -p "$RESULTS_DIR"
 cd "$REPO_DIR"
 rm -f gmon.out
 
-echo "Running $BENCH_PG with m=$M iters=$ITERS (this may take a while at -O0)..."
-"$BENCH_PG" "$M" "$ITERS" > /dev/null
+echo "Running $BENCH_PG with m=$M iters=$ITERS runs=$RUNS (this may take a while at -O0)..."
+"$BENCH_PG" "$M" "$ITERS" "$RUNS" > /dev/null
 
 if [ ! -f gmon.out ]; then
     echo "Error: gmon.out was not produced. Did you compile with -pg?" >&2
