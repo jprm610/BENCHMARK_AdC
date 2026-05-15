@@ -7,5 +7,6 @@
 *.h         text eol=lf
 *.py        text eol=lf
 *.md        text eol=lf
+*.csv       text eol=lf
 Makefile    text eol=lf
 .gitignore  text eol=lf
