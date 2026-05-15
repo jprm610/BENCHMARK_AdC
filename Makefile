@@ -176,3 +176,32 @@ perf_compare: $(BENCH_NAIVE_O0) $(BENCH_RECURSIVE_O0) $(BENCH_MORTON_O0)
 
 plots_perf:
 	python3 scripts/plot_perf_compare.py
+
+# =====================================================================
+# Fase 1.1 - Cache-aware: loop reorder
+#
+# bench_loop_O0  : benchmark that selects kernel by name at runtime
+# validate_loop  : algebraic + cross-validation for all 6 orders
+# sweep_loop     : runs scripts/run_sweep_loop.sh -> results/loop_order.csv
+# =====================================================================
+
+LOOP_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_loop.c
+BENCH_LOOP_SRCS    := $(LOOP_COMMON_SRCS) $(SRC_DIR)/bench_loop.c
+VALIDATE_LOOP_SRCS := $(LOOP_COMMON_SRCS) $(SRC_DIR)/validate_loop.c
+
+BENCH_LOOP_O0      := $(BIN_DIR)/bench_loop_O0
+VALIDATE_LOOP_O0   := $(BIN_DIR)/validate_loop_O0
+
+.PHONY: bench_loop validate_loop sweep_loop
+
+bench_loop: $(BENCH_LOOP_O0)
+validate_loop: $(VALIDATE_LOOP_O0)
+
+$(BENCH_LOOP_O0): $(BENCH_LOOP_SRCS) | $(BIN_DIR)
+	$(CC) $(BASE_CFLAGS) $(BENCH_LOOP_SRCS) -o $@ $(LIBS)
+
+$(VALIDATE_LOOP_O0): $(VALIDATE_LOOP_SRCS) | $(BIN_DIR)
+	$(CC) $(BASE_CFLAGS) $(VALIDATE_LOOP_SRCS) -o $@ $(LIBS)
+
+sweep_loop: $(BENCH_LOOP_O0)
+	bash scripts/run_sweep_loop.sh
