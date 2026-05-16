@@ -1,7 +1,7 @@
 # Resumen de la Sesion 03
 
 **Fecha:** 2026-05-16
-**Estado:** Sesion 03 cerrada. Etapa A4 (microkernel AVX2 + FMA), Etapa A5 (OpenMP tasks) y caracterizacion completa (perf Zen 2 + Roofline anclado a STREAM) implementadas, validadas y mergeadas en `main`.
+**Estado:** Sesion 03 cerrada. Etapa A4 (microkernel AVX2 + FMA), Etapa A5 (OpenMP tasks) y caracterizacion completa (perf Zen 2 + Roofline anclado a STREAM) implementadas, validadas y mergeadas en `main`. Las ramas de trabajo `claude/*` se borraron al cierre; el historial vive en los $17$ PRs mergeados.
 **Predecesor:** Sesion 02 (Fase 6: cache-oblivious recursivo + Morton sobre row-major).
 **Siguiente paso:** Sesion 04 (Fase 5: comparacion contra OpenBLAS, opcional BLIS / MKL, y reporte final del curso).
 
@@ -96,7 +96,7 @@ Makefile                        Extendido con bloque "Sesion 03 targets" (todos 
 results/
 |-- hwinfo.csv                  Snapshot del fingerprinting (Prompt 1)
 |-- threshold_sweep.csv         30 puntos del sweep (Prompt 2)
-|-- omp_scaling.csv.bak         29 puntos: 7 threads x 2 bindings x 2 m's + 1 default (Prompt 6)
+|-- omp_scaling.csv         29 puntos: 7 threads x 2 bindings x 2 m's + 1 default (Prompt 6)
 |-- perf_<variant>_m<M>_{A,B}.txt   24 archivos crudos perf (Prompt 7)
 |-- perf_zen2_summary.csv       12 celdas consolidadas (Prompt 7)
 |-- stream_1t.txt, stream_6t.txt   Triad bandwidth medido (Prompt 8)
@@ -170,7 +170,7 @@ Cociente $\text{GFLOPS}_{\text{variante}} / \text{GFLOPS}_{\text{naive}}$ a $m =
 | `recursive`    |   $5.6 \times$   |
 | `morton`       |   $0.5 \times$ (regresion: el indice integer ahoga al kernel) |
 | `morton_avx2`  | **$43.4 \times$**|
-| `morton_omp`   |  $27.4 \times$ (profiling); hasta $\sim 284 \times$ con sweep dedicado (Seccion 5.4) |
+| `morton_omp`   |  $27.4 \times$ (profiling); hasta $\sim 278 \times$ con sweep dedicado (Seccion 5.4) |
 
 El salto principal viene de la Etapa A4 (Morton + microkernel AVX2 + FMA). La Etapa A5 (OpenMP tasks) anade un factor multiplicativo encima.
 
@@ -191,27 +191,29 @@ La hipotesis cientifica del plan se confirma: solo el microkernel AVX2 + FMA toc
 
 ### 5.4 Eficiencia de OpenMP
 
-Sweep dedicado `omp_scaling.csv.bak` (driver `bench_morton_omp_O3` con $I = 1$, $3$ runs, mediana). Threads $\in \{1, 2, 3, 4, 6, 8, 12\}$ contra `OMP_PROC_BIND` $\in \{$close, spread$\}$ a $m \in \{4096, 8192\}$. Valores en GFLOPS:
+Sweep dedicado `omp_scaling.csv` (driver `bench_morton_omp_O3` con $I = 1$, $3$ runs, mediana). Threads $\in \{1, 2, 3, 4, 6, 8, 12\}$ contra `OMP_PROC_BIND` $\in \{$close, spread$\}$ a $m \in \{4096, 8192\}$. Valores en GFLOPS:
 
 | $m$  | threads | close  | spread | speedup close vs $1$T | ideal |
 |-----:|--------:|-------:|-------:|----------------------:|------:|
-| $4096$ |    $1$ |   $55.3$ |   $56.8$ |             $1.0\times$ | $1.0\times$ |
-| $4096$ |    $2$ |  $115.8$ |  $112.4$ |             $2.1\times$ | $2.0\times$ |
-| $4096$ |    $3$ |  $115.1$ |  $138.5$ |             $2.1\times$ | $3.0\times$ |
-| $4096$ |    $6$ |  $180.4$ |  $188.8$ |             $3.3\times$ | $6.0\times$ |
-| $4096$ |   $12$ |  $250.2$ |  $242.3$ |             $4.5\times$ | $6.0\times$ (sin SMT) |
-| $8192$ |    $1$ |   $59.6$ |   $58.2$ |             $1.0\times$ | $1.0\times$ |
-| $8192$ |    $3$ |  $117.3$ |  $125.2$ |             $2.0\times$ | $3.0\times$ |
-| $8192$ |    $6$ |  $188.5$ |  $170.2$ |             $3.2\times$ | $6.0\times$ |
-| $8192$ |   $12$ | **$261.4$** |  $243.8$ |             $4.4\times$ | $6.0\times$ (sin SMT) |
+| $4096$ |    $1$ |   $60.7$ |   $60.6$ |             $1.0\times$ | $1.0\times$ |
+| $4096$ |    $2$ |  $117.8$ |  $114.8$ |             $1.9\times$ | $2.0\times$ |
+| $4096$ |    $3$ |  $124.6$ |  $121.3$ |             $2.1\times$ | $3.0\times$ |
+| $4096$ |    $4$ |  $140.7$ |  $142.0$ |             $2.3\times$ | $4.0\times$ |
+| $4096$ |    $6$ |  $191.5$ |  $176.8$ |             $3.2\times$ | $6.0\times$ |
+| $4096$ |    $8$ |  $223.7$ |  $214.0$ |             $3.7\times$ | $6.0\times$ (sin SMT) |
+| $4096$ |   $12$ | **$262.2$** |  $244.1$ |             $4.3\times$ | $6.0\times$ (sin SMT) |
+| $8192$ |    $1$ |   $59.7$ |   $59.9$ |             $1.0\times$ | $1.0\times$ |
+| $8192$ |    $3$ |  $114.3$ |  $120.7$ |             $1.9\times$ | $3.0\times$ |
+| $8192$ |    $6$ |  $190.5$ |  $193.8$ |             $3.2\times$ | $6.0\times$ |
+| $8192$ |   $12$ | **$255.8$** |  $258.6$ |             $4.3\times$ | $6.0\times$ (sin SMT) |
 
 Lecturas:
 
-- A $2$ threads `close` el speedup es **super-lineal** ($2.1\times$) porque dos cores del mismo CCX se reparten el footprint y el L2 privado por core acelera la materializacion del panel.
-- A $3$ threads `close` la curva colapsa: los tres cores del CCX terminan pegandose entre si en el L3 compartido. `spread` ($3$T) baja a $1.5 \times$ por core porque cada uno tiene $1$ CCX entero, pero con thread aislado del trafico.
-- A $6$ threads ambas afinidades convergen a $\sim 3.3 \times$. La eficiencia paralela cae a $\sim 55 \%$: el cliff es bandwidth de DRAM (STREAM $6$T solo $1.14 \times$ el $1$T, la jerarquia satura rapido).
-- SMT a $8$ y $12$ threads sigue sumando, pero con eficiencia muy baja: $12$T close = $261.4$ GFLOPS = $4.4 \times$ del $1$T (no $12 \times$).
-- **Mejor configuracion practica:** $12$ threads `close` para maximizar throughput puro, $6$ threads `close` si se quiere preservar L3 para otra tarea concurrente.
+- A $2$ threads ambos bindings van casi a speedup lineal ($\sim 1.9\times$): el footprint se reparte entre cores del mismo CCX y el L2 privado por core acelera la materializacion del panel.
+- A $3$ threads `close` la curva pierde linealidad: los tres cores del CCX se pegan entre si en el L3 compartido de $4$ MiB. `spread` ($3$T) reparte un thread por CCX y desbloquea el segundo L3, pero el cross-CCX traffic le impide capitalizar mas alla.
+- A $6$ threads ambas afinidades convergen alrededor de $\sim 3.2 \times$. La eficiencia paralela cae a $\sim 53 \%$: el cliff dominante es el bandwidth de DRAM (STREAM $6$T solo $1.14 \times$ el $1$T, la jerarquia satura rapido).
+- SMT a $8$ y $12$ threads sigue sumando pero con eficiencia decreciente: $12$T close = $255.8$ GFLOPS a $m = 8192$ y $262.2$ GFLOPS a $m = 4096$ (ambos $\sim 4.3 \times$ del $1$T, no $12 \times$). El segundo pipe FMA del Zen $2$ queda parcialmente alimentado por el SMT sibling.
+- **Mejor configuracion practica:** $12$ threads `close` para maximizar throughput puro, $6$ threads `close` si se quiere preservar L3 para otra tarea concurrente, $3$ threads `spread` para experimentos single-CCX limpios.
 
 ### 5.5 Cliff L3 confirmado empiricamente
 
@@ -417,7 +419,7 @@ explorer.exe plots/roofline_4600h.png
 explorer.exe plots/session_03_gflops_vs_m.png
 explorer.exe plots/omp_scaling.png
 cat results/perf_zen2_summary.csv
-cat results/omp_scaling.csv.bak
+cat results/omp_scaling.csv
 ```
 
 ---
