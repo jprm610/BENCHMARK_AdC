@@ -271,3 +271,49 @@ $(TEST_KERNEL_AVX2): $(SRC_DIR)/test_kernel_avx2.c $(KERNEL_AVX2_OBJ) \
 	      $(SRC_DIR)/matrix_utils.c \
 	      $(KERNEL_AVX2_OBJ) \
 	      -o $@ $(LIBS)
+
+# ---------------------------------------------------------------------
+# Sesion 03 / Prompt 4 - Morton + AVX2 integration
+#
+# matmul_morton_avx2 wires the AVX2 microkernel into the recursive
+# Morton skeleton, using a Morton-of-blocks layout for A (tile = 4)
+# that materializes nicely to a row-major panel in the leaf. The
+# baseline _O0 binaries remain untouched for regression.
+#
+# validate_morton_avx2 links matmul_morton.c too, because Test 5
+# cross-checks the AVX2 variant against the Sesion 02 Morton kernel.
+# ---------------------------------------------------------------------
+
+MORTON_AVX2_SHARED_SRCS  := $(SRC_DIR)/matmul_morton_avx2.c \
+                             $(SRC_DIR)/morton.c \
+                             $(SRC_DIR)/matrix_utils.c \
+                             $(SRC_DIR)/matmul_naive.c
+
+BENCH_MORTON_AVX2_SRCS    := $(MORTON_AVX2_SHARED_SRCS) \
+                             $(SRC_DIR)/bench_morton_avx2.c
+
+VALIDATE_MORTON_AVX2_SRCS := $(MORTON_AVX2_SHARED_SRCS) \
+                             $(SRC_DIR)/matmul_morton.c \
+                             $(SRC_DIR)/validate_morton_avx2.c
+
+BENCH_MORTON_AVX2_O3    := $(BIN_DIR)/bench_morton_avx2_O3
+VALIDATE_MORTON_AVX2_O3 := $(BIN_DIR)/validate_morton_avx2_O3
+
+.PHONY: bench_morton_avx2 validate_morton_avx2
+
+bench_morton_avx2:    $(BENCH_MORTON_AVX2_O3)
+validate_morton_avx2: $(VALIDATE_MORTON_AVX2_O3)
+
+$(BENCH_MORTON_AVX2_O3): $(BENCH_MORTON_AVX2_SRCS) $(KERNEL_AVX2_OBJ) \
+                         | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) \
+	      $(BENCH_MORTON_AVX2_SRCS) \
+	      $(KERNEL_AVX2_OBJ) \
+	      -o $@ $(LIBS)
+
+$(VALIDATE_MORTON_AVX2_O3): $(VALIDATE_MORTON_AVX2_SRCS) $(KERNEL_AVX2_OBJ) \
+                            | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) \
+	      $(VALIDATE_MORTON_AVX2_SRCS) \
+	      $(KERNEL_AVX2_OBJ) \
+	      -o $@ $(LIBS)
