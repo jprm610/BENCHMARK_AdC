@@ -3,7 +3,7 @@
 **Curso:** Arquitectura de Computadores
 **Universidad:** Universidad Nacional de Colombia, Sede Medellin
 **Fecha:** Mayo 2026
-**Estado:** Fase 1 cerrada (baseline + profiling + escalamiento con $m$); Fase 6 (cache-oblivious recursivo + Morton) con codigo y validacion completos, sweeps masivos pendientes para la Sesion 03.
+**Estado:** Fase 1 cerrada (baseline + profiling + escalamiento con $m$); Fase 6 cerrada (cache-oblivious recursivo + Morton); Sesion 03 cerrada (microkernel AVX2 + FMA, OpenMP tasks, perf Zen 2, Roofline anclado al $4600$H).
 
 ---
 
@@ -415,6 +415,59 @@ make plots_perf          # produce 3 PNG + plots/perf_summary_table.txt
 
 Captura siete eventos (`L1-dcache-loads`, `L1-dcache-load-misses`, `LLC-loads`, `LLC-load-misses`, `dTLB-load-misses`, `cycles`, `instructions`) para los tres kernels en $m \in \{1024, 2048, 4096, 8192\}$. Si `perf` falla por permisos, el script imprime el comando exacto para arreglarlo (referencia a la seccion 3.3).
 
+### 5.6 Flujo de Sesion 03: microkernel AVX2 + OpenMP + Roofline
+
+La Sesion 03 lleva el proyecto al hardware del Ryzen $5$ $4600$H (Zen $2$): microkernel AVX2 + FMA $4 \times 16$, paralelizacion con OpenMP tasks, profiling con eventos PMC de Zen $2$ y Roofline anclado al bandwidth STREAM medido. Todos los targets nuevos viven bajo el bloque `# === Sesion 03 targets ===` del `Makefile` y no tocan los pipelines de Fases $1$ ni $6$.
+
+#### 5.6.1 Targets de un solo comando
+
+```bash
+make audit                            # auditoria PDEP/PEXT (imprime PASS / FAIL)
+make hwinfo                           # bin/hwinfo: caracteristicas del CPU en runtime
+make sweep_threshold                  # mide el RECURSION_THRESHOLD optimo de Morton
+make validate_morton_avx2             # cross-valida la variante AVX2 contra naive y morton
+make bench_morton_avx2                # bench single-core del microkernel AVX2
+OMP_NUM_THREADS=6 make bench_morton_omp   # version paralela (OpenMP tasks)
+make sweep_session_03                 # sweep comparativo de las 4 variantes en m={512..16384}
+make stream                           # mide DRAM bandwidth con STREAM (Triad 1T y 6T)
+make profile_zen2                     # captura 12 celdas de eventos perf Zen 2
+make plot_roofline                    # genera plots/roofline_4600h.png anclado al STREAM medido
+```
+
+`make audit` debe ejecutarse antes de cualquier bench: BMI2 en Zen $2$ esta microcodeado ($\sim 18$ ciclos para `PDEP`/`PEXT`) y un uso incidental degradaria el throughput sin notarlo. El script verifica que ningun modulo Morton emite `pdep` ni `pext` en el ensamblador.
+
+`make profile_zen2` requiere `kernel.perf_event_paranoid <= 2`. Ajustar una vez por boot con:
+
+```bash
+sudo sysctl -w kernel.perf_event_paranoid=1
+```
+
+#### 5.6.2 Variables de entorno para `bench_morton_omp`
+
+| Variable | Default util en el $4600$H | Efecto |
+|----------|-----------------------------|--------|
+| `OMP_NUM_THREADS` | `6` (un thread por core fisico) | $12$ activa SMT, suma rendimiento pero con eficiencia baja. |
+| `OMP_PROC_BIND`   | `close` (recomendado)           | Mantiene threads en el mismo CCX. `spread` los reparte entre los $2$ CCXs. |
+| `OMP_PLACES`      | `cores`                         | Une cada thread a un core fisico. |
+
+Mejor combinacion empirica para throughput puro (sweep de Prompt $6$, `results/omp_scaling.csv.bak`): `OMP_NUM_THREADS=12 OMP_PROC_BIND=close` toca $261.4$ GFLOPS a $m = 8192$. Para single-CCX limpio (e.g. compartiendo el laptop con otras cargas): `OMP_NUM_THREADS=3 OMP_PROC_BIND=close`.
+
+#### 5.6.3 Reproducir el Roofline completo
+
+```bash
+source ~/venvs/matmul/bin/activate
+sudo sysctl -w kernel.perf_event_paranoid=1
+
+make audit                            # PASS
+make sweep_session_03 plot_session_03  # ~25 min, plots/session_03_*.png
+make profile_zen2 plot_perf_zen2       # ~5  min, plots/perf_zen2_breakdown.png
+make stream                            # ~2  min
+make profile_zen2_omp                  # ~3  min, perf de morton_omp para el Roofline
+make plot_roofline                     # < 1 min, plots/roofline_4600h.png
+```
+
+Mejor resultado esperado al cierre: `morton_avx2` a $\sim 40$ GFLOPS bench-wide a $m = 8192$ ($\sim 64 \%$ del techo FMA single-core medido con perf), y `morton_omp` a $\sim 260$ GFLOPS con $12$ threads `close` segun `omp_scaling.csv`. El reporte completo de hallazgos esta en [`docs/SESION_03_RESUMEN.md`](docs/SESION_03_RESUMEN.md).
+
 ---
 
 ## 6. Paso 2: profiling
@@ -548,9 +601,9 @@ Las fases siguientes mantendran la misma API descrita en `docs/API.md` y se suma
 |------|-----------------|--------|
 | 2 | Reordenamiento de bucles (ikj, kij) + pre-transposicion de $A$ | pendiente (Camino B, Juan Pablo) |
 | 3 | Tiling de un nivel para L2 + padding anti-conflict-misses | pendiente |
-| 4 | Flags de compilador y auto-vectorizacion (`-O3 -march=native`) | pendiente |
-| 5 | OpenMP + comparacion con OpenBLAS | pendiente |
-| 6 / Opcional | Matmul recursivo cache-oblivious + layout Morton sobre $A$ | **codigo y validacion COMPLETADOS** (Sesion 02); sweep masivo + perf compare pendientes para Sesion 03 |
+| 4 | Flags de compilador y auto-vectorizacion (`-O3 -march=native`) | **COMPLETADO** como parte de la Sesion 03 (microkernel AVX2 + FMA explicito sobre Zen $2$) |
+| 5 | OpenMP + comparacion con OpenBLAS | OpenMP **COMPLETADO** (Sesion 03, `matmul_morton_omp`); comparacion OpenBLAS pendiente para Sesion 04 |
+| 6 / Opcional | Matmul recursivo cache-oblivious + layout Morton sobre $A$ | **COMPLETADO** (Sesion 02 codigo y validacion; Sesion 03 sweep masivo, perf compare, Roofline) |
 
 El proyecto **esta disenado para que cada fase se entregue de forma incremental** y se pueda comparar contra el baseline producido aqui.
 
