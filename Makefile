@@ -435,3 +435,38 @@ sweep_omp_scaling: $(BENCH_MORTON_OMP_O3)
 
 plot_omp_scaling:
 	python3 scripts/plot_omp_scaling.py
+
+# ---------------------------------------------------------------------
+# Sesion 03 / Prompt 7 - perf Zen 2 hardware counter sweep
+#
+# Crosses (variant, m) for 4 variants x 3 m's = 12 cells, two perf
+# invocations per cell (group A: compute side, group B: memory + TLB
+# side) to keep multiplexing percentages close to 100%. The
+# consolidator merges both groups into one CSV row per cell.
+#
+# Dependencies:
+#   - perf (linux-tools-generic on Ubuntu, or built from the kernel tree)
+#   - kernel.perf_event_paranoid <= 2 (see README.md / the script for
+#     instructions if you hit a permission error)
+# ---------------------------------------------------------------------
+
+.PHONY: profile_zen2 consolidate_zen2 plot_perf_zen2 profile_zen2_one
+
+# profile_zen2_one is a thin wrapper for ad-hoc single-cell profiling
+# during development. Use as: make profile_zen2_one VARIANT=morton M=4096
+VARIANT ?= morton_avx2
+M       ?= 4096
+profile_zen2_one: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
+                  $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3)
+	bash scripts/profile_perf_zen2.sh $(VARIANT) $(M)
+
+profile_zen2: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
+              $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3)
+	bash scripts/run_perf_zen2_sweep.sh
+	python3 scripts/consolidate_perf_zen2.py
+
+consolidate_zen2:
+	python3 scripts/consolidate_perf_zen2.py
+
+plot_perf_zen2:
+	python3 scripts/plot_perf_zen2.py
