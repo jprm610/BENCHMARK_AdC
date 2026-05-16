@@ -376,3 +376,62 @@ sweep_morton_avx2_xl: $(BENCH_MORTON_AVX2_O3)
 
 plot_morton_avx2_xl:
 	python3 scripts/plot_morton_avx2_xl.py
+
+# ---------------------------------------------------------------------
+# Sesion 03 / Prompt 6 - matmul_morton_omp (OpenMP tasks)
+#
+# Parallel variant of matmul_morton_avx2 using OpenMP tasks at every
+# recursive split above g_parallel_threshold_omp. Reuses the AVX2
+# microkernel and the Morton-of-blocks layout from Prompt 4.
+#
+# CFLAGS_OMP_ZEN2: same flags as CFLAGS_O3_ZEN2 plus -fopenmp. The
+# OMP runtime library is linked automatically by gcc with -fopenmp.
+#
+# validate_morton_omp links matmul_morton.c too (cross-validation
+# Test 5 of the avx2 module is the bridge; the omp validate does its
+# own cross-check against matmul_morton_avx2 and matmul_naive, but
+# matmul_morton.c is needed by matmul_morton_avx2.h's reuse).
+# ---------------------------------------------------------------------
+
+CFLAGS_OMP_ZEN2 := $(CFLAGS_O3_ZEN2) -fopenmp
+
+MORTON_OMP_SHARED_SRCS  := $(SRC_DIR)/matmul_morton_omp.c \
+                            $(SRC_DIR)/matmul_morton_avx2.c \
+                            $(SRC_DIR)/morton.c \
+                            $(SRC_DIR)/matrix_utils.c \
+                            $(SRC_DIR)/matmul_naive.c
+
+BENCH_MORTON_OMP_SRCS    := $(MORTON_OMP_SHARED_SRCS) \
+                            $(SRC_DIR)/bench_morton_omp.c
+
+VALIDATE_MORTON_OMP_SRCS := $(MORTON_OMP_SHARED_SRCS) \
+                            $(SRC_DIR)/matmul_morton.c \
+                            $(SRC_DIR)/validate_morton_omp.c
+
+BENCH_MORTON_OMP_O3    := $(BIN_DIR)/bench_morton_omp_O3
+VALIDATE_MORTON_OMP_O3 := $(BIN_DIR)/validate_morton_omp_O3
+
+.PHONY: bench_morton_omp bench_morton_omp_O3 validate_morton_omp \
+        sweep_omp_scaling plot_omp_scaling
+
+bench_morton_omp:    $(BENCH_MORTON_OMP_O3)
+bench_morton_omp_O3: $(BENCH_MORTON_OMP_O3)
+validate_morton_omp: $(VALIDATE_MORTON_OMP_O3)
+
+$(BENCH_MORTON_OMP_O3): $(BENCH_MORTON_OMP_SRCS) $(KERNEL_AVX2_OBJ) | $(BIN_DIR)
+	$(CC) $(CFLAGS_OMP_ZEN2) \
+	      $(BENCH_MORTON_OMP_SRCS) \
+	      $(KERNEL_AVX2_OBJ) \
+	      -o $@ $(LIBS)
+
+$(VALIDATE_MORTON_OMP_O3): $(VALIDATE_MORTON_OMP_SRCS) $(KERNEL_AVX2_OBJ) | $(BIN_DIR)
+	$(CC) $(CFLAGS_OMP_ZEN2) \
+	      $(VALIDATE_MORTON_OMP_SRCS) \
+	      $(KERNEL_AVX2_OBJ) \
+	      -o $@ $(LIBS)
+
+sweep_omp_scaling: $(BENCH_MORTON_OMP_O3)
+	bash scripts/run_omp_scaling.sh
+
+plot_omp_scaling:
+	python3 scripts/plot_omp_scaling.py
