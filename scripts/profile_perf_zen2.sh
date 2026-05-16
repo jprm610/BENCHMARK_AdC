@@ -110,9 +110,12 @@ fi
 
 mkdir -p "$RESULTS_DIR"
 
-# Filter the variant: only morton variants need m to be a power of two.
+# Filter the variant: morton family requires m to be a power of two.
+# morton_omp is included here so the Roofline (Prompt 8) can profile it
+# alongside the single-thread variants; OMP_NUM_THREADS / OMP_PROC_BIND
+# flow through naturally from the caller's environment to the bench.
 case "$VARIANT" in
-    morton|morton_avx2)
+    morton|morton_avx2|morton_omp)
         if (( M & (M - 1) )) || [ "$M" -lt 4 ]; then
             echo "Error: variant=$VARIANT requires m to be a power of" \
                  "two >= 4 (got $M)." >&2

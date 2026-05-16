@@ -470,3 +470,33 @@ consolidate_zen2:
 
 plot_perf_zen2:
 	python3 scripts/plot_perf_zen2.py
+
+# Profile morton_omp at multi-thread for the Roofline plot. Default to
+# 6 threads with bind=spread (uses both CCXs without crowding). Pass
+# THREADS_OMP / BIND_OMP / MS_OMP to override.
+THREADS_OMP ?= 6
+BIND_OMP    ?= spread
+MS_OMP      ?= 1024 4096 8192
+profile_zen2_omp: $(BENCH_MORTON_OMP_O3)
+	@for m in $(MS_OMP); do \
+	  echo "=== morton_omp m=$$m (OMP_NUM_THREADS=$(THREADS_OMP) bind=$(BIND_OMP)) ==="; \
+	  OMP_NUM_THREADS=$(THREADS_OMP) OMP_PLACES=cores OMP_PROC_BIND=$(BIND_OMP) \
+	    bash scripts/profile_perf_zen2.sh morton_omp $$m; \
+	done
+
+# ---------------------------------------------------------------------
+# Sesion 03 / Prompt 8 - STREAM bandwidth + Roofline final
+# ---------------------------------------------------------------------
+
+.PHONY: stream plot_roofline roofline
+
+stream:
+	bash scripts/measure_stream.sh
+
+plot_roofline:
+	python3 scripts/plot_roofline.py
+
+# Convenience target: STREAM + Roofline in one shot. Assumes
+# profile_zen2 (and optionally profile_zen2_omp) ran beforehand so
+# the perf files exist.
+roofline: stream plot_roofline
