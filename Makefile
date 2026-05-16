@@ -356,3 +356,23 @@ sweep_session_03: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
 
 plot_session_03:
 	python3 scripts/plot_sweep_session_03.py
+
+# ---------------------------------------------------------------------
+# Sesion 03 / extension de Prompt 5 - matmul_morton_avx2 hasta m=32768
+#
+# Corre solo bench_morton_avx2_O3 sobre el grid extendido para observar
+# como escala el microkernel cuando A pasa de 1 GiB (m=16384) a 4 GiB
+# (m=32768). El script tiene chequeo de memoria via /proc/meminfo y
+# avisa antes de cada m si el working set estimado excede el 85% de
+# MemAvailable; en WSL2 con el limite por defecto (~3.5 GiB) el bench
+# a m=32768 muy probablemente sera OOM-killed a menos que se eleve
+# memory= en ~/.wslconfig.
+# ---------------------------------------------------------------------
+
+.PHONY: sweep_morton_avx2_xl plot_morton_avx2_xl
+
+sweep_morton_avx2_xl: $(BENCH_MORTON_AVX2_O3)
+	bash scripts/run_sweep_morton_avx2_xl.sh
+
+plot_morton_avx2_xl:
+	python3 scripts/plot_morton_avx2_xl.py
