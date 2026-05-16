@@ -299,9 +299,14 @@ VALIDATE_MORTON_AVX2_SRCS := $(MORTON_AVX2_SHARED_SRCS) \
 BENCH_MORTON_AVX2_O3    := $(BIN_DIR)/bench_morton_avx2_O3
 VALIDATE_MORTON_AVX2_O3 := $(BIN_DIR)/validate_morton_avx2_O3
 
-.PHONY: bench_morton_avx2 validate_morton_avx2
+.PHONY: bench_morton_avx2 bench_morton_avx2_O3 validate_morton_avx2
 
+# bench_morton_avx2_O3 is an alias that matches the naming convention
+# of bench_naive_O3 / bench_recursive_O3 / bench_morton_O3, so the
+# sweep_session_03 target and downstream scripts can talk about the
+# four bench binaries with a uniform name.
 bench_morton_avx2:    $(BENCH_MORTON_AVX2_O3)
+bench_morton_avx2_O3: $(BENCH_MORTON_AVX2_O3)
 validate_morton_avx2: $(VALIDATE_MORTON_AVX2_O3)
 
 $(BENCH_MORTON_AVX2_O3): $(BENCH_MORTON_AVX2_SRCS) $(KERNEL_AVX2_OBJ) \
@@ -317,3 +322,37 @@ $(VALIDATE_MORTON_AVX2_O3): $(VALIDATE_MORTON_AVX2_SRCS) $(KERNEL_AVX2_OBJ) \
 	      $(VALIDATE_MORTON_AVX2_SRCS) \
 	      $(KERNEL_AVX2_OBJ) \
 	      -o $@ $(LIBS)
+
+# ---------------------------------------------------------------------
+# Sesion 03 / Prompt 5 - comparative sweep across four variants
+#
+# The sweep compares naive, recursive, morton and morton_avx2 at the
+# same -O3 -march=znver2 -mavx2 -mfma flag set, so the only difference
+# between curves is the algorithm and the layout (not the optimization
+# regime). To make that comparison possible we need -O3 versions of
+# the naive and recursive bench drivers; bench_morton_O3 already
+# exists from Prompt 2, and bench_morton_avx2_O3 from Prompt 4. The
+# _O0 binaries remain untouched because validate_*_O0 and the Sesion
+# 01/02 reproducibility artifacts depend on them.
+# ---------------------------------------------------------------------
+
+BENCH_NAIVE_O3     := $(BIN_DIR)/bench_naive_O3
+BENCH_RECURSIVE_O3 := $(BIN_DIR)/bench_recursive_O3
+
+.PHONY: bench_naive_O3 bench_recursive_O3 sweep_session_03 plot_session_03
+
+bench_naive_O3:     $(BENCH_NAIVE_O3)
+bench_recursive_O3: $(BENCH_RECURSIVE_O3)
+
+$(BENCH_NAIVE_O3): $(BENCH_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_SRCS) -o $@ $(LIBS)
+
+$(BENCH_RECURSIVE_O3): $(BENCH_RECURSIVE_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_RECURSIVE_SRCS) -o $@ $(LIBS)
+
+sweep_session_03: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
+                  $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3)
+	bash scripts/run_sweep_session_03.sh
+
+plot_session_03:
+	python3 scripts/plot_sweep_session_03.py
