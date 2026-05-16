@@ -309,3 +309,93 @@ Las GFLOPS se mueven en $\sim 0.53$ a $0.55$ a lo largo de todo el sweep porque 
 ### 8.5 Caveat sobre la utilidad del sweep en este regimen
 
 El sweep cumple su funcion de criterio de aceptacion del Prompt 2, pero el **valor cientifico** del numero elegido es marginal mientras el kernel base sea `ijk + morton_encode` sin vectorizar: cualquier threshold "razonable" produce el mismo rendimiento dentro del ruido. El **verdadero** sweep de tuning ocurre en el Prompt 4, donde se mide el threshold sobre `matmul_morton_avx2`. El procedimiento ya esta listo (`scripts/run_threshold_sweep.sh` parametrizado por `BENCH_BIN`, plot reutilizable), asi que el Prompt 4 solo necesita cambiar el binario y reescribir esta seccion.
+
+---
+
+## 9. Resultados perf Zen 2 (Prompt 7)
+
+Sweep de contadores de hardware sobre las cuatro variantes a $m \in \{1024, 4096, 8192\}$ usando `perf stat -x ,` con dos grupos de eventos por celda (compute / memoria + TLB) para evitar multiplexing. Los **12 cells / 24 invocaciones quedaron al 100% de cobertura** (`min_mux_pct = 100`), lo que significa que los conteos son medidos directamente sin scaling. Tres eventos del prompt original no estan expuestos en este kernel (`Linux 6.6.114.1-microsoft-standard-WSL2`, perf 6.18) y se sustituyeron con proxies documentados en [scripts/profile_perf_zen2.sh](../scripts/profile_perf_zen2.sh).
+
+Datos crudos: [results/perf_zen2_summary.csv](../results/perf_zen2_summary.csv). Grafica: [plots/perf_zen2_breakdown.png](../plots/perf_zen2_breakdown.png).
+
+### 9.1 Tabla resumen
+
+| variant       | $m$  | IPC  | fp/cyc | l1d_miss | l3_miss | tlb_walk/kinst |
+|---------------|-----:|-----:|-------:|---------:|--------:|---------------:|
+| `naive`       | 1024 | 1.18 |   0.64 |    66.9 % | 33.2 % |        0.0208  |
+| `naive`       | 4096 | 1.05 |   0.57 |    66.9 % | 96.9 % |        0.0070  |
+| `naive`       | 8192 | 0.44 |   0.24 |    67.6 % | 83.2 % |        0.0084  |
+| `recursive`   | 1024 | 2.54 |   1.32 |    28.7 % |  0.5 % |        0.0038  |
+| `recursive`   | 4096 | 2.58 |   1.34 |    28.4 % |  0.5 % |        0.0020  |
+| `recursive`   | 8192 | 2.56 |   1.33 |    28.4 % |  0.5 % |        0.0018  |
+| `morton`      | 1024 | 3.97 |   0.13 |     0.4 % | 16.4 % |        0.0014  |
+| `morton`      | 4096 | 3.97 |   0.13 |     0.5 % | 14.5 % |        0.0010  |
+| `morton`      | 8192 | 3.97 |   0.13 |     0.7 % | 11.4 % |        0.0011  |
+| `morton_avx2` | 1024 | 1.72 |   8.58 |     9.8 % |  4.2 % |        0.0224  |
+| `morton_avx2` | 4096 | 2.00 |  10.30 |     9.5 % |  3.2 % |        0.0059  |
+| `morton_avx2` | 8192 | 2.00 |  10.34 |     9.5 % |  3.2 % |        0.0049  |
+
+Convenciones: `l1d_miss` = `l2_request_g1.all_no_prefetch / ls_dispatch.ld_dispatch`; `l3_miss` = `cache-misses / l2_request_g1.all_no_prefetch` (proxy de `l3_lookup_state.l3_miss`); `tlb_walk/kinst` = `bp_l1_tlb_miss_l2_tlb_miss * 1000 / instructions`. Cobertura `min_mux_pct = 100 %` en las 12 celdas.
+
+### 9.2 Fraccion del techo FMA por variante
+
+El techo single-core del Zen 2 son $2 \text{ FMA} \times 8 \text{ lanes} = 16$ ops/ciclo en FP32. La fraccion alcanzada en cada celda es `fp_ops_per_cycle / 16`:
+
+| variant       | $m=1024$ | $m=4096$ | $m=8192$ | comentario |
+|---------------|---------:|---------:|---------:|------------|
+| `naive`       |  4.0 %   |   3.6 %  |   1.5 %  | colapso por DRAM-bound a $m$ grande |
+| `recursive`   |  8.2 %   |   8.4 %  |   8.3 %  | plano: cache OK, kernel `ijk` sin SIMD |
+| `morton`      |  0.8 %   |   0.8 %  |   0.8 %  | ahogado por el `morton_encode` integer |
+| `morton_avx2` | 53.6 %   |  64.4 %  | **64.6 %** | mejor caso del sweep; saturando un FMA pipe |
+
+La conclusion concuerda con la hipotesis cientifica del plan: solo el microkernel AVX2 + FMA toca una fraccion significativa del techo. **`morton_avx2` mantiene $\sim 64 \%$ del peak a $m = 8192$**, una vez que $A$ no cabe ni en L3 ni en RAM caching trivial; la combinacion de localidad espacial (Morton-de-bloques) + reuso intensivo de $C$ en registros amortiza el trafico hacia DRAM.
+
+Caveat sobre `morton` (fino): IPC = 3.97 confirma que el procesador **no esta stalleado** en cache (l1d_miss = 0.5 %, l3_miss < 17 %), simplemente esta ejecutando casi 4 instrucciones por ciclo donde casi todas son integer (calculo de `morton_encode` por elemento). El bottleneck es CPU-bound en aritmetica entera, no memoria.
+
+### 9.3 Cliff L3 en `naive`
+
+`l3_miss_rate` para `naive`:
+
+- $m = 1024$: **33.2 %** — $A$ entera ($4$ MiB) entra justo en el L3 efectivo por CCX, pero las dos $B$ y los buffers de salida la desplazan parcialmente.
+- $m = 4096$: **96.9 %** — $A$ entera son $64$ MiB, $16\times$ el L3; practicamente todo lo que falla L2 termina en DRAM.
+- $m = 8192$: **83.2 %** — el numero baja paradojicamente porque hay mas trafico agregado a L2 (el denominador crece), pero el efecto sobre el throughput es brutal: `fp/cyc` cae de $0.57$ ($m{=}4096$) a $0.24$ ($m{=}8192$) — un colapso de $2.4\times$.
+
+El cliff de L3 se cruza **entre $m = 1024$ y $m = 4096$**, exactamente donde el modelo teorico de la Seccion 4 lo predijo ($m_{L3} = \sqrt{4\ \text{MiB} / 4\ \text{B}} = 1024$). La validacion experimental del cliff es directa: el ratio `cache-misses / l2_request` salta de $33 \%$ a $97 \%$ al cruzar esa frontera.
+
+`recursive` y `morton` (fino) NO sufren este cliff: `l3_miss_rate` se mantiene en $0.5 \%$ y $11$–$16 \%$ respectivamente a traves de los tres $m$, validando la propiedad cache-oblivious de la recursion. `morton_avx2` tambien lo evita ($\sim 3 \%$ estable).
+
+### 9.4 Reduccion de TLB walks por Morton a $m = 8192$
+
+`bp_l1_tlb_miss_l2_tlb_miss` cuenta los TLB misses severos que requieren un **page walk completo** (decenas de ciclos cada uno). A $m = 8192$:
+
+| variant       | walks / kinst | reduccion vs `naive` |
+|---------------|--------------:|---------------------:|
+| `naive`       | 0.0084 | 1.00x (baseline) |
+| `recursive`   | 0.0018 | **4.67x menos** |
+| `morton`      | 0.0011 | **7.64x menos** |
+| `morton_avx2` | 0.0049 | 1.72x menos |
+
+La reduccion de `morton` (fino) frente a `naive` es de **casi un orden de magnitud**, exactamente el efecto que motivo el Camino A del proyecto: el Z-order mantiene el working set agrupado en pocas paginas de 4 KiB, dramaticamente menos que el row-major naive que recorre filas enteras y atraviesa muchas paginas distintas por iteracion.
+
+`recursive` ya logra un $4.7\times$ por la sola virtud de la recursion cache-oblivious (los bloques chicos tocan pocas paginas a la vez). `morton` agrega encima la localidad espacial 2D del Z-order.
+
+`morton_avx2` tiene **mas TLB walks que `morton` fino** ($0.0049$ vs $0.0011$). El culpable es la **materializacion del panel `A_local`** en el leaf: para cada llamada al microkernel, el codigo copia un sub-bloque desde el layout Morton-de-bloques a un buffer row-major contiguo. Esa copia hace stride reads sobre los bloques de 4x4, lo que toca multiples paginas. El trade-off vale la pena (10x mas FLOPS), pero documenta una oportunidad de optimizacion: prefetch explicito del panel siguiente, o evitar la materializacion convirtiendo el microkernel para que consuma directamente el layout Morton.
+
+### 9.5 Anomalia metodologica: `l2_load_hit_rate > 1` en `morton`
+
+La celda `morton m=1024` reporta `l2_load_hit_rate = 1.167` ($> 100 \%$), lo cual es matematicamente imposible si los dos contadores midieran lo mismo. La causa: el numerador `l2_cache_req_stat.ls_rd_blk_l_hit_x` **incluye hits servidos por el hardware prefetcher de L2**, mientras que el denominador `l2_request_g1.all_no_prefetch` **excluye los prefetches**. En cargas con prefetching agresivo (como `morton` fino, que tiene patron de acceso muy regular), el numerador puede exceder al denominador.
+
+Solo afecta a la metrica `l2_load_hit_rate` (no a las demas). Documenta que `naive` no tiene este artefacto porque su l1d_miss rate es tan alto que los prefetchers no pueden adelantarse. Las conclusiones de las Secciones 9.2–9.4 no cambian.
+
+### 9.6 Lectura agregada
+
+Las cuatro variantes ocupan **cuatro regimes distintos** del Roofline:
+
+| variant       | regimen efectivo | cuello de botella dominante |
+|---------------|------------------|-----------------------------|
+| `naive`       | memory-bound severo | DRAM bandwidth ($l3\_miss > 80 \%$ a $m \geq 4096$) |
+| `recursive`   | compute-bound sin SIMD | front-end del decoder (IPC 2.5, sin vectorizacion) |
+| `morton`      | compute-bound integer | `morton_encode` por elemento (IPC 4, fp/cyc 0.13) |
+| `morton_avx2` | compute-bound vectorial | saturando $\sim 1$ de los $2$ FMA pipes (fp/cyc 10.3) |
+
+Para el reporte de cierre (Prompt 9): la **tabla 9.1 + las tres observaciones 9.2/9.3/9.4** son los hallazgos cuantitativos centrales de la sesion. La grafica `perf_zen2_breakdown.png` muestra los cuatro paneles en una sola figura.
