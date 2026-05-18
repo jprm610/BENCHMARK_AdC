@@ -190,18 +190,23 @@ BENCH_LOOP_SRCS    := $(LOOP_COMMON_SRCS) $(SRC_DIR)/bench_loop.c
 VALIDATE_LOOP_SRCS := $(LOOP_COMMON_SRCS) $(SRC_DIR)/validate_loop.c
 
 BENCH_LOOP_O0      := $(BIN_DIR)/bench_loop_O0
+BENCH_LOOP_O3      := $(BIN_DIR)/bench_loop_O3
 VALIDATE_LOOP_O0   := $(BIN_DIR)/validate_loop_O0
 
-.PHONY: bench_loop validate_loop \
+.PHONY: bench_loop bench_loop_O3 validate_loop \
         sweep_loop_ijk sweep_loop_ikj sweep_loop_jik \
         sweep_loop_jki sweep_loop_kij sweep_loop_kji \
         sweep_loop_all
 
 bench_loop: $(BENCH_LOOP_O0)
+bench_loop_O3: $(BENCH_LOOP_O3)
 validate_loop: $(VALIDATE_LOOP_O0)
 
 $(BENCH_LOOP_O0): $(BENCH_LOOP_SRCS) | $(BIN_DIR)
 	$(CC) $(BASE_CFLAGS) $(BENCH_LOOP_SRCS) -o $@ $(LIBS)
+
+$(BENCH_LOOP_O3): $(BENCH_LOOP_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_LOOP_SRCS) -o $@ $(LIBS)
 
 $(VALIDATE_LOOP_O0): $(VALIDATE_LOOP_SRCS) | $(BIN_DIR)
 	$(CC) $(BASE_CFLAGS) $(VALIDATE_LOOP_SRCS) -o $@ $(LIBS)
@@ -512,10 +517,11 @@ plot_omp_scaling:
 # ---------------------------------------------------------------------
 # Sesion 03 / Prompt 7 - perf Zen 2 hardware counter sweep
 #
-# Crosses (variant, m) for 4 variants x 3 m's = 12 cells, two perf
+# Crosses (variant, m) for 10 variants x 3 m's = 30 cells, two perf
 # invocations per cell (group A: compute side, group B: memory + TLB
 # side) to keep multiplexing percentages close to 100%. The
 # consolidator merges both groups into one CSV row per cell.
+# Variants: naive recursive morton morton_avx2 + 6 loop orders.
 #
 # Dependencies:
 #   - perf (linux-tools-generic on Ubuntu, or built from the kernel tree)
@@ -526,15 +532,15 @@ plot_omp_scaling:
 .PHONY: profile_zen2 consolidate_zen2 plot_perf_zen2 profile_zen2_one
 
 # profile_zen2_one is a thin wrapper for ad-hoc single-cell profiling
-# during development. Use as: make profile_zen2_one VARIANT=morton M=4096
+# during development. Use as: make profile_zen2_one VARIANT=loop_ikj M=4096
 VARIANT ?= morton_avx2
 M       ?= 4096
 profile_zen2_one: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
-                  $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3)
+                  $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOP_O3)
 	bash scripts/profile_perf_zen2.sh $(VARIANT) $(M)
 
 profile_zen2: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
-              $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3)
+              $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOP_O3)
 	bash scripts/run_perf_zen2_sweep.sh
 	python3 scripts/consolidate_perf_zen2.py
 

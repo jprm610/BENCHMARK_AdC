@@ -40,7 +40,9 @@ import sys
 from pathlib import Path
 
 
-VARIANTS = ("naive", "recursive", "morton", "morton_avx2")
+VARIANTS = ("naive", "recursive", "morton", "morton_avx2",
+            "loop_ijk", "loop_ikj", "loop_jik",
+            "loop_jki", "loop_kij", "loop_kji")
 
 STYLE = {
     "naive":       dict(color="tab:blue",   marker="o",
@@ -51,6 +53,18 @@ STYLE = {
                         label="morton (fino)"),
     "morton_avx2": dict(color="tab:purple", marker="^",
                         label="morton_avx2 (4x16 + bloques)"),
+    "loop_ijk":    dict(color="#e67e00",    marker="o",
+                        label="loop ijk"),
+    "loop_ikj":    dict(color="#b35900",    marker="s",
+                        label="loop ikj"),
+    "loop_jik":    dict(color="#cc9900",    marker="D",
+                        label="loop jik"),
+    "loop_jki":    dict(color="#997300",    marker="^",
+                        label="loop jki"),
+    "loop_kij":    dict(color="#e6b800",    marker="P",
+                        label="loop kij"),
+    "loop_kji":    dict(color="#b38f00",    marker="X",
+                        label="loop kji"),
 }
 
 VARIANT_ORDER = {v: i for i, v in enumerate(VARIANTS)}

@@ -69,10 +69,21 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 VARIANT=${1:-morton_avx2}
 M=${2:-4096}
-BIN="$REPO_DIR/bin/bench_${VARIANT}_O3"
-
 ITERS_PER_RUN=${ITERS_PER_RUN:-1}
 RUNS=${RUNS:-3}
+
+# loop_* variants share a single binary; the order name is the suffix.
+case "$VARIANT" in
+    loop_*)
+        LOOP_ORDER="${VARIANT#loop_}"
+        BIN="$REPO_DIR/bin/bench_loop_O3"
+        BIN_ARGS="$LOOP_ORDER $M $ITERS_PER_RUN $RUNS"
+        ;;
+    *)
+        BIN="$REPO_DIR/bin/bench_${VARIANT}_O3"
+        BIN_ARGS="$M $ITERS_PER_RUN $RUNS"
+        ;;
+esac
 
 RESULTS_DIR="$REPO_DIR/results"
 OUT_A="$RESULTS_DIR/perf_${VARIANT}_m${M}_A.txt"
@@ -134,7 +145,7 @@ run_group() {
     # The bench stdout (which prints its own short CSV line) is
     # captured and discarded so it does not contaminate the perf file.
     if ! perf stat -x , -e "$events" -o "$out_file" -- \
-         "$BIN" "$M" "$ITERS_PER_RUN" "$RUNS" >/dev/null 2>>"${out_file}.bench.err"; then
+         "$BIN" $BIN_ARGS >/dev/null 2>>"${out_file}.bench.err"; then
         echo "Error: perf returned non-zero for group $group_name." >&2
         echo "stderr from the bench (last lines):" >&2
         tail -20 "${out_file}.bench.err" >&2 || true
