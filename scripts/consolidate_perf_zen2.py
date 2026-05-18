@@ -60,7 +60,7 @@ def parse_perf_file(path: Path) -> dict[str, tuple[float, float]]:
             parts = line.split(",")
             if len(parts) < 5:
                 continue
-            count_str, _unit, event = parts[0], parts[1], parts[2]
+            count_str, _unit, event = parts[0], parts[1], parts[2].split(":")[0]
             mux_str = parts[4]
             if count_str in ("<not counted>", "<not supported>"):
                 continue

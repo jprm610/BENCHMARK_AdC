@@ -1,2 +1,0 @@
-cpu_model,cpu_vendor,cpu_family,num_cores,num_threads,l1d_kib,l1d_assoc,l1d_line,l2_kib,l2_assoc,l2_line,l3_kib,l3_assoc,l3_line,mem_total_kib,mem_avail_kib,avx2_supported,fma_supported,bmi2_supported,bmi2_microcoded_warning,l3_small_warning
-"AMD Ryzen 5 4600H with Radeon Graphics",AuthenticAMD,0x17,6,12,32,8,64,512,8,64,4096,16,64,3683428,3278652,1,1,1,1,1
