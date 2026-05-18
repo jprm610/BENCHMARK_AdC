@@ -1,8 +1,8 @@
-# started on Mon May 18 15:08:43 2026
+# started on Mon May 18 16:24:28 2026
 
-408146622,,cycles:u,111236700,100.00,,
-531849108,,instructions:u,111236700,100.00,1.30,insn per cycle
-32048819,,l2_cache_req_stat.ls_rd_blk_l_hit_x:u,111236700,100.00,,
-5654625,,cache-misses:u,111236700,100.00,,
-263,,bp_l1_tlb_miss_l2_tlb_miss:u,111236700,100.00,,
-102977,,dTLB-load-misses:u,111236700,100.00,,
+431572921,,cycles:u,117712800,100.00,,
+531849163,,instructions:u,117712800,100.00,1.23,insn per cycle
+32309985,,l2_cache_req_stat.ls_rd_blk_l_hit_x:u,117712800,100.00,,
+5491586,,cache-misses:u,117712800,100.00,,
+267,,bp_l1_tlb_miss_l2_tlb_miss:u,117712800,100.00,,
+173411,,dTLB-load-misses:u,117712800,100.00,,
