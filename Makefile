@@ -584,3 +584,31 @@ plot_roofline:
 # profile_zen2 (and optionally profile_zen2_omp) ran beforehand so
 # the perf files exist.
 roofline: stream plot_roofline
+
+# =====================================================================
+# Fase 1.2 - Cache-aware: explicit loop tiling (tilled_ikj)
+#
+# bench_tiled_O3   : benchmark with the same flags as the loop-reorder
+#                    study (CFLAGS_O3_ZEN2) so results are directly
+#                    comparable with bench_loop_O3 and bench_naive_O3.
+# validate_tiled   : algebraic + cross-validation against matmul_naive,
+#                    compiled at -O0 for deterministic numerical output.
+# =====================================================================
+
+TILED_COMMON_SRCS    := $(COMMON_SRCS) $(SRC_DIR)/matmul_tiled.c
+BENCH_TILED_SRCS     := $(TILED_COMMON_SRCS) $(SRC_DIR)/bench_tiled.c
+VALIDATE_TILED_SRCS  := $(TILED_COMMON_SRCS) $(SRC_DIR)/validate_tiled.c
+
+BENCH_TILED_O3       := $(BIN_DIR)/bench_tiled_O3
+VALIDATE_TILED_O0    := $(BIN_DIR)/validate_tiled_O0
+
+.PHONY: bench_tiled validate_tiled
+
+bench_tiled:    $(BENCH_TILED_O3)
+validate_tiled: $(VALIDATE_TILED_O0)
+
+$(BENCH_TILED_O3): $(BENCH_TILED_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_TILED_SRCS) -o $@ $(LIBS)
+
+$(VALIDATE_TILED_O0): $(VALIDATE_TILED_SRCS) | $(BIN_DIR)
+	$(CC) $(BASE_CFLAGS) $(VALIDATE_TILED_SRCS) -o $@ $(LIBS)
