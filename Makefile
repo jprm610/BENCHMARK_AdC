@@ -545,7 +545,8 @@ profile_zen2: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
 	python3 scripts/consolidate_perf_zen2.py
 
 results: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
-         $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOP_O3)
+         $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOP_O3) \
+         $(BENCH_TILED_O3)
 	$(if $(M),MS="$(M)" )bash scripts/run_perf_zen2_sweep.sh
 	python3 scripts/consolidate_perf_zen2.py --out results/metrics.csv
 
@@ -599,7 +600,7 @@ TILED_COMMON_SRCS    := $(COMMON_SRCS) $(SRC_DIR)/matmul_tiled.c
 BENCH_TILED_SRCS     := $(TILED_COMMON_SRCS) $(SRC_DIR)/bench_tiled.c
 VALIDATE_TILED_SRCS  := $(TILED_COMMON_SRCS) $(SRC_DIR)/validate_tiled.c
 
-BENCH_TILED_O3       := $(BIN_DIR)/bench_tiled_O3
+BENCH_TILED_O3       := $(BIN_DIR)/bench_tiled_ikj_O3
 VALIDATE_TILED_O0    := $(BIN_DIR)/validate_tiled_O0
 
 .PHONY: bench_tiled validate_tiled
