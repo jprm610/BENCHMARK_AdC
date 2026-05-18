@@ -48,7 +48,7 @@ if [ ! -x "$BENCH_BIN" ]; then
 fi
 
 mkdir -p "$RESULTS_DIR"
-echo "m,n,num_iters,median_seconds,gflops" > "$OUTPUT"
+echo "kernel,m,n,num_iters,median_seconds,gflops" > "$OUTPUT"
 
 echo "Sweep over m: $M_LIST (only powers of two will run)"
 echo "Output CSV  : $OUTPUT"
@@ -62,8 +62,8 @@ for m in $M_LIST; do
     printf "  [m=%-6s] timing ... " "$m"
     line="$("$BENCH_BIN" "$m")"
     echo "$line" >> "$OUTPUT"
-    gflops="$(echo "$line" | awk -F, '{print $5}')"
-    secs="$(echo "$line"  | awk -F, '{print $4}')"
+    gflops="$(echo "$line" | awk -F, '{print $6}')"
+    secs="$(echo "$line"  | awk -F, '{print $5}')"
     printf "median=%ss  gflops=%s\n" "$secs" "$gflops"
 done
 
