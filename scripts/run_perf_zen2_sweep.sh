@@ -6,12 +6,14 @@
 # (variant, m) cells required by the report:
 #
 #   variants : naive recursive morton morton_avx2     (4)
+#              loop_ijk loop_ikj loop_jik              (6)
+#              loop_jki loop_kij loop_kji
 #   m        : 1024 4096 8192                          (3)
-#   -> 12 cells, each cell = 2 perf invocations (group A + group B)
-#      = 24 perf stat runs.
+#   -> 30 cells, each cell = 2 perf invocations (group A + group B)
+#      = 60 perf stat runs.
 #
 # Total wall time: dominated by naive at m=8192, which is the
-# memory-bound corner. Expect ~5-10 minutes on the 4600H.
+# memory-bound corner. Expect ~10-20 minutes on the 4600H.
 #
 # This script is the convenience entry point. profile_perf_zen2.sh
 # is the per-cell primitive and can be called directly with custom
@@ -31,7 +33,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-VARIANTS=(${VARIANTS:-naive recursive morton morton_avx2})
+VARIANTS=(${VARIANTS:-naive recursive morton morton_avx2 loop_ijk loop_ikj loop_jik loop_jki loop_kij loop_kji})
 MS=(${MS:-1024 4096 8192})
 ITERS_PER_RUN=${ITERS_PER_RUN:-1}
 RUNS=${RUNS:-3}

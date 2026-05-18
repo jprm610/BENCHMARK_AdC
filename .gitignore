@@ -5,6 +5,7 @@ build/
 *.a
 *.so
 *.dSYM/
+*.pem
 
 # Profiling outputs
 gmon.out
