@@ -541,7 +541,7 @@ profile_zen2_one: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
 
 profile_zen2: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
               $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOP_O3)
-	bash scripts/run_perf_zen2_sweep.sh
+	$(if $(M),MS="$(M)" )bash scripts/run_perf_zen2_sweep.sh
 	python3 scripts/consolidate_perf_zen2.py
 
 consolidate_zen2:

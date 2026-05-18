@@ -151,8 +151,7 @@ run_group() {
         tail -20 "${out_file}.bench.err" >&2 || true
         return 1
     fi
-    # Strip the bench stderr noise (we keep the .bench.err file for
-    # debugging if needed).
+    [ -s "${out_file}.bench.err" ] || rm -f "${out_file}.bench.err"
     echo "  wrote $out_file" >&2
 }
 
