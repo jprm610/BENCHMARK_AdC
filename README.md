@@ -3,7 +3,7 @@
 **Curso:** Arquitectura de Computadores
 **Universidad:** Universidad Nacional de Colombia, Sede Medellin
 **Fecha:** Mayo 2026
-**Estado:** Fase 1 cerrada (baseline + profiling + escalamiento con $m$); Fase 6 (cache-oblivious recursivo + Morton) con codigo y validacion completos, sweeps masivos pendientes para la Sesion 03.
+**Estado:** Fase 1 cerrada (baseline + profiling + escalamiento con $m$); Fase 6 cerrada (cache-oblivious recursivo + Morton); Sesion 03 cerrada (microkernel AVX2 + FMA, OpenMP tasks, perf Zen 2, Roofline anclado al $4600$H).
 
 ---
 
@@ -32,39 +32,73 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 ```
 .
 |-- README.md                          -> Este archivo
-|-- Makefile                           -> Targets de compilacion y profiling
+|-- Makefile                           -> Targets de compilacion, profiling y graficas
 |-- docs/
 |   |-- API.md                         -> Contrato publico de las funciones
 |   |-- SESION_01_RESUMEN.md           -> Resumen para retomar Fase 1
-|   |-- PLAN_FASE6.md                  -> Plan ejecutivo de la Fase 6
-|   `-- SESION_02_RESUMEN.md           -> Resumen para retomar Fase 6
+|   |-- PLAN_FASE6.md                  -> Plan ejecutivo de la Fase 6 (Sesion 02)
+|   |-- SESION_02_RESUMEN.md           -> Resumen para retomar Fase 6
+|   |-- PROMPTS_SESION_02.md           -> Guion de prompts de la Sesion 02
+|   |-- PLAN_SESION_03.md              -> Plan tecnico de la Sesion 03 + bitacora de hallazgos
+|   |-- PROMPTS_SESION_03.md           -> Guion completo de los 10 prompts de la Sesion 03
+|   `-- SESION_03_RESUMEN.md           -> Resumen para retomar Sesion 03
 |-- src/
-|   |-- matmul_naive.{h,c}             -> Baseline ijk (Fase 1)
+|   |   # Fase 1 (Sesion 01) - baseline inmutable
+|   |-- matmul_naive.{h,c}             -> Baseline ijk
 |   |-- matrix_utils.{h,c}             -> Helpers (alocacion, init, comparacion)
 |   |-- timing.h                       -> clock_gettime(CLOCK_MONOTONIC) inline
-|   |-- bench_naive.c                  -> Driver baseline (bench_naive_O0)
-|   |-- validate_naive.c               -> Verificador baseline (validate_naive_O0)
-|   |-- matmul_recursive.{h,c}         -> Kernel recursivo row-major (Fase 6 A2)
-|   |-- morton.{h,c}                   -> Encoding Z-order + reorganizacion (Fase 6 A3)
-|   |-- matmul_morton.{h,c}            -> Kernel recursivo con A en Morton (Fase 6 A3)
+|   |-- bench_naive.c                  -> Driver bench_naive_O0
+|   |-- validate_naive.c               -> Verificador baseline
+|   |   # Fase 6 (Sesion 02) - cache-oblivious + Morton fino
+|   |-- matmul_recursive.{h,c}         -> Kernel recursivo row-major (Etapa A2)
+|   |-- morton.{h,c}                   -> Encoding Z-order + reorganizacion (Etapa A3)
+|   |-- matmul_morton.{h,c}            -> Kernel recursivo con A en Morton fino (A3)
 |   |-- test_morton.c                  -> Tests unitarios del modulo Morton
 |   |-- bench_recursive.c              -> Driver bench_recursive_O0
-|   |-- validate_recursive.c           -> Driver validate_recursive_O0
-|   |-- bench_morton.c                 -> Driver bench_morton_O0
-|   `-- validate_morton.c              -> Driver validate_morton_O0
+|   |-- validate_recursive.c           -> Verificador recursive
+|   |-- bench_morton.c                 -> Driver bench_morton_O0 (potencia de 2)
+|   |-- validate_morton.c              -> Verificador morton
+|   |   # Sesion 03 - microkernel AVX2 + OpenMP + perf Zen 2
+|   |-- hwinfo.c                       -> Fingerprint runtime del CPU
+|   |-- kernel_avx2.{h,c}              -> Microkernel AVX2 + FMA 4x16 (Etapa A4)
+|   |-- test_kernel_avx2.c             -> Unit test del microkernel
+|   |-- matmul_morton_avx2.{h,c}       -> Morton-de-bloques + microkernel (Etapa A4)
+|   |-- bench_morton_avx2.c            -> Driver bench_morton_avx2_O3
+|   |-- validate_morton_avx2.c         -> Verificador AVX2 (cross naive + morton)
+|   |-- matmul_morton_omp.{h,c}        -> Variante paralela OpenMP tasks (Etapa A5)
+|   |-- bench_morton_omp.c             -> Driver bench_morton_omp_O3
+|   `-- validate_morton_omp.c          -> Verificador OMP a 1/4/12 threads
 |-- scripts/
+|   |   # Fase 1 (Sesion 01)
 |   |-- run_sweep_naive.sh             -> Sweep baseline + gprof + perf
-|   |-- profile_gprof_naive.sh         -> gprof standalone para baseline
-|   |-- profile_perf_naive.sh          -> perf standalone para baseline
+|   |-- profile_gprof_naive.sh         -> gprof standalone
+|   |-- profile_perf_naive.sh          -> perf standalone
 |   |-- plot_results.py                -> Graficas del baseline
+|   |   # Fase 6 (Sesion 02)
 |   |-- run_sweep_recursive.sh         -> Sweep -> results/recursive_O0.csv
 |   |-- run_sweep_morton.sh            -> Sweep -> results/morton_O0.csv (potencias de 2)
 |   |-- plot_comparison.py             -> 3 CSV -> comparison_all.csv + 4 PNG
 |   |-- profile_perf_compare.sh        -> perf stat sobre los 3 binarios
-|   `-- plot_perf_compare.py           -> perf_compare.csv -> 3 PNG + tabla
-|-- results/                            -> CSV y reportes de profiling (gitignore)
-|-- plots/                              -> Imagenes generadas (gitignore)
-`-- bin/                                -> Binarios compilados (gitignore)
+|   |-- plot_perf_compare.py           -> perf_compare.csv -> 3 PNG + tabla
+|   |   # Sesion 03
+|   |-- audit_no_pdep.sh               -> Auditoria de PDEP/PEXT (Zen 2)
+|   |-- run_threshold_sweep.sh         -> Tuning empirico RECURSION_THRESHOLD
+|   |-- plot_threshold_sweep.py        -> Plot del threshold sweep
+|   |-- run_sweep_session_03.sh        -> Sweep comparativo 4 variantes
+|   |-- plot_sweep_session_03.py       -> 2 PNG (gflops y speedup vs naive)
+|   |-- run_sweep_morton_avx2_xl.sh    -> Extension de morton_avx2 hasta m=32768
+|   |-- plot_morton_avx2_xl.py         -> Plot de la extension
+|   |-- run_omp_scaling.sh             -> Escalado threads 1..12 close/spread
+|   |-- plot_omp_scaling.py            -> Plot escalado OMP
+|   |-- profile_perf_zen2.sh           -> Captura perf por celda (variant, m)
+|   |-- run_perf_zen2_sweep.sh         -> Orquesta 12 celdas (4 variantes x 3 m)
+|   |-- consolidate_perf_zen2.py       -> Consolida grupos A+B -> perf_zen2_summary.csv
+|   |-- plot_perf_zen2.py              -> 4 paneles: IPC, FMA, L3 miss, TLB walks
+|   |-- measure_stream.sh              -> Descarga, compila y corre STREAM (Triad 1T y 6T)
+|   `-- plot_roofline.py               -> Roofline anclado a STREAM medido
+|-- results/                            -> CSV y reportes de profiling (gitignored)
+|-- plots/                              -> Imagenes generadas (gitignored salvo perf_zen2 / roofline)
+`-- bin/                                -> Binarios compilados (gitignored)
 ```
 
 ---
@@ -415,6 +449,59 @@ make plots_perf          # produce 3 PNG + plots/perf_summary_table.txt
 
 Captura siete eventos (`L1-dcache-loads`, `L1-dcache-load-misses`, `LLC-loads`, `LLC-load-misses`, `dTLB-load-misses`, `cycles`, `instructions`) para los tres kernels en $m \in \{1024, 2048, 4096, 8192\}$. Si `perf` falla por permisos, el script imprime el comando exacto para arreglarlo (referencia a la seccion 3.3).
 
+### 5.6 Flujo de Sesion 03: microkernel AVX2 + OpenMP + Roofline
+
+La Sesion 03 lleva el proyecto al hardware del Ryzen $5$ $4600$H (Zen $2$): microkernel AVX2 + FMA $4 \times 16$, paralelizacion con OpenMP tasks, profiling con eventos PMC de Zen $2$ y Roofline anclado al bandwidth STREAM medido. Todos los targets nuevos viven bajo el bloque `# === Sesion 03 targets ===` del `Makefile` y no tocan los pipelines de Fases $1$ ni $6$.
+
+#### 5.6.1 Targets de un solo comando
+
+```bash
+make audit                            # auditoria PDEP/PEXT (imprime PASS / FAIL)
+make hwinfo                           # bin/hwinfo: caracteristicas del CPU en runtime
+make sweep_threshold                  # mide el RECURSION_THRESHOLD optimo de Morton
+make validate_morton_avx2             # cross-valida la variante AVX2 contra naive y morton
+make bench_morton_avx2                # bench single-core del microkernel AVX2
+OMP_NUM_THREADS=6 make bench_morton_omp   # version paralela (OpenMP tasks)
+make sweep_session_03                 # sweep comparativo de las 4 variantes en m={512..16384}
+make stream                           # mide DRAM bandwidth con STREAM (Triad 1T y 6T)
+make profile_zen2                     # captura 12 celdas de eventos perf Zen 2
+make plot_roofline                    # genera plots/roofline_4600h.png anclado al STREAM medido
+```
+
+`make audit` debe ejecutarse antes de cualquier bench: BMI2 en Zen $2$ esta microcodeado ($\sim 18$ ciclos para `PDEP`/`PEXT`) y un uso incidental degradaria el throughput sin notarlo. El script verifica que ningun modulo Morton emite `pdep` ni `pext` en el ensamblador.
+
+`make profile_zen2` requiere `kernel.perf_event_paranoid <= 2`. Ajustar una vez por boot con:
+
+```bash
+sudo sysctl -w kernel.perf_event_paranoid=1
+```
+
+#### 5.6.2 Variables de entorno para `bench_morton_omp`
+
+| Variable | Default util en el $4600$H | Efecto |
+|----------|-----------------------------|--------|
+| `OMP_NUM_THREADS` | `6` (un thread por core fisico) | $12$ activa SMT, suma rendimiento pero con eficiencia baja. |
+| `OMP_PROC_BIND`   | `close` (recomendado)           | Mantiene threads en el mismo CCX. `spread` los reparte entre los $2$ CCXs. |
+| `OMP_PLACES`      | `cores`                         | Une cada thread a un core fisico. |
+
+Mejor combinacion empirica para throughput puro (sweep de Prompt $6$, `results/omp_scaling.csv`): `OMP_NUM_THREADS=12 OMP_PROC_BIND=close` toca $\sim 256$ GFLOPS a $m = 8192$ y $\sim 262$ GFLOPS a $m = 4096$. Para single-CCX limpio (e.g. compartiendo el laptop con otras cargas): `OMP_NUM_THREADS=3 OMP_PROC_BIND=close`.
+
+#### 5.6.3 Reproducir el Roofline completo
+
+```bash
+source ~/venvs/matmul/bin/activate
+sudo sysctl -w kernel.perf_event_paranoid=1
+
+make audit                            # PASS
+make sweep_session_03 plot_session_03  # ~25 min, plots/session_03_*.png
+make profile_zen2 plot_perf_zen2       # ~5  min, plots/perf_zen2_breakdown.png
+make stream                            # ~2  min
+make profile_zen2_omp                  # ~3  min, perf de morton_omp para el Roofline
+make plot_roofline                     # < 1 min, plots/roofline_4600h.png
+```
+
+Mejor resultado esperado al cierre: `morton_avx2` a $\sim 40$ GFLOPS bench-wide a $m = 8192$ ($\sim 64 \%$ del techo FMA single-core medido con perf), y `morton_omp` a $\sim 260$ GFLOPS con $12$ threads `close` segun `omp_scaling.csv`. El reporte completo de hallazgos esta en [`docs/SESION_03_RESUMEN.md`](docs/SESION_03_RESUMEN.md).
+
 ---
 
 ## 6. Paso 2: profiling
@@ -548,9 +635,9 @@ Las fases siguientes mantendran la misma API descrita en `docs/API.md` y se suma
 |------|-----------------|--------|
 | 2 | Reordenamiento de bucles (ikj, kij) + pre-transposicion de $A$ | pendiente (Camino B, Juan Pablo) |
 | 3 | Tiling de un nivel para L2 + padding anti-conflict-misses | pendiente |
-| 4 | Flags de compilador y auto-vectorizacion (`-O3 -march=native`) | pendiente |
-| 5 | OpenMP + comparacion con OpenBLAS | pendiente |
-| 6 / Opcional | Matmul recursivo cache-oblivious + layout Morton sobre $A$ | **codigo y validacion COMPLETADOS** (Sesion 02); sweep masivo + perf compare pendientes para Sesion 03 |
+| 4 | Flags de compilador y auto-vectorizacion (`-O3 -march=native`) | **COMPLETADO** como parte de la Sesion 03 (microkernel AVX2 + FMA explicito sobre Zen $2$) |
+| 5 | OpenMP + comparacion con OpenBLAS | OpenMP **COMPLETADO** (Sesion 03, `matmul_morton_omp`); comparacion OpenBLAS pendiente para Sesion 04 |
+| 6 / Opcional | Matmul recursivo cache-oblivious + layout Morton sobre $A$ | **COMPLETADO** (Sesion 02 codigo y validacion; Sesion 03 sweep masivo, perf compare, Roofline) |
 
 El proyecto **esta disenado para que cada fase se entregue de forma incremental** y se pueda comparar contra el baseline producido aqui.
 

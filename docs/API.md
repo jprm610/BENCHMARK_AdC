@@ -678,6 +678,211 @@ Todos extienden el Makefile **al final**, sin modificar las recetas del baseline
 
 ---
 
-## 11. Cambios y versionado
+## 11. Modulo `kernel_avx2` (Sesion 03, Etapa A4)
+
+**Archivo:** [`src/kernel_avx2.h`](../src/kernel_avx2.h), [`src/kernel_avx2.c`](../src/kernel_avx2.c).
+
+Microkernel AVX2 + FMA que acumula un tile fijo de $4 \times 16$ de $C$. Los $4 \times 16 = 64$ elementos del tile viven en $8$ registros YMM (4 filas $\times$ 2 vectores de 8 lanes FP32). Queda mitad del banco de YMM libre para los broadcasts de $A$ y los loads de $B$, condicion necesaria para mantener los dos pipes FMA del Zen 2 saturados sin spill.
+
+### 11.1 `kernel_avx2_4x16`
+
+```c
+void kernel_avx2_4x16(scalar_t       *restrict C, size_t ldc,
+                      const scalar_t *restrict A, size_t lda,
+                      const scalar_t *restrict B, size_t ldb,
+                      size_t kc);
+```
+
+**Computa** $C \mathrel{+}= A \cdot B$ sobre el tile fijo $4 \times 16$. La semantica es de **acumulacion**: el caller que necesite un $C$ limpio debe inicializarlo en cero antes de la invocacion.
+
+**Parametros:**
+
+- `C` *(in / out)*: matriz destino, $4$ filas $\times \geq 16$ columnas, row-major. Acumulado en sitio.
+- `lda`, `ldb`, `ldc`: leading dimensions de $A$, $B$, $C$ en sus buffers originales (numero de columnas por fila).
+- `A` *(in)*: panel de $4 \times kc$. Acceso interno solo a `A[r * lda + p]` con $r \in [0, 4)$ y $p \in [0, kc)$.
+- `B` *(in)*: panel de $kc \times 16$.
+- `kc`: longitud de la dimension contraida ($kc \geq 1$).
+
+**Precondiciones:**
+
+- `kc >= 1`, `lda >= kc`, `ldb >= 16`, `ldc >= 16`.
+- `C`, `A`, `B` no aliasan (`restrict`).
+- Alineacion a $32$ bytes es preferida pero **no obligatoria**: la implementacion usa `_mm256_loadu_ps` / `_mm256_storeu_ps`. El caller que pueda garantizar alineacion paga menos en el front-end.
+
+**Postcondiciones:**
+
+- $C[r, c] \mathrel{+}= \sum_{p=0}^{kc-1} A[r, p] \cdot B[p, c]$ para todo $(r, c)$ con $r \in [0, 4)$ y $c \in [0, 16)$. $A$ y $B$ no se modifican.
+
+**Compilacion.** El objeto `build/obj/kernel_avx2.o` se compila aparte con flags Stage A4:
+
+```
+-O3 -march=znver2 -mavx2 -mfma -funroll-loops -ffast-math
+```
+
+`-Wpedantic` se omite porque los tipos `__m256` son extensiones GCC. `-ffast-math` autoriza reasociacion de la suma FP, lo que el microkernel necesita para emitir las cadenas FMA, pero a cambio acumula un poco mas de error de redondeo (relevante para las tolerancias de validacion del modulo $matmul\_morton\_avx2$).
+
+**Performance esperada.** El techo single-core del Zen 2 es $2$ FMA $\times$ $8$ lanes $\times$ $2$ flops/op $\times$ $4.0$ GHz $= 128$ GFLOPS en FP32. En hojas cuyo working set cabe en L1d ($\leq 32$ KiB) el microkernel toca $\sim 8$–$10$ FMA-ops por ciclo (medido `fp_ret_sse_avx_ops.all`/cycle en Prompt 7), lo que se traduce en $\sim 80$ a $90$ GFLOPS sostenidos a la frecuencia turbo bajo carga AVX2. Es el techo computacional real para una sola hoja; el throughput de `matmul_morton_avx2` sobre la matriz completa es menor por el costo de materializacion de paneles y el trafico de $B$ desde L2/L3.
+
+### 11.2 Constantes de geometria
+
+```c
+#define KERNEL_AVX2_MR 4    /* filas por tile */
+#define KERNEL_AVX2_NR 16   /* columnas por tile */
+```
+
+Expuestas para que `matmul_morton_avx2` y el test de unidad calcen sus bloques al tile sin redeclarar las magic numbers.
+
+---
+
+## 12. Modulo `matmul_morton_avx2` (Sesion 03, Etapa A4 integracion)
+
+**Archivo:** [`src/matmul_morton_avx2.h`](../src/matmul_morton_avx2.h), [`src/matmul_morton_avx2.c`](../src/matmul_morton_avx2.c).
+
+Variante de `matmul_morton` cuyo leaf invoca el microkernel AVX2 de la Seccion 11. La recursion sigue la misma estructura cache-oblivious (Caso N independiente, Caso MK acoplado en cuatro cuadrantes) pero el layout de $A$ cambia.
+
+### 12.1 Layout Morton-de-bloques (tile = 4)
+
+Sesion 02 (Morton "fino"): cada elemento $A[i, j]$ ocupa la posicion `morton_encode(i, j)`. Sesion 03 (Morton "de bloques"): $A$ se particiona en sub-bloques $\text{MR} \times \text{MR}$ con $\text{MR} = 4$; los sub-bloques se Z-ordenan entre si, y los $16$ elementos de cada sub-bloque quedan en row-major. La posicion de $A[i, j]$ es:
+
+$$
+A\_idx = \text{morton\_encode}(i / \text{MR}, j / \text{MR}) \cdot \text{MR}^2 + (i \bmod \text{MR}) \cdot \text{MR} + (j \bmod \text{MR})
+$$
+
+La **propiedad de contiguidad** (Seccion 8.1) se preserva: cuatro cuadrantes de lado $h$ siguen ocupando offsets $\{0, 1, 2, 3\} \cdot h^2$ desde el padre. Solo cambia el significado del nivel hoja: bloque $4 \times 4$ de floats en lugar de un solo float. El layout fino y el de bloques **coexisten**; `matmul_morton.{c,h}` queda intacto.
+
+### 12.2 `matmul_morton_avx2`
+
+```c
+void matmul_morton_avx2(scalar_t *C,
+                        const scalar_t *A_morton,
+                        const scalar_t *B,
+                        size_t m, size_t k, size_t n);
+```
+
+**Computa** $C = A_{\text{morton}} \cdot B$ donde `A_morton` esta en Morton-de-bloques (Seccion 12.1). Misma forma que `matmul_naive`: $C$ es $m \times n$ (out), $A$ es $m \times k$ (in, Morton-de-bloques), $B$ es $k \times n$ (in, row-major).
+
+**Precondiciones:**
+
+- $m = k$ (matriz cuadrada).
+- $m$ potencia de $2$ y $m \geq \text{MR} = 4$.
+- $n \geq \text{NR} = 16$ (recomendado: $n$ multiplo de $\text{NR}$; las trozas no alineadas caen al fallback `ijk` sin vectorizar).
+- `A_morton` producido por `reorganize_to_morton_blocks` (Seccion 12.4).
+- `C` no aliasa con `A_morton` ni con $B$.
+
+Cualquier violacion de los chequeos sobre $m$ y $k$ aborta con `fprintf(stderr, ...) + exit(EXIT_FAILURE)`, igual que `matmul_morton`.
+
+**Tolerancia de validacion.** $\text{abs\_tol} = 10^{-3}$ relativo (contra $10^{-4}$ del Morton fino). El relajamiento es necesario porque `-ffast-math` autoriza reasociacion de suma FP en el kernel, acumulando mas error.
+
+### 12.3 Threshold de hoja y ajuste empirico
+
+```c
+extern size_t g_recursion_threshold_avx2;
+void matmul_morton_avx2_set_threshold(size_t threshold);
+```
+
+Variable global con default $64 \cdot 64 \cdot 128 = 524288$ flops elementales, equivalente a una hoja de $64 \times 64$ floats por panel de $A$ (working set $\sim 16$ KiB, mitad de L1d en el $4600$H). El setter acepta cualquier valor positivo; pasar $0$ imprime un warning y deja el default. La constante esta separada de `g_recursion_threshold` (Sesion 02) porque los regimenes son distintos: el microkernel AVX2 amortiza una hoja mucho mas grande que el `ijk + morton_encode` ingenuo, asi que el threshold optimo es mayor.
+
+### 12.4 `reorganize_to_morton_blocks`
+
+```c
+void reorganize_to_morton_blocks(const scalar_t *A_row,
+                                 scalar_t *A_morton,
+                                 size_t m);
+```
+
+Reorganiza una matriz row-major $m \times m$ al layout Morton-de-bloques consumido por `matmul_morton_avx2`. Aborta si $m$ no es multiplo de $\text{MR}$ o si $m / \text{MR}$ no es potencia de $2$. El caller aloja `A_morton` con capacidad para $m^2$ elementos (tipicamente `xalloc_aligned`).
+
+Complejidad: $O(m^2)$. Se ejecuta una sola vez antes de la recurrencia $B_{i+1} = A \cdot B_i$, igual que en Sesion 02.
+
+### 12.5 Orquestadores
+
+```c
+void benchmark_iterations_morton_avx2(scalar_t *B_out,
+                                      const scalar_t *A,
+                                      const scalar_t *Z,
+                                      size_t m, size_t n,
+                                      size_t num_iters);
+
+void benchmark_iterations_morton_avx2_preorganized(scalar_t *B_out,
+                                                   const scalar_t *A_morton,
+                                                   const scalar_t *Z,
+                                                   size_t m, size_t n,
+                                                   size_t num_iters);
+```
+
+Misma semantica que sus contrapartes en `matmul_morton`. El primero reorganiza $A$ internamente (la conversion entra en el tiempo medido); el segundo recibe $A$ ya reorganizado y es el que usa `bench_morton_avx2_O3`.
+
+---
+
+## 13. Modulo `matmul_morton_omp` (Sesion 03, Etapa A5)
+
+**Archivo:** [`src/matmul_morton_omp.h`](../src/matmul_morton_omp.h), [`src/matmul_morton_omp.c`](../src/matmul_morton_omp.c).
+
+Variante paralela de `matmul_morton_avx2`. Reusa el microkernel AVX2 y el layout Morton-de-bloques; agrega `#pragma omp parallel single` en el wrapper publico y emite OpenMP tasks en cada subdivision recursiva por encima del threshold de paralelizacion. El scratch buffer del leaf pasa a ser un pool por-thread indexado por `omp_get_thread_num()` para que las hojas paralelas no compartan memoria intermedia.
+
+### 13.1 `matmul_morton_omp`
+
+```c
+void matmul_morton_omp(scalar_t *C,
+                       const scalar_t *A_morton,
+                       const scalar_t *B,
+                       size_t m, size_t k, size_t n);
+```
+
+**Contrato de forma** identico a `matmul_morton_avx2`: $C$ es $m \times n$ (out), `A_morton` es $m \times k$ en Morton-de-bloques, $B$ es $k \times n$ row-major, mismas precondiciones ($m = k$ potencia de $2$, $m \geq \text{MR}$).
+
+### 13.2 Thresholds (dos knobs independientes)
+
+```c
+extern size_t g_recursion_threshold_omp;
+extern size_t g_parallel_threshold_omp;
+void matmul_morton_omp_set_threshold         (size_t threshold);
+void matmul_morton_omp_set_parallel_threshold(size_t threshold);
+```
+
+- `g_recursion_threshold_omp` (default $524288$): tamano del sub-problema en que la recursion cae al leaf kernel. Mismo rol que `g_recursion_threshold_avx2`.
+- `g_parallel_threshold_omp` (default $524288$): tamano por debajo del cual la recursion deja de emitir `omp task` y corre inline. Con el default igual al leaf threshold, las tasks disparan en cada nivel sobre la hoja y nunca dentro de ella.
+
+Las globals se mantienen separadas de las de `matmul_morton_avx2` para poder tunear la variante paralela sin alterar las mediciones del modulo serial.
+
+### 13.3 Variables de entorno relevantes
+
+| Variable | Efecto | Default usado en el bench |
+|----------|--------|---------------------------|
+| `OMP_NUM_THREADS` | Numero de threads. Si se omite, OpenMP usa todos los logicos (12 en el 4600H con SMT). | 6 (un thread por core fisico). |
+| `OMP_PROC_BIND`   | `close` mantiene threads en el mismo CCX (3 cores + L3 4 MiB privada). `spread` los reparte entre los 2 CCXs. | Ver Seccion 13.4. |
+| `OMP_PLACES`      | `cores` une cada thread a un core fisico (evita migracion entre core y SMT sibling). | `cores`. |
+
+### 13.4 Recomendacion para el Ryzen 5 4600H
+
+El chip Renoir tiene **2 CCX de 3 cores cada uno**, con L3 de $4$ MiB privada por CCX. Threads que cruzan CCX pierden la coherencia de L3 y pagan trafico por el Infinity Fabric. Esto define dos regimenes:
+
+- **`OMP_NUM_THREADS=3 OMP_PROC_BIND=close`**: la opcion mas limpia para validaciones single-CCX y para diagnostico de scaling intra-cluster. Speedup cercano a lineal hasta $3$ threads; mas alla mete trafico cross-CCX y no escala.
+- **`OMP_NUM_THREADS=6 OMP_PROC_BIND=close`**: usa los $6$ cores fisicos repartidos entre los dos CCXs respetando la afinidad de cada thread a su core. Es el **default recomendado** y el usado en el sweep de Prompt 6 (`scripts/run_omp_scaling.sh`). En `omp_scaling.csv` se observan picos cercanos a este modo a $m = 8192$.
+- **`OMP_NUM_THREADS=6 OMP_PROC_BIND=spread`**: distribuye los threads para maximizar L3 compartido por thread, util cuando el working set por thread es grande. Comparable a `close` en GFLOPS sostenidos para $m \geq 4096$.
+
+El SMT a $12$ threads aporta poco en este kernel: AVX2 + FMA ya satura los recursos de retirement; los hilos SMT extra se traducen en `cycles` mayores con la misma `fp_ops_per_cycle`.
+
+### 13.5 Orquestadores
+
+```c
+void benchmark_iterations_morton_omp(scalar_t *B_out,
+                                     const scalar_t *A,
+                                     const scalar_t *Z,
+                                     size_t m, size_t n,
+                                     size_t num_iters);
+
+void benchmark_iterations_morton_omp_preorganized(scalar_t *B_out,
+                                                  const scalar_t *A_morton,
+                                                  const scalar_t *Z,
+                                                  size_t m, size_t n,
+                                                  size_t num_iters);
+```
+
+Misma estructura que en los modulos anteriores: el primero reorganiza $A$ internamente y la conversion entra en el tiempo medido; el segundo recibe $A$ ya en Morton-de-bloques y es el que usa `bench_morton_omp_O3`.
+
+---
+
+## 14. Cambios y versionado
 
 Este documento se actualiza con cada PR que toque la API publica. La regla es: **si una firma de funcion cambia, este documento debe cambiar en el mismo commit**.

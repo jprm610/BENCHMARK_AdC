@@ -1,33 +1,33 @@
 /*
- * bench_morton.c - Driver that runs the iterated Morton matmul benchmark
- * for one problem size m and prints a CSV line to stdout.
+ * bench_morton_omp.c - Driver that runs the iterated Morton matmul
+ * benchmark with the OpenMP-parallelized AVX2 microkernel.
  *
- * Same CLI, same warm-up + median pattern, and same CSV format as
- * bench_naive_O0 and bench_recursive_O0. The differences are:
- *   1. m must be a power of two; the driver aborts otherwise.
- *   2. A is reorganized to Morton ONCE, outside the measured region (and
- *      outside the warm-up), so the timing reflects only the Morton
- *      kernel itself. The reorganization is O(m^2); excluding it makes
- *      the GFLOP/s number comparable to the recursive row-major bench.
+ * Same CLI shape as bench_morton_avx2 plus a second optional flag
+ * for the parallel threshold:
  *
- * Usage:
- *   bench_morton_O0 <m> [num_iters] [num_runs] [--threshold N]
+ *   bench_morton_omp_O3 <m> [num_iters] [num_runs] \
+ *                       [--threshold N] [--parallel-threshold N]
  *
- * The optional --threshold flag overrides g_recursion_threshold via
- * matmul_morton_set_threshold(N) BEFORE the warm-up runs, so every
- * timed iteration uses the requested value. Used by
- * scripts/run_threshold_sweep.sh (Sesion 03 / Prompt 2).
+ * Thread count and binding come from the OpenMP environment:
+ *   OMP_NUM_THREADS, OMP_PLACES, OMP_PROC_BIND.
  *
- * Output: m,n,num_iters,median_seconds,gflops
+ * Output: m,n,num_iters,median_seconds,gflops (same columns as the
+ * other bench drivers so the same downstream readers work).
+ *
+ * Reads omp_get_max_threads() inside main and prints it as a
+ * leading INFO line to stderr so it does not contaminate the CSV.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "matmul_naive.h"        /* for scalar_t */
-#include "matmul_morton.h"
-#include "morton.h"              /* for reorganize_to_morton, is_power_of_two */
+#include <omp.h>
+
+#include "matmul_naive.h"            /* scalar_t */
+#include "matmul_morton_avx2.h"      /* reorganize_to_morton_blocks */
+#include "matmul_morton_omp.h"
+#include "morton.h"                  /* is_power_of_two */
 #include "matrix_utils.h"
 #include "timing.h"
 
@@ -45,23 +45,27 @@ static int compare_double(const void *a, const void *b)
 static void usage(const char *progname)
 {
     fprintf(stderr,
-            "Usage: %s <m> [num_iters] [num_runs] [--threshold N]\n"
-            "  m              : problem size (m x m matrix A; m must be a power of 2)\n"
-            "  num_iters      : iterations of the benchmark per run "
+            "Usage: %s <m> [num_iters] [num_runs] "
+            "[--threshold N] [--parallel-threshold N]\n"
+            "  m                      : m x m matrix A; m power of 2, m >= 4\n"
+            "  num_iters              : iterations per measured run "
             "(default: min(2m/n, %d))\n"
-            "  num_runs       : number of measured runs for median timing "
+            "  num_runs               : measured runs for median "
             "(default: %d)\n"
-            "  --threshold N  : override g_recursion_threshold before the warm-up\n"
-            "                   (default: matmul_morton uses 32*32*128 = 131072)\n",
+            "  --threshold N          : g_recursion_threshold_omp "
+            "(default 524288)\n"
+            "  --parallel-threshold N : g_parallel_threshold_omp "
+            "(default 524288)\n"
+            "OMP knobs: OMP_NUM_THREADS, OMP_PLACES, OMP_PROC_BIND.\n",
             progname, MAX_MEAS_ITERS, DEFAULT_RUNS);
 }
 
 int main(int argc, char **argv)
 {
-    /* Two-pass CLI parsing: first sweep the argv for --threshold and
-     * pull the value out, then process the remaining tokens as
-     * positional arguments. */
-    size_t threshold_override = 0;        /* 0 means "do not override" */
+    /* Two-pass CLI: scan for flags, then positional args. */
+    size_t threshold_override          = 0;
+    size_t parallel_threshold_override = 0;
+    int parallel_threshold_set         = 0;
     char *positional[3] = {NULL, NULL, NULL};
     int n_positional = 0;
 
@@ -75,12 +79,32 @@ int main(int argc, char **argv)
             long long t_in = atoll(argv[i + 1]);
             if (t_in <= 0) {
                 fprintf(stderr,
-                        "Error: --threshold value must be a positive integer (got '%s').\n",
-                        argv[i + 1]);
+                        "Error: --threshold must be a positive integer "
+                        "(got '%s').\n", argv[i + 1]);
                 return EXIT_FAILURE;
             }
             threshold_override = (size_t)t_in;
-            ++i;  /* skip the value */
+            ++i;
+            continue;
+        }
+        if (strcmp(argv[i], "--parallel-threshold") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr,
+                        "Error: --parallel-threshold requires a value.\n");
+                usage(argv[0]);
+                return EXIT_FAILURE;
+            }
+            /* Zero is permitted: it means run sequentially. */
+            long long t_in = atoll(argv[i + 1]);
+            if (t_in < 0) {
+                fprintf(stderr,
+                        "Error: --parallel-threshold must be >= 0 "
+                        "(got '%s').\n", argv[i + 1]);
+                return EXIT_FAILURE;
+            }
+            parallel_threshold_override = (size_t)t_in;
+            parallel_threshold_set = 1;
+            ++i;
             continue;
         }
         if (n_positional >= 3) {
@@ -110,10 +134,10 @@ int main(int argc, char **argv)
                 (unsigned long long)m, (unsigned long long)n);
         return EXIT_FAILURE;
     }
-    if (!is_power_of_two(m)) {
+    if (!is_power_of_two(m) || m < (size_t)MORTON_AVX2_TILE) {
         fprintf(stderr,
-                "Error: m (%llu) must be a power of two for the Morton kernel.\n",
-                (unsigned long long)m);
+                "Error: m (%llu) must be a power of two and >= %d.\n",
+                (unsigned long long)m, MORTON_AVX2_TILE);
         return EXIT_FAILURE;
     }
 
@@ -138,14 +162,23 @@ int main(int argc, char **argv)
         num_runs = (size_t)r_in;
     }
 
-    /* Apply the threshold override, if any, BEFORE the warm-up so every
-     * timed iteration sees the same recursion budget. */
     if (threshold_override > 0) {
-        matmul_morton_set_threshold(threshold_override);
+        matmul_morton_omp_set_threshold(threshold_override);
+    }
+    if (parallel_threshold_set) {
+        matmul_morton_omp_set_parallel_threshold(parallel_threshold_override);
     }
 
-    /* Allocate everything once. Same seeds as the other bench drivers
-     * so that cross-kernel comparison runs on identical inputs. */
+    /* INFO line to stderr so the CSV on stdout stays clean. */
+    fprintf(stderr,
+            "INFO bench_morton_omp: m=%llu n=%llu I_meas=%llu runs=%llu "
+            "threads_max=%d leaf_thr=%llu par_thr=%llu\n",
+            (unsigned long long)m, (unsigned long long)n,
+            (unsigned long long)I_meas, (unsigned long long)num_runs,
+            omp_get_max_threads(),
+            (unsigned long long)g_recursion_threshold_omp,
+            (unsigned long long)g_parallel_threshold_omp);
+
     scalar_t *A        = xalloc_aligned(m * m);
     scalar_t *A_morton = xalloc_aligned(m * m);
     scalar_t *Z        = xalloc_aligned(m * n);
@@ -154,11 +187,9 @@ int main(int argc, char **argv)
     init_matrix_random(A, m, m, 42u);
     init_matrix_random(Z, m, n, 43u);
 
-    /* Reorganize A to Morton ONCE, outside everything timed. */
-    reorganize_to_morton(A, A_morton, m);
+    reorganize_to_morton_blocks(A, A_morton, m);
 
-    /* Warm-up (unmeasured) using the preorganized variant. */
-    benchmark_iterations_morton_preorganized(B_out, A_morton, Z, m, n, 1);
+    benchmark_iterations_morton_omp_preorganized(B_out, A_morton, Z, m, n, 1);
 
     double *times = (double *)malloc(num_runs * sizeof(double));
     if (times == NULL) {
@@ -167,8 +198,8 @@ int main(int argc, char **argv)
     }
     for (size_t r = 0; r < num_runs; ++r) {
         double t0 = now_seconds();
-        benchmark_iterations_morton_preorganized(B_out, A_morton, Z,
-                                                 m, n, I_meas);
+        benchmark_iterations_morton_omp_preorganized(B_out, A_morton, Z,
+                                                     m, n, I_meas);
         double t1 = now_seconds();
         times[r] = t1 - t0;
     }
@@ -180,7 +211,7 @@ int main(int argc, char **argv)
     double total_flops    = flops_per_iter * (double)I_meas;
     double gflops         = total_flops / median_seconds / 1.0e9;
 
-    printf("morton,%llu,%llu,%llu,%.6f,%.6f\n",
+    printf("%llu,%llu,%llu,%.6f,%.6f\n",
            (unsigned long long)m,
            (unsigned long long)n,
            (unsigned long long)I_meas,
