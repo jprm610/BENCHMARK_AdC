@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """consolidate_perf_zen2.py
 
-Sesion 03 / Prompt 7 - parse the perf stat output files produced by
-profile_perf_zen2.sh and emit one row per (variant, m) into
-results/perf_zen2_summary.csv.
+Parse the perf stat output files produced by profile_perf_zen2.sh and
+emit one row per (variant, m) into results/metrics.csv.
 
 Input layout per cell (written by profile_perf_zen2.sh):
     results/perf_<variant>_m<M>_A.txt    (group A: compute side)
     results/perf_<variant>_m<M>_B.txt    (group B: memory + TLB side)
+    results/bench_<variant>_m<M>.csv     (bench stdout: timing + gflops)
 
-Each file is the output of `perf stat -x , -e <events> -o <file>`,
+Each perf file is the output of `perf stat -x , -e <events> -o <file>`,
 which writes one comment line ("# started on ...") followed by one
 line per event in CSV:
 
@@ -19,8 +19,9 @@ The count is the raw counter value, scaled up to the full run length
 if multiplexing < 100%. We surface the worst-case multiplexing
 percentage per cell so the consumer can flag low-quality cells.
 
-Output CSV columns (12 rows expected for the default sweep):
+Output CSV columns:
     variant, m,
+    median_seconds, gflops,          from bench_<variant>_m<M>.csv
     cycles, instructions, ipc,
     fp_ops, fp_ops_per_cycle,
     l1d_miss_rate,                   l2_request / loads
@@ -94,17 +95,43 @@ def get(event_map: dict[str, tuple[float, float]],
     return c, m
 
 
+def parse_bench_file(path: Path) -> tuple[float, float]:
+    """Return (median_seconds, gflops) from a bench CSV line, or (nan, nan)
+    if the file is absent or unparseable."""
+    if not path.is_file():
+        return math.nan, math.nan
+    with path.open("r") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(",")
+            try:
+                # loop variants:     order,m,n,num_iters,median_seconds,gflops (6 cols)
+                # non-loop variants: m,n,num_iters,median_seconds,gflops        (5 cols)
+                if len(parts) >= 6:
+                    return float(parts[4]), float(parts[5])
+                else:
+                    return float(parts[3]), float(parts[4])
+            except (ValueError, IndexError):
+                return math.nan, math.nan
+    return math.nan, math.nan
+
+
 def process_cell(variant: str, m: int, results_dir: Path) -> dict | None:
     """Read both group files for one (variant, m) cell, compute the
     derived metrics, and return one row (a dict). Returns None if
     neither file is present (cell was not profiled)."""
-    path_a = results_dir / f"perf_{variant}_m{m}_A.txt"
-    path_b = results_dir / f"perf_{variant}_m{m}_B.txt"
+    path_a = results_dir / variant / f"perf_{variant}_m{m}_A.txt"
+    path_b = results_dir / variant / f"perf_{variant}_m{m}_B.txt"
     events_a = parse_perf_file(path_a)
     events_b = parse_perf_file(path_b)
 
     if not events_a and not events_b:
         return None
+
+    bench_path = results_dir / variant / f"bench_{variant}_m{m}.csv"
+    median_seconds, gflops = parse_bench_file(bench_path)
 
     # cycles and instructions live in both groups; prefer A if present.
     cycles_a, mux_cycles_a = get(events_a, "cycles")
@@ -144,6 +171,8 @@ def process_cell(variant: str, m: int, results_dir: Path) -> dict | None:
     return {
         "variant": variant,
         "m": m,
+        "median_seconds": median_seconds,
+        "gflops": gflops,
         "cycles": cycles if cycles is not None else math.nan,
         "instructions": instructions if instructions is not None else math.nan,
         "ipc": ipc,
@@ -164,7 +193,7 @@ def discover_cells(results_dir: Path) -> list[tuple[str, int]]:
     --ms are not provided."""
     pattern = re.compile(r"^perf_(?P<variant>[a-z0-9_]+)_m(?P<m>\d+)_A\.txt$")
     cells: list[tuple[str, int]] = []
-    for path in sorted(results_dir.glob("perf_*_A.txt")):
+    for path in sorted(results_dir.glob("*/perf_*_A.txt")):
         match = pattern.match(path.name)
         if match:
             cells.append((match.group("variant"), int(match.group("m"))))
@@ -186,7 +215,7 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--results-dir", type=Path, default=Path("results"))
     p.add_argument("--out", type=Path,
-                   default=Path("results/perf_zen2_summary.csv"))
+                   default=Path("results/metrics.csv"))
     p.add_argument("--variants", nargs="*", default=None,
                    help="variants to consolidate "
                         "(default: discover from filenames)")
@@ -209,6 +238,7 @@ def main() -> int:
 
     columns = [
         "variant", "m",
+        "median_seconds", "gflops",
         "cycles", "instructions", "ipc",
         "fp_ops", "fp_ops_per_cycle",
         "l1d_miss_rate", "l2_load_hit_rate", "l3_miss_rate",

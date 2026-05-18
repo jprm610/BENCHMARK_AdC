@@ -529,7 +529,7 @@ plot_omp_scaling:
 #     instructions if you hit a permission error)
 # ---------------------------------------------------------------------
 
-.PHONY: profile_zen2 consolidate_zen2 plot_perf_zen2 profile_zen2_one
+.PHONY: profile_zen2 consolidate_zen2 plot_perf_zen2 profile_zen2_one results
 
 # profile_zen2_one is a thin wrapper for ad-hoc single-cell profiling
 # during development. Use as: make profile_zen2_one VARIANT=loop_ikj M=4096
@@ -543,6 +543,11 @@ profile_zen2: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
               $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOP_O3)
 	$(if $(M),MS="$(M)" )bash scripts/run_perf_zen2_sweep.sh
 	python3 scripts/consolidate_perf_zen2.py
+
+results: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
+         $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOP_O3)
+	$(if $(M),MS="$(M)" )bash scripts/run_perf_zen2_sweep.sh
+	python3 scripts/consolidate_perf_zen2.py --out results/metrics.csv
 
 consolidate_zen2:
 	python3 scripts/consolidate_perf_zen2.py

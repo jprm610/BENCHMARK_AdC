@@ -85,7 +85,7 @@ case "$VARIANT" in
         ;;
 esac
 
-RESULTS_DIR="$REPO_DIR/results"
+RESULTS_DIR="$REPO_DIR/results/$VARIANT"
 OUT_A="$RESULTS_DIR/perf_${VARIANT}_m${M}_A.txt"
 OUT_B="$RESULTS_DIR/perf_${VARIANT}_m${M}_B.txt"
 
@@ -139,13 +139,13 @@ run_group() {
     local group_name="$1"
     local events="$2"
     local out_file="$3"
+    local bench_out="${4:-/dev/null}"
 
     echo "--- group $group_name : $events" >&2
     # -x , : machine-friendly CSV output to the file specified by -o.
-    # The bench stdout (which prints its own short CSV line) is
-    # captured and discarded so it does not contaminate the perf file.
+    # bench stdout goes to bench_out (group A: timing CSV; group B: /dev/null).
     if ! perf stat -x , -e "$events" -o "$out_file" -- \
-         "$BIN" $BIN_ARGS >/dev/null 2>>"${out_file}.bench.err"; then
+         "$BIN" $BIN_ARGS >"$bench_out" 2>>"${out_file}.bench.err"; then
         echo "Error: perf returned non-zero for group $group_name." >&2
         echo "stderr from the bench (last lines):" >&2
         tail -20 "${out_file}.bench.err" >&2 || true
@@ -155,11 +155,14 @@ run_group() {
     echo "  wrote $out_file" >&2
 }
 
+BENCH_OUT="$RESULTS_DIR/bench_${VARIANT}_m${M}.csv"
+
 echo "Profiling variant=$VARIANT m=$M (iters_per_run=$ITERS_PER_RUN runs=$RUNS)" >&2
 
-run_group "A" "$EVENTS_A" "$OUT_A"
+run_group "A" "$EVENTS_A" "$OUT_A" "$BENCH_OUT"
 run_group "B" "$EVENTS_B" "$OUT_B"
 
 echo "Done. Files:" >&2
 echo "  $OUT_A" >&2
 echo "  $OUT_B" >&2
+echo "  $BENCH_OUT" >&2
