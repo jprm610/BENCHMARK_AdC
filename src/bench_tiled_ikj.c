@@ -1,5 +1,5 @@
 /*
- * bench_tiled.c - Benchmark driver for matmul_tiled.
+ * bench_tiled_ikj.c - Benchmark driver for matmul_tiled_ikj.
  *
  * Usage:
  *   bench_tiled_O3 <m> [num_iters] [num_runs]
@@ -19,7 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "matmul_tiled.h"
+#include "matmul_tiled_ikj.h"
 #include "matrix_utils.h"
 #include "timing.h"
 
@@ -91,7 +91,7 @@ int main(int argc, char **argv)
     init_matrix_random(Z, m, n, 43u);
 
     /* Warm-up: one short iteration, result discarded. */
-    benchmark_iterations_tiled(B_out, A, Z, m, n, 1);
+    benchmark_iterations_tiled_ikj(B_out, A, Z, m, n, 1);
 
     double *times = (double *)malloc(num_runs * sizeof(double));
     if (times == NULL) {
@@ -100,7 +100,7 @@ int main(int argc, char **argv)
     }
     for (size_t r = 0; r < num_runs; ++r) {
         double t0 = now_seconds();
-        benchmark_iterations_tiled(B_out, A, Z, m, n, I_meas);
+        benchmark_iterations_tiled_ikj(B_out, A, Z, m, n, I_meas);
         double t1 = now_seconds();
         times[r] = t1 - t0;
     }

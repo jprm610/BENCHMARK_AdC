@@ -549,7 +549,7 @@ BENCH_TILED_IKJ_AVX2_O3 := $(BIN_DIR)/bench_tiled_ikj_avx2_O3
 results: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
          $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_MORTON_OMP_O3) \
          $(BENCH_LOOP_O3) \
-         $(BENCH_TILED_O3) $(BENCH_TILED_IKJ_AVX2_O3) $(BENCH_TILED_IKJ_OMP_O3)
+         $(BENCH_TILED_IKJ_O3) $(BENCH_TILED_IKJ_AVX2_O3) $(BENCH_TILED_IKJ_OMP_O3)
 	$(if $(M),MS="$(M)" )bash scripts/run_perf_zen2_sweep.sh
 	python3 scripts/consolidate_perf_zen2.py --out results/metrics.csv
 
@@ -595,32 +595,32 @@ roofline: stream plot_roofline
 # bench_tiled_O3   : benchmark with the same flags as the loop-reorder
 #                    study (CFLAGS_O3_ZEN2) so results are directly
 #                    comparable with bench_loop_O3 and bench_naive_O3.
-# validate_tiled   : algebraic + cross-validation against matmul_naive,
+# validate_tiled_ikj   : algebraic + cross-validation against matmul_naive,
 #                    compiled at -O0 for deterministic numerical output.
 # =====================================================================
 
-TILED_COMMON_SRCS    := $(COMMON_SRCS) $(SRC_DIR)/matmul_tiled.c
-BENCH_TILED_SRCS     := $(TILED_COMMON_SRCS) $(SRC_DIR)/bench_tiled.c
-VALIDATE_TILED_SRCS  := $(TILED_COMMON_SRCS) $(SRC_DIR)/validate_tiled.c
+TILED_IKJ_COMMON_SRCS    := $(COMMON_SRCS) $(SRC_DIR)/matmul_tiled_ikj.c
+BENCH_TILED_IKJ_SRCS     := $(TILED_IKJ_COMMON_SRCS) $(SRC_DIR)/bench_tiled_ikj.c
+VALIDATE_TILED_IKJ_SRCS  := $(TILED_IKJ_COMMON_SRCS) $(SRC_DIR)/validate_tiled_ikj.c
 
-BENCH_TILED_O3       := $(BIN_DIR)/bench_tiled_ikj_O3
-VALIDATE_TILED_O0    := $(BIN_DIR)/validate_tiled_O0
+BENCH_TILED_IKJ_O3       := $(BIN_DIR)/bench_tiled_ikj_O3
+VALIDATE_TILED_IKJ_O0    := $(BIN_DIR)/validate_tiled_ikj_O0
 
-.PHONY: bench_tiled validate_tiled
+.PHONY: bench_tiled_ikj validate_tiled_ikj
 
-bench_tiled:    $(BENCH_TILED_O3)
-validate_tiled: $(VALIDATE_TILED_O0)
+bench_tiled_ikj:    $(BENCH_TILED_IKJ_O3)
+validate_tiled_ikj: $(VALIDATE_TILED_IKJ_O0)
 
-$(BENCH_TILED_O3): $(BENCH_TILED_SRCS) | $(BIN_DIR)
-	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_TILED_SRCS) -o $@ $(LIBS)
+$(BENCH_TILED_IKJ_O3): $(BENCH_TILED_IKJ_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_TILED_IKJ_SRCS) -o $@ $(LIBS)
 
-$(VALIDATE_TILED_O0): $(VALIDATE_TILED_SRCS) | $(BIN_DIR)
-	$(CC) $(BASE_CFLAGS) $(VALIDATE_TILED_SRCS) -o $@ $(LIBS)
+$(VALIDATE_TILED_IKJ_O0): $(VALIDATE_TILED_IKJ_SRCS) | $(BIN_DIR)
+	$(CC) $(BASE_CFLAGS) $(VALIDATE_TILED_IKJ_SRCS) -o $@ $(LIBS)
 
 # =====================================================================
 # Fase 1.3 - tiled_ikj_avx2: 6-loop blocking with AVX2+FMA vectorization
 #
-# Extends matmul_tiled (Phase 1.2) by adding a third outer blocking
+# Extends matmul_tiled_ikj (Phase 1.2) by adding a third outer blocking
 # loop over j and replacing the scalar innermost j pass with an AVX2
 # broadcast+FMA vector loop.  Both binaries are compiled with
 # CFLAGS_O3_ZEN2 because matmul_tiled_ikj_avx2.c uses immintrin intrinsics

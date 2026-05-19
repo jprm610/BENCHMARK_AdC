@@ -1,5 +1,5 @@
 /*
- * matmul_tiled.c - Explicitly tiled ikj matrix multiplication (Phase 1.2).
+ * matmul_tiled_ikj.c - Explicitly tiled ikj matrix multiplication (Phase 1.2).
  *
  * The outer two loops tile i (step Mc) and k (step Kc) so that the active
  * panels of A, B, and C fit in L2 at the default sizes (Mc=Kc=256, n=128).
@@ -16,18 +16,18 @@
  * tiled loops), so the caller must not rely on C's previous contents.
  */
 
-#include "matmul_tiled.h"
+#include "matmul_tiled_ikj.h"
 #include "matrix_utils.h"   /* xalloc_aligned, xfree */
 
 #include <string.h>         /* memset, memcpy */
 
-void matmul_tiled(scalar_t *C,
+void matmul_tiled_ikj(scalar_t *C,
                   const scalar_t *A,
                   const scalar_t *B,
                   size_t m, size_t k, size_t n)
 {
-    const size_t Mc = TILED_MC_DEFAULT;
-    const size_t Kc = TILED_KC_DEFAULT;
+    const size_t Mc = TILED_IKJ_MC_DEFAULT;
+    const size_t Kc = TILED_IKJ_KC_DEFAULT;
 
     memset(C, 0, m * n * sizeof(scalar_t));
 
@@ -48,7 +48,7 @@ void matmul_tiled(scalar_t *C,
     }
 }
 
-void benchmark_iterations_tiled(scalar_t *B_out,
+void benchmark_iterations_tiled_ikj(scalar_t *B_out,
                                  const scalar_t *A,
                                  const scalar_t *Z,
                                  size_t m, size_t n,
@@ -60,7 +60,7 @@ void benchmark_iterations_tiled(scalar_t *B_out,
     memcpy(B_curr, Z, m * n * sizeof(scalar_t));
 
     for (size_t iter = 0; iter < num_iters; ++iter) {
-        matmul_tiled(B_next, A, B_curr, m, m, n);
+        matmul_tiled_ikj(B_next, A, B_curr, m, m, n);
 
         scalar_t *out_block = B_out + iter * n * n;
         for (size_t i = 0; i < n; ++i)

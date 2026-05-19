@@ -1,14 +1,14 @@
 /*
  * validate_tiled_ikj_avx2.c - Algebraic sanity checks for matmul_tiled_ikj_avx2.
  *
- * Same four tests as validate_tiled.c:
+ * Same four tests as validate_tiled_ikj.c:
  *   1. A * 0 == 0
  *   2. I * Z == Z  (identity matrix)
  *   3. A * (Z1 + Z2) == A*Z1 + A*Z2  (linearity)
  *   4. matmul_tiled_ikj_avx2 matches matmul_naive for a random (A, B) pair.
  *
  * Compiled with CFLAGS_O3_ZEN2 (requires -mavx2 -mfma for the intrinsics
- * in matmul_tiled_ikj_avx2.c). Tolerances match validate_tiled because
+ * in matmul_tiled_ikj_avx2.c). Tolerances match validate_tiled_ikj because
  * CFLAGS_O3_ZEN2 does not include -ffast-math and the FMA rounding is
  * deterministic for a fixed instruction sequence.
  *
