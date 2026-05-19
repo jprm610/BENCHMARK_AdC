@@ -1,0 +1,8 @@
+# started on Mon May 18 21:44:41 2026
+
+146846879,,cycles:u,43344700,100.00,,
+572984038,,instructions:u,43344700,100.00,3.90,insn per cycle
+26639465,,l2_cache_req_stat.ls_rd_blk_l_hit_x:u,43344700,100.00,,
+429917,,cache-misses:u,43344700,100.00,,
+241,,bp_l1_tlb_miss_l2_tlb_miss:u,43344700,100.00,,
+11266,,dTLB-load-misses:u,43344700,100.00,,

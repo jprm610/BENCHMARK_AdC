@@ -107,9 +107,12 @@ def parse_bench_file(path: Path) -> tuple[float, float]:
                 continue
             parts = line.split(",")
             try:
-                # loop variants:     order,m,n,num_iters,median_seconds,gflops (6 cols)
-                # non-loop variants: m,n,num_iters,median_seconds,gflops        (5 cols)
-                if len(parts) >= 6:
+                # tiled_avx2:       variant,m,n,num_iters,bs,median_seconds,gflops (7 cols)
+                # loop/tiled_ikj:   variant,m,n,num_iters,median_seconds,gflops    (6 cols)
+                # naive/morton/...: m,n,num_iters,median_seconds,gflops            (5 cols)
+                if len(parts) >= 7:
+                    return float(parts[5]), float(parts[6])
+                elif len(parts) >= 6:
                     return float(parts[4]), float(parts[5])
                 else:
                     return float(parts[3]), float(parts[4])

@@ -1,7 +1,0 @@
-# started on Mon May 18 20:17:10 2026
-
-701580835,,cycles:u,323597400,100.00,,
-2105802568,,instructions:u,323597400,100.00,3.00,insn per cycle
-4312793113,,fp_ret_sse_avx_ops.all:u,323597400,100.00,,
-627309448,,ls_dispatch.ld_dispatch:u,323597400,100.00,,
-137495210,,l2_request_g1.all_no_prefetch:u,323597400,100.00,,
