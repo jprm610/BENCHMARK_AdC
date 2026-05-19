@@ -24,7 +24,7 @@
 
 #include <omp.h>
 
-#include "matmul_omp.h"
+#include "matmul_tiled_omp.h"
 #include "matrix_utils.h"
 #include "timing.h"
 
@@ -49,7 +49,7 @@ int main(int argc, char **argv)
                 "  num_runs  : measured runs for median (default: %d)\n"
                 "  bs        : block size, multiple of 8 (default: %u)\n"
                 "OMP knobs: OMP_NUM_THREADS, OMP_PLACES, OMP_PROC_BIND.\n",
-                argv[0], MAX_MEAS_ITERS, DEFAULT_RUNS, OMP_BS_DEFAULT);
+                argv[0], MAX_MEAS_ITERS, DEFAULT_RUNS, TILED_OMP_BS_DEFAULT);
         return EXIT_FAILURE;
     }
 
@@ -96,10 +96,10 @@ int main(int argc, char **argv)
             fprintf(stderr, "Error: bs must be a positive integer.\n");
             return EXIT_FAILURE;
         }
-        matmul_omp_set_bs((size_t)bs_in);
+        matmul_tiled_omp_set_bs((size_t)bs_in);
     }
 
-    size_t bs = g_omp_bs;
+    size_t bs = g_tiled_omp_bs;
 
     fprintf(stderr,
             "INFO bench_tiled_omp: m=%llu n=%llu I_meas=%llu runs=%llu "
@@ -115,7 +115,7 @@ int main(int argc, char **argv)
     init_matrix_random(A, m, m, 42u);
     init_matrix_random(Z, m, n, 43u);
 
-    benchmark_iterations_omp(B_out, A, Z, m, n, 1);
+    benchmark_iterations_tiled_omp(B_out, A, Z, m, n, 1);
 
     double *times = (double *)malloc(num_runs * sizeof(double));
     if (times == NULL) {
@@ -124,7 +124,7 @@ int main(int argc, char **argv)
     }
     for (size_t r = 0; r < num_runs; ++r) {
         double t0 = now_seconds();
-        benchmark_iterations_omp(B_out, A, Z, m, n, I_meas);
+        benchmark_iterations_tiled_omp(B_out, A, Z, m, n, I_meas);
         double t1 = now_seconds();
         times[r] = t1 - t0;
     }

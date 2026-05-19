@@ -548,7 +548,8 @@ BENCH_TILED_AVX2_O3 := $(BIN_DIR)/bench_tiled_avx2_O3
 
 results: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
          $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOP_O3) \
-         $(BENCH_TILED_O3) $(BENCH_TILED_AVX2_O3) $(BENCH_TILED_OMP_O3)
+         $(BENCH_TILED_O3) $(BENCH_TILED_AVX2_O3) $(BENCH_TILED_OMP_O3) \
+         $(BENCH_MORTON_OMP_O3)
 	$(if $(M),MS="$(M)" )bash scripts/run_perf_zen2_sweep.sh
 	python3 scripts/consolidate_perf_zen2.py --out results/metrics.csv
 
@@ -657,7 +658,7 @@ $(VALIDATE_TILED_AVX2_O3): $(VALIDATE_TILED_AVX2_SRCS) | $(BIN_DIR)
 # other O3_ZEN2 variants.
 # =====================================================================
 
-TILED_OMP_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_omp.c
+TILED_OMP_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_tiled_omp.c
 BENCH_TILED_OMP_SRCS    := $(TILED_OMP_COMMON_SRCS) $(SRC_DIR)/bench_tiled_omp.c
 VALIDATE_TILED_OMP_SRCS := $(TILED_OMP_COMMON_SRCS) $(SRC_DIR)/validate_tiled_omp.c
 
