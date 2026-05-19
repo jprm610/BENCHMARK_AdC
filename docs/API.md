@@ -976,6 +976,72 @@ El cuarto argumento opcional `[bs]` llama a `matmul_tiled_avx2_set_bs(bs)` antes
 
 ---
 
-## 15. Cambios y versionado
+## 15. Modulo `matmul_omp` (Fase 1.4 — tiled_avx2 + OpenMP parallel for)
+
+**Archivo header:** `src/matmul_omp.h`
+**Implementacion:** `src/matmul_omp.c`
+**Compilacion requerida:** `-O3 -march=znver2 -mavx2 -mfma -fopenmp`
+
+Extiende `matmul_tiled_avx2` (Modulo 14) con un unico `#pragma omp parallel for schedule(static)` sobre el bucle externo `ii`. El interior del bucle (tiling sobre `kk`/`jj`, broadcast AVX2 + FMA) es identico al modulo base; solo cambia el tipo de paralelismo: data-parallel sobre filas de bloques.
+
+### 15.1 Constante y global
+
+```c
+#define OMP_BS_DEFAULT 64u
+extern size_t g_omp_bs;
+```
+
+`OMP_BS_DEFAULT`: block size por defecto; coincide con `TILED_AVX2_BS_DEFAULT` (64) para comparabilidad directa. Debe ser multiplo de 8 (requisito del paso AVX2 interno).
+
+### 15.2 Funciones publicas
+
+```c
+void matmul_omp_set_bs(size_t bs);
+```
+
+Fija el block size en tiempo de ejecucion. Rechaza con warning si `bs == 0` o `bs % 8 != 0`.
+
+```c
+void matmul_omp(scalar_t *C,
+                const scalar_t *A,
+                const scalar_t *B,
+                size_t m, size_t k, size_t n);
+```
+
+Calcula `C = A * B` (C se sobreescribe). Mismo contrato externo que `matmul_tiled_avx2`:
+- C (`m x n`) se inicializa a cero antes del bucle paralelo (secuencial, fuera del region OpenMP).
+- A (`m x k`) y B (`k x n`) son solo lectura, compartidas entre threads.
+- Cada thread procesa tiles `ii` disjuntos: escribe exclusivamente las filas `[ii, ii+BS)` de C — sin conflictos de escritura.
+- El numero de threads lo fija la variable de entorno `OMP_NUM_THREADS` antes de invocar el binario.
+
+```c
+void benchmark_iterations_omp(scalar_t *B_out,
+                               const scalar_t *A,
+                               const scalar_t *Z,
+                               size_t m, size_t n,
+                               size_t num_iters);
+```
+
+Misma recurrencia iterada que `benchmark_iterations_tiled_avx2`, delegando cada paso a `matmul_omp`.
+
+### 15.3 Binarios
+
+| Binario | Target make | Flags |
+|---------|-------------|-------|
+| `bin/bench_tiled_omp_O3`    | `bench_tiled_omp`    | `CFLAGS_OMP_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma -fopenmp`) |
+| `bin/validate_tiled_omp_O3` | `validate_tiled_omp` | idem |
+
+**CLI bench:** `bench_tiled_omp_O3 <m> [num_iters] [num_runs] [bs]`
+
+**Salida CSV** (7 columnas, identico a `tiled_avx2`):
+```
+tiled_omp,m,n,num_iters,bs,median_seconds,gflops
+```
+
+**Integracion en el pipeline perf:** `profile_perf_zen2.sh` fija `OMP_NUM_THREADS=8 OMP_PLACES=cores OMP_PROC_BIND=close` cuando `VARIANT=tiled_omp`. `run_perf_zen2_sweep.sh` incluye `tiled_omp` en su array `VARIANTS` por defecto. `consolidate_perf_zen2.py` no requiere cambios (descubre celdas automaticamente y ya parsea el formato de 7 columnas).
+
+---
+
+## 16. Cambios y versionado
 
 Este documento se actualiza con cada PR que toque la API publica. La regla es: **si una firma de funcion cambia, este documento debe cambiar en el mismo commit**.
