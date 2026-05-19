@@ -978,8 +978,8 @@ El cuarto argumento opcional `[bs]` llama a `matmul_tiled_avx2_set_bs(bs)` antes
 
 ## 15. Modulo `matmul_omp` (Fase 1.4 — tiled_avx2 + OpenMP parallel for)
 
-**Archivo header:** `src/matmul_omp.h`
-**Implementacion:** `src/matmul_omp.c`
+**Archivo header:** `src/matmul_tiled_omp.h`
+**Implementacion:** `src/matmul_tiled_omp.c`
 **Compilacion requerida:** `-O3 -march=znver2 -mavx2 -mfma -fopenmp`
 
 Extiende `matmul_tiled_avx2` (Modulo 14) con un unico `#pragma omp parallel for schedule(static)` sobre el bucle externo `ii`. El interior del bucle (tiling sobre `kk`/`jj`, broadcast AVX2 + FMA) es identico al modulo base; solo cambia el tipo de paralelismo: data-parallel sobre filas de bloques.

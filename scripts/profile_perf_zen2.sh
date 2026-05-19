@@ -73,7 +73,10 @@ ITERS_PER_RUN=${ITERS_PER_RUN:-1}
 RUNS=${RUNS:-3}
 
 # loop_* variants share a single binary; the order name is the suffix.
-# tiled_omp runs with a fixed OMP_NUM_THREADS=8.
+# tiled_omp runs with OMP_NUM_THREADS=8 bind=close (3 CCX-local cores + HT).
+# morton_omp runs with OMP_NUM_THREADS=6 bind=spread (one thread per physical
+# core, distributed across both CCXs — best sustained GFLOPS per the scaling
+# sweep in run_omp_scaling.sh). Both are overridable via env vars.
 case "$VARIANT" in
     loop_*)
         LOOP_ORDER="${VARIANT#loop_}"
@@ -86,6 +89,13 @@ case "$VARIANT" in
         export OMP_NUM_THREADS=8
         export OMP_PLACES=cores
         export OMP_PROC_BIND=close
+        ;;
+    morton_omp)
+        BIN="$REPO_DIR/bin/bench_morton_omp_O3"
+        BIN_ARGS="$M $ITERS_PER_RUN $RUNS"
+        export OMP_NUM_THREADS=${OMP_NUM_THREADS:-6}
+        export OMP_PLACES=cores
+        export OMP_PROC_BIND=${OMP_PROC_BIND:-spread}
         ;;
     *)
         BIN="$REPO_DIR/bin/bench_${VARIANT}_O3"

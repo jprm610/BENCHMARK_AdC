@@ -67,7 +67,7 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |   |-- bench_tiled_avx2.c             -> Driver bench_tiled_avx2_O3 (CSV 7 columnas con bs)
 |   |-- validate_tiled_avx2.c          -> 4 invariantes + cross-validation contra naive
 |   |   # Fase 1.4 - tiled_omp: tiled_avx2 + OpenMP parallel for en bucle ii
-|   |-- matmul_omp.{h,c}               -> tiled_avx2 + #pragma omp parallel for schedule(static) en ii
+|   |-- matmul_tiled_omp.{h,c}         -> tiled_avx2 + #pragma omp parallel for schedule(static) en ii
 |   |-- bench_tiled_omp.c              -> Driver bench_tiled_omp_O3 (CSV 7 columnas, OMP_NUM_THREADS=8)
 |   |-- validate_tiled_omp.c           -> 4 invariantes + cross-validation contra naive
 |   |   # Sesion 03 - microkernel AVX2 + OpenMP + perf Zen 2
