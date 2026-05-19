@@ -613,3 +613,32 @@ $(BENCH_TILED_O3): $(BENCH_TILED_SRCS) | $(BIN_DIR)
 
 $(VALIDATE_TILED_O0): $(VALIDATE_TILED_SRCS) | $(BIN_DIR)
 	$(CC) $(BASE_CFLAGS) $(VALIDATE_TILED_SRCS) -o $@ $(LIBS)
+
+# =====================================================================
+# Fase 1.3 - tiled_avx2: 6-loop blocking with AVX2+FMA vectorization
+#
+# Extends matmul_tiled (Phase 1.2) by adding a third outer blocking
+# loop over j and replacing the scalar innermost j pass with an AVX2
+# broadcast+FMA vector loop.  Both binaries are compiled with
+# CFLAGS_O3_ZEN2 because matmul_tiled_avx2.c uses immintrin intrinsics
+# that require -mavx2 -mfma; compiling at -O0 without those flags
+# would produce an assembler error on the _mm256_fmadd_ps call.
+# =====================================================================
+
+TILED_AVX2_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_tiled_avx2.c
+BENCH_TILED_AVX2_SRCS    := $(TILED_AVX2_COMMON_SRCS) $(SRC_DIR)/bench_tiled_avx2.c
+VALIDATE_TILED_AVX2_SRCS := $(TILED_AVX2_COMMON_SRCS) $(SRC_DIR)/validate_tiled_avx2.c
+
+BENCH_TILED_AVX2_O3    := $(BIN_DIR)/bench_tiled_avx2_O3
+VALIDATE_TILED_AVX2_O3 := $(BIN_DIR)/validate_tiled_avx2_O3
+
+.PHONY: bench_tiled_avx2 validate_tiled_avx2
+
+bench_tiled_avx2:    $(BENCH_TILED_AVX2_O3)
+validate_tiled_avx2: $(VALIDATE_TILED_AVX2_O3)
+
+$(BENCH_TILED_AVX2_O3): $(BENCH_TILED_AVX2_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_TILED_AVX2_SRCS) -o $@ $(LIBS)
+
+$(VALIDATE_TILED_AVX2_O3): $(VALIDATE_TILED_AVX2_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) $(VALIDATE_TILED_AVX2_SRCS) -o $@ $(LIBS)
