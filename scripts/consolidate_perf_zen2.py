@@ -41,7 +41,27 @@ import re
 import sys
 from pathlib import Path
 
-VARIANTS = ("naive", "recursive", "morton", "morton_avx2")
+# Canonical row order for the consolidated metrics.csv. Variants are
+# grouped by family (baseline, morton, loop-reorder, tiled) so the CSV
+# reads top-to-bottom as the project's optimization progression. Any
+# variant present on disk but not listed here is appended afterwards
+# in alphabetical order so unexpected results still show up.
+CANONICAL_VARIANTS = (
+    "naive",
+    "recursive",
+    "morton",
+    "morton_avx2",
+    "morton_omp",
+    "loop_ijk",
+    "loop_ikj",
+    "loop_jik",
+    "loop_jki",
+    "loop_kij",
+    "loop_kji",
+    "tiled_ikj",
+    "tiled_ikj_avx2",
+    "tiled_ikj_omp",
+)
 DEFAULT_MS = (1024, 4096, 8192)
 
 
@@ -107,7 +127,7 @@ def parse_bench_file(path: Path) -> tuple[float, float]:
                 continue
             parts = line.split(",")
             try:
-                # tiled_avx2:       variant,m,n,num_iters,bs,median_seconds,gflops (7 cols)
+                # tiled_ikj_avx2:       variant,m,n,num_iters,bs,median_seconds,gflops (7 cols)
                 # loop/tiled_ikj:   variant,m,n,num_iters,median_seconds,gflops    (6 cols)
                 # naive/morton/...: m,n,num_iters,median_seconds,gflops            (5 cols)
                 if len(parts) >= 7:
@@ -193,13 +213,32 @@ def process_cell(variant: str, m: int, results_dir: Path) -> dict | None:
 def discover_cells(results_dir: Path) -> list[tuple[str, int]]:
     """Discover (variant, m) cells from filenames matching
     perf_<variant>_m<M>_A.txt. Used as a fallback when --variants /
-    --ms are not provided."""
+    --ms are not provided.
+
+    Variants are emitted in CANONICAL_VARIANTS order so the resulting
+    CSV reads top-to-bottom as the project's optimization progression
+    (baseline -> morton family -> loop-reorder family -> tiled family).
+    Variants on disk not present in CANONICAL_VARIANTS are appended
+    after the canonical block in alphabetical order so unexpected
+    results still show up. Within each variant, (variant, m) tuples
+    are emitted in ascending m order.
+    """
     pattern = re.compile(r"^perf_(?P<variant>[a-z0-9_]+)_m(?P<m>\d+)_A\.txt$")
-    cells: list[tuple[str, int]] = []
-    for path in sorted(results_dir.glob("*/perf_*_A.txt")):
+    by_variant: dict[str, list[int]] = {}
+    for path in results_dir.glob("*/perf_*_A.txt"):
         match = pattern.match(path.name)
         if match:
-            cells.append((match.group("variant"), int(match.group("m"))))
+            variant = match.group("variant")
+            m = int(match.group("m"))
+            by_variant.setdefault(variant, []).append(m)
+
+    canonical_present = [v for v in CANONICAL_VARIANTS if v in by_variant]
+    extras = sorted(v for v in by_variant if v not in CANONICAL_VARIANTS)
+
+    cells: list[tuple[str, int]] = []
+    for variant in canonical_present + extras:
+        for m in sorted(by_variant[variant]):
+            cells.append((variant, m))
     return cells
 
 

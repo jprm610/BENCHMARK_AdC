@@ -1,8 +1,8 @@
 /*
- * bench_tiled_omp.c - Benchmark driver for matmul_omp.
+ * bench_tiled_ikj_omp.c - Benchmark driver for matmul_omp.
  *
  * Usage:
- *   bench_tiled_omp_O3 <m> [num_iters] [num_runs] [bs]
+ *   bench_tiled_ikj_omp_O3 <m> [num_iters] [num_runs] [bs]
  *
  *   m         : problem size (A is m x m, B is m x 128)
  *   num_iters : iterations per run  (default: min(2m/n, 4))
@@ -13,7 +13,7 @@
  * if unset). Set OMP_NUM_THREADS before invoking this binary.
  *
  * Output (one CSV line on stdout):
- *   tiled_omp,m,n,num_iters,bs,median_seconds,gflops
+ *   tiled_ikj_omp,m,n,num_iters,bs,median_seconds,gflops
  *
  * One warm-up run precedes the measured runs.
  */
@@ -24,7 +24,7 @@
 
 #include <omp.h>
 
-#include "matmul_tiled_omp.h"
+#include "matmul_tiled_ikj_omp.h"
 #include "matrix_utils.h"
 #include "timing.h"
 
@@ -49,7 +49,7 @@ int main(int argc, char **argv)
                 "  num_runs  : measured runs for median (default: %d)\n"
                 "  bs        : block size, multiple of 8 (default: %u)\n"
                 "OMP knobs: OMP_NUM_THREADS, OMP_PLACES, OMP_PROC_BIND.\n",
-                argv[0], MAX_MEAS_ITERS, DEFAULT_RUNS, TILED_OMP_BS_DEFAULT);
+                argv[0], MAX_MEAS_ITERS, DEFAULT_RUNS, TILED_IKJ_OMP_BS_DEFAULT);
         return EXIT_FAILURE;
     }
 
@@ -96,13 +96,13 @@ int main(int argc, char **argv)
             fprintf(stderr, "Error: bs must be a positive integer.\n");
             return EXIT_FAILURE;
         }
-        matmul_tiled_omp_set_bs((size_t)bs_in);
+        matmul_tiled_ikj_omp_set_bs((size_t)bs_in);
     }
 
-    size_t bs = g_tiled_omp_bs;
+    size_t bs = g_tiled_ikj_omp_bs;
 
     fprintf(stderr,
-            "INFO bench_tiled_omp: m=%llu n=%llu I_meas=%llu runs=%llu "
+            "INFO bench_tiled_ikj_omp: m=%llu n=%llu I_meas=%llu runs=%llu "
             "bs=%llu threads_max=%d\n",
             (unsigned long long)m, (unsigned long long)n,
             (unsigned long long)I_meas, (unsigned long long)num_runs,
@@ -115,7 +115,7 @@ int main(int argc, char **argv)
     init_matrix_random(A, m, m, 42u);
     init_matrix_random(Z, m, n, 43u);
 
-    benchmark_iterations_tiled_omp(B_out, A, Z, m, n, 1);
+    benchmark_iterations_tiled_ikj_omp(B_out, A, Z, m, n, 1);
 
     double *times = (double *)malloc(num_runs * sizeof(double));
     if (times == NULL) {
@@ -124,7 +124,7 @@ int main(int argc, char **argv)
     }
     for (size_t r = 0; r < num_runs; ++r) {
         double t0 = now_seconds();
-        benchmark_iterations_tiled_omp(B_out, A, Z, m, n, I_meas);
+        benchmark_iterations_tiled_ikj_omp(B_out, A, Z, m, n, I_meas);
         double t1 = now_seconds();
         times[r] = t1 - t0;
     }
@@ -136,7 +136,7 @@ int main(int argc, char **argv)
     double total_flops    = flops_per_iter * (double)I_meas;
     double gflops         = total_flops / median_seconds / 1.0e9;
 
-    printf("tiled_omp,%llu,%llu,%llu,%llu,%.6f,%.6f\n",
+    printf("tiled_ikj_omp,%llu,%llu,%llu,%llu,%.6f,%.6f\n",
            (unsigned long long)m,
            (unsigned long long)n,
            (unsigned long long)I_meas,

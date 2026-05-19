@@ -1,8 +1,8 @@
 /*
- * bench_tiled_avx2.c - Benchmark driver for matmul_tiled_avx2.
+ * bench_tiled_ikj_avx2.c - Benchmark driver for matmul_tiled_ikj_avx2.
  *
  * Usage:
- *   bench_tiled_avx2_O3 <m> [num_iters] [num_runs] [bs]
+ *   bench_tiled_ikj_avx2_O3 <m> [num_iters] [num_runs] [bs]
  *
  *   m         : problem size (A is m x m, B is m x 128)
  *   num_iters : iterations per run  (default: min(2m/n, 4))
@@ -10,7 +10,7 @@
  *   bs        : AVX2 tiling block size, multiple of 8 (default: 64)
  *
  * Output (one CSV line on stdout):
- *   tiled_avx2,m,n,num_iters,bs,median_seconds,gflops
+ *   tiled_ikj_avx2,m,n,num_iters,bs,median_seconds,gflops
  *
  * One warm-up run precedes the measured runs to populate caches and
  * resolve first-touch page faults.
@@ -20,7 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "matmul_tiled_avx2.h"
+#include "matmul_tiled_ikj_avx2.h"
 #include "matrix_utils.h"
 #include "timing.h"
 
@@ -45,7 +45,7 @@ int main(int argc, char **argv)
                 "  num_runs  : measured runs for median (default: %d)\n"
                 "  bs        : block size, multiple of 8 (default: %u)\n",
                 argv[0], MAX_MEAS_ITERS, DEFAULT_RUNS,
-                TILED_AVX2_BS_DEFAULT);
+                TILED_IKJ_AVX2_BS_DEFAULT);
         return EXIT_FAILURE;
     }
 
@@ -92,10 +92,10 @@ int main(int argc, char **argv)
             fprintf(stderr, "Error: bs must be a positive integer.\n");
             return EXIT_FAILURE;
         }
-        matmul_tiled_avx2_set_bs((size_t)bs_in);
+        matmul_tiled_ikj_avx2_set_bs((size_t)bs_in);
     }
 
-    size_t bs = g_tiled_avx2_bs;
+    size_t bs = g_tiled_ikj_avx2_bs;
 
     scalar_t *A     = xalloc_aligned(m * m);
     scalar_t *Z     = xalloc_aligned(m * n);
@@ -104,7 +104,7 @@ int main(int argc, char **argv)
     init_matrix_random(A, m, m, 42u);
     init_matrix_random(Z, m, n, 43u);
 
-    benchmark_iterations_tiled_avx2(B_out, A, Z, m, n, 1);
+    benchmark_iterations_tiled_ikj_avx2(B_out, A, Z, m, n, 1);
 
     double *times = (double *)malloc(num_runs * sizeof(double));
     if (times == NULL) {
@@ -113,7 +113,7 @@ int main(int argc, char **argv)
     }
     for (size_t r = 0; r < num_runs; ++r) {
         double t0 = now_seconds();
-        benchmark_iterations_tiled_avx2(B_out, A, Z, m, n, I_meas);
+        benchmark_iterations_tiled_ikj_avx2(B_out, A, Z, m, n, I_meas);
         double t1 = now_seconds();
         times[r] = t1 - t0;
     }
@@ -125,7 +125,7 @@ int main(int argc, char **argv)
     double total_flops    = flops_per_iter * (double)I_meas;
     double gflops         = total_flops / median_seconds / 1.0e9;
 
-    printf("tiled_avx2,%llu,%llu,%llu,%llu,%.6f,%.6f\n",
+    printf("tiled_ikj_avx2,%llu,%llu,%llu,%llu,%.6f,%.6f\n",
            (unsigned long long)m,
            (unsigned long long)n,
            (unsigned long long)I_meas,

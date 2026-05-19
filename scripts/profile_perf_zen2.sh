@@ -73,22 +73,26 @@ ITERS_PER_RUN=${ITERS_PER_RUN:-1}
 RUNS=${RUNS:-3}
 
 # loop_* variants share a single binary; the order name is the suffix.
-# tiled_omp runs with OMP_NUM_THREADS=8 bind=close (3 CCX-local cores + HT).
-# morton_omp runs with OMP_NUM_THREADS=6 bind=spread (one thread per physical
-# core, distributed across both CCXs — best sustained GFLOPS per the scaling
-# sweep in run_omp_scaling.sh). Both are overridable via env vars.
+# tiled_ikj_omp runs with OMP_NUM_THREADS=6 bind=close (one thread per
+# physical core, prioritizing CCX locality). morton_omp keeps bind=spread
+# (one thread per physical core, distributed across both CCXs). Both
+# avoid SMT overprovisioning on the 4600H because the BLIS-style 6x16
+# microkernel is FMA-bound and the two SMT siblings of each physical
+# core share the FMA pipes. Empirically on the new register-blocked
+# tiled_ikj_omp kernel, bind=close edges out bind=spread by 1-5% on m in
+# {2048, 4096}. Both are overridable via env vars.
 case "$VARIANT" in
     loop_*)
         LOOP_ORDER="${VARIANT#loop_}"
         BIN="$REPO_DIR/bin/bench_loop_O3"
         BIN_ARGS="$LOOP_ORDER $M $ITERS_PER_RUN $RUNS"
         ;;
-    tiled_omp)
-        BIN="$REPO_DIR/bin/bench_tiled_omp_O3"
+    tiled_ikj_omp)
+        BIN="$REPO_DIR/bin/bench_tiled_ikj_omp_O3"
         BIN_ARGS="$M $ITERS_PER_RUN $RUNS"
-        export OMP_NUM_THREADS=8
+        export OMP_NUM_THREADS=${OMP_NUM_THREADS:-6}
         export OMP_PLACES=cores
-        export OMP_PROC_BIND=close
+        export OMP_PROC_BIND=${OMP_PROC_BIND:-close}
         ;;
     morton_omp)
         BIN="$REPO_DIR/bin/bench_morton_omp_O3"
