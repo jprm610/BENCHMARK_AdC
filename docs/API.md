@@ -411,7 +411,7 @@ A medida que se avancen las fases del proyecto se anadiran modulos manteniendo e
 | 4 (vectorizacion) | igual `matmul_tiled.c` con flags | pendiente | Auto-vectorizacion |
 | 5 (OpenMP) | `matmul_parallel.c` | pendiente | `#pragma omp parallel for` |
 | Opcional / Fase 6 (Morton) | `matmul_recursive.c` + `morton.c` + `matmul_morton.c` | **COMPLETADA** (codigo y validacion; mediciones masivas en Sesion 03) | Recursion cache-oblivious sobre row-major y sobre layout Z-order |
-| Fase 1.3 (tiled_avx2) | `matmul_tiled_avx2.c` | **COMPLETADA** (Sesion 03, integracion en `make results`) | 6-loop tiling (ii, kk, jj + i, p, j) con broadcast AVX2 + FMA; BS=64 configurable en runtime |
+| Fase 1.3 (tiled_ikj_avx2) | `matmul_tiled_ikj_avx2.c` | **COMPLETADA** (Sesion 03, integracion en `make results`) | 6-loop tiling (ii, kk, jj + i, p, j) con broadcast AVX2 + FMA; BS=64 configurable en runtime |
 
 Cada nuevo kernel debera tener la firma `void mm(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, size_t k, size_t n)` para que `validate.c` lo pueda probar sin cambios.
 
@@ -675,14 +675,14 @@ make plot_loop                  -> plots/loop_orders.png  (6 ordenes desde loop_
 make plot_loop_vs_naive         -> plots/loop_vs_naive.png  (naive + 6 ordenes)
 ```
 
-Targets de Fase 1.3 (tiled_avx2):
+Targets de Fase 1.3 (tiled_ikj_avx2):
 
 ```
-make bench_tiled_avx2           -> bin/bench_tiled_avx2_O3
-make validate_tiled_avx2        -> bin/validate_tiled_avx2_O3
+make bench_tiled_ikj_avx2           -> bin/bench_tiled_ikj_avx2_O3
+make validate_tiled_ikj_avx2        -> bin/validate_tiled_ikj_avx2_O3
 ```
 
-Ambos se compilan con `CFLAGS_O3_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma`), que es obligatorio para que `_mm256_fmadd_ps` emita la instruccion FMA real. El `make results` incluye `bench_tiled_avx2_O3` como dependencia y `run_perf_zen2_sweep.sh` incluye `tiled_avx2` en su lista de variantes por defecto.
+Ambos se compilan con `CFLAGS_O3_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma`), que es obligatorio para que `_mm256_fmadd_ps` emita la instruccion FMA real. El `make results` incluye `bench_tiled_ikj_avx2_O3` como dependencia y `run_perf_zen2_sweep.sh` incluye `tiled_ikj_avx2` en su lista de variantes por defecto.
 
 Todos extienden el Makefile **al final**, sin modificar las recetas del baseline (`bench_naive_O0`, `bench_naive_pg`, `validate_naive`, `sweep_naive`, `profile_*_naive`, `clean`, `distclean`).
 
@@ -893,152 +893,181 @@ Misma estructura que en los modulos anteriores: el primero reorganiza $A$ intern
 
 ---
 
-## 14. Modulo `matmul_tiled_avx2` (Fase 1.3 — 6-loop tiling con AVX2+FMA)
+## 14. Modulo `matmul_tiled_ikj_avx2` (Fase 1.6 — BLIS-style 6x16 register-blocked)
 
-**Archivo:** [`src/matmul_tiled_avx2.h`](../src/matmul_tiled_avx2.h), [`src/matmul_tiled_avx2.c`](../src/matmul_tiled_avx2.c).
+**Archivo:** [`src/matmul_tiled_ikj_avx2.h`](../src/matmul_tiled_ikj_avx2.h), [`src/matmul_tiled_ikj_avx2.c`](../src/matmul_tiled_ikj_avx2.c).
 
-Kernel de tiling explicito de seis bucles que extiende `matmul_tiled` (Fase 1.2, orden `ikj`, 2D) agregando un tercer nivel de bloque sobre la dimension `j`. El loop interno de `j` usa instrinsics AVX2 broadcast+FMA para procesar 8 elementos `float` por iteracion.
+Kernel BLIS-style con micropanel registrado $6 \times 16$, especificamente afinado para el Ryzen $5$ $4600$H. Reemplaza la version anterior (`load`/`FMA`/`store` por $(i, p)$) por un microkernel inline que mantiene un sub-tile $6 \times 16$ de $C$ en $12$ registros YMM durante toda la pasada $k_c$; $C$ toca memoria solo dos veces por micro-tile (load al entrar, store al salir).
 
-### 14.1 Constante y variable de block size
-
-```c
-#define TILED_AVX2_BS_DEFAULT 64u
-extern size_t g_tiled_avx2_bs;
-```
-
-El bloque por defecto es `BS = 64`. Con tres paneles activos de `BS x BS` floats el working set es `3 x 64 x 64 x 4 B = 48 KiB`, que cabe en el L2 de 512 KB del Ryzen 5 4600H con margen para B y C. El block size debe ser multiplo de 8 (ancho de un vector AVX2 FP32); se rechaza cualquier valor que viole esta condicion.
-
-### 14.2 `matmul_tiled_avx2_set_bs`
+### 14.1 Geometria del microkernel (compile-time)
 
 ```c
-void matmul_tiled_avx2_set_bs(size_t bs);
+#define TILED_IKJ_AVX2_MR 6u
+#define TILED_IKJ_AVX2_NR 16u
+#define TILED_IKJ_AVX2_MC 192u
+#define TILED_IKJ_AVX2_BS_DEFAULT 384u
+extern size_t g_tiled_ikj_avx2_bs;
 ```
 
-Cambia el block size global en runtime. Si `bs == 0` o `bs % 8 != 0`, imprime un aviso a `stderr` y retorna sin modificar `g_tiled_avx2_bs`. Util para barrer block sizes desde los scripts de tuning sin recompilar.
+- $\text{MR} = 6$, $\text{NR} = 16$: filas y columnas del tile registrado. Activan $15$ de los $16$ registros YMM arquitecturales ($12$ acumuladores $C$ + $2$ vectores $B$ + $1$ broadcast $A$ reusado entre filas). El renombrador fisico del Zen 2 ($168$ entradas) resuelve la dependencia WAW sobre el broadcast sin stall.
+- $\text{MC} = 192$: tamano del bloque sobre $m$ (multiplo de $\text{MR}$). El panel $A$ activo $\text{MC} \times k_c$ a $k_c = 384$ ocupa $288$ KiB y cabe en el L2 de $512$ KiB.
+- $\text{BS}$ (sinonimo `kc`): tamano del bloque sobre $k$. Default $384$, configurable runtime via `matmul_tiled_ikj_avx2_set_bs(bs)`. La idea es que el panel $B$ activo $k_c \times \text{NR}$ a $k_c = 384$ ocupa $24$ KiB, que cabe en el L1d de $32$ KiB con margen para los $12$ floats de $C$ vivos.
 
-### 14.3 `matmul_tiled_avx2`
+### 14.2 `matmul_tiled_ikj_avx2_set_bs`
 
 ```c
-void matmul_tiled_avx2(scalar_t *C,
-                        const scalar_t *A,
-                        const scalar_t *B,
-                        size_t m, size_t k, size_t n);
+void matmul_tiled_ikj_avx2_set_bs(size_t bs);
 ```
 
-**Computa** $C = A \cdot B$ con 6 bucles anidados: tres exteriores de tiling `(ii, kk, jj)` y tres interiores `(i, p, j)`.
+Cambia $k_c$ en runtime. Solo se rechaza `bs == 0` (cualquier valor positivo es valido; no se requiere multiplo de $8$ porque el microkernel itera $p$ uno a la vez). Util para el `sweep_threshold` y para el barrido manual del bs.
 
-**Parametros y precondiciones.** Identicos a `matmul_naive` (Seccion 2.1): `C` es $m \times n$ (out, sobrescrito), `A` es $m \times k$, `B` es $k \times n$, todos row-major, sin aliasing. No requiere que `m`, `k` ni `n` sean potencias de 2 ni multiplos de `BS`; el kernel maneja colas con un tail loop escalar.
+### 14.3 `matmul_tiled_ikj_avx2`
+
+```c
+void matmul_tiled_ikj_avx2(scalar_t *C,
+                       const scalar_t *A,
+                       const scalar_t *B,
+                       size_t m, size_t k, size_t n);
+```
+
+**Computa** $C = A \cdot B$ usando el loop nest BLIS Goto-style:
+
+```
+pc  loop  step kc  (= g_tiled_ikj_avx2_bs, default 384)
+  ic loop step mc  (= TILED_IKJ_AVX2_MC, fixed 192)
+    jr loop step nr (= TILED_IKJ_AVX2_NR, fixed 16)
+      ir loop step mr (= TILED_IKJ_AVX2_MR, fixed 6)
+        microkernel_6x16: kc FMAs accumulating in 12 YMM registers
+```
+
+**Parametros y precondiciones.** Identicos a `matmul_naive` (Seccion 2.1): $C$ es $m \times n$ (out, sobrescrito), $A$ es $m \times k$, $B$ es $k \times n$, todos row-major, sin aliasing. El kernel maneja bordes en $m$ y $n$ con un fallback vectorizado AVX2 que no registra $C$ (descrito en `accumulate_residual_rows` en el .c).
 
 **Postcondiciones.** $C_{ij} = \sum_{p=0}^{k-1} A_{ip} B_{pj}$ para todo $(i, j)$.
 
-**Algoritmo vectorial.** Para cada bloque `(ii, kk, jj)` y cada par interior `(i, p)`:
+**Microkernel inline** (esquema, $15$ YMM vivos por iteracion del bucle $p$):
 
 ```c
-__m256 a_vec = _mm256_set1_ps(A[i*k + p]);          // broadcast del escalar a_ip
-for (j = jj; j < j_vec_end; j += 8) {               // j_vec_end = mayor multiplo de 8 <= j_end
-    __m256 b = _mm256_loadu_ps(&B[p*n + j]);
-    __m256 c = _mm256_loadu_ps(&C[i*n + j]);
-    c = _mm256_fmadd_ps(a_vec, b, c);
-    _mm256_storeu_ps(&C[i*n + j], c);
+// 12 acumuladores de C cargados una sola vez por (ir, jr) micro-tile
+__m256 c00, c01, c10, c11, c20, c21, c30, c31, c40, c41, c50, c51;
+for (size_t p = 0; p < kc; ++p) {
+    __m256 b0 = _mm256_loadu_ps(&B[p*ldb + 0]);
+    __m256 b1 = _mm256_loadu_ps(&B[p*ldb + 8]);
+    __m256 a  = _mm256_broadcast_ss(&A[0*lda + p]);
+    c00 = _mm256_fmadd_ps(a, b0, c00);
+    c01 = _mm256_fmadd_ps(a, b1, c01);
+    // ... idem para filas 1..5 ...
 }
-for (j = j_vec_end; j < j_end; ++j)                 // tail escalar
-    C[i*n + j] += A[i*k + p] * B[p*n + j];
+// store de los 12 acumuladores una sola vez
 ```
 
-`memset(C, 0, m*n*sizeof(scalar_t))` al inicio de la funcion garantiza que la acumulacion parcial por bloques sea correcta.
+`memset(C, 0, m*n*sizeof(scalar_t))` al inicio permite que cada iteracion del bucle `pc` cargue $C$, acumule sobre el, y lo escriba de vuelta — agregando consistentemente las contribuciones parciales de cada panel $k_c$.
 
-**Compilacion.** Requiere `-O3 -march=znver2 -mavx2 -mfma`. Sin `-mavx2 -mfma` el compilador rechaza `_mm256_fmadd_ps`.
+**Compilacion.** Requiere `-O3 -march=znver2 -mavx2 -mfma`. Verificado con `objdump`: GCC inline-a el microkernel y mantiene los $12$ acumuladores en YMMs sin spilling al stack.
 
-**Complejidad.** $2 \cdot m \cdot k \cdot n$ flops (identica al baseline). Ganancia frente a `loop_ikj`: mejor reutilizacion de cache en los tres niveles gracias al tiling 3D, a costa de instrucciones adicionales de control de bloque.
+**Complejidad.** $2 \cdot m \cdot k \cdot n$ flops (identica al baseline). La ganancia frente a la version $6$-loop simple es de **densidad aritmetica**: por iteracion del bucle interno $p$ se hacen $12$ FMAs (retire $6$ ciclos en los dos pipes FMA del Zen 2) contra $2$ loads + $6$ broadcasts (no en el camino critico). En el techo single-core medido a $\sim 70$ GFLOPS sobre $m = 4096$ con $k_c = 512$ ($55\%$ del pico Zen 2 de $128$ GFLOPS a $4.0$ GHz turbo), por encima del $\sim 29$ GFLOPS de la version previa.
 
-### 14.4 `benchmark_iterations_tiled_avx2`
+### 14.4 `benchmark_iterations_tiled_ikj_avx2`
 
 ```c
-void benchmark_iterations_tiled_avx2(scalar_t *B_out,
+void benchmark_iterations_tiled_ikj_avx2(scalar_t *B_out,
                                       const scalar_t *A,
                                       const scalar_t *Z,
                                       size_t m, size_t n,
                                       size_t num_iters);
 ```
 
-Mismo patron que `benchmark_iterations` (Seccion 2.2): doble buffer + swap de punteros, aloja y libera internamente. Invoca `matmul_tiled_avx2` en cada iteracion.
+Mismo patron que `benchmark_iterations` (Seccion 2.2): doble buffer + swap de punteros, aloja y libera internamente. Invoca `matmul_tiled_ikj_avx2` en cada iteracion.
+
+### 14.4 `benchmark_iterations_tiled_ikj_avx2`
+
+```c
+void benchmark_iterations_tiled_ikj_avx2(scalar_t *B_out,
+                                     const scalar_t *A,
+                                     const scalar_t *Z,
+                                     size_t m, size_t n,
+                                     size_t num_iters);
+```
+
+Doble buffer + swap de punteros, identico al patron de `benchmark_iterations` (Seccion 2.2). Invoca `matmul_tiled_ikj_avx2` en cada iteracion de la recurrencia.
 
 ### 14.5 Binarios
 
 | Binario | CLI | Salida CSV |
 |---------|-----|------------|
-| `bin/bench_tiled_avx2_O3` | `<m> [num_iters] [num_runs] [bs]` | `tiled_avx2,m,n,num_iters,bs,median_seconds,gflops` (7 columnas) |
-| `bin/validate_tiled_avx2_O3` | `[m] [bs]` (defaults: m=256, bs=64) | 4 tests: `A*0==0`, `I*Z==Z`, linealidad, cross contra naive |
+| `bin/bench_tiled_ikj_avx2_O3` | `<m> [num_iters] [num_runs] [bs]` | `tiled_ikj_avx2,m,n,num_iters,bs,median_seconds,gflops` (7 columnas) |
+| `bin/validate_tiled_ikj_avx2_O3` | `[m] [bs]` (defaults: m=256, bs=384) | 4 tests: `A*0==0`, `I*Z==Z`, linealidad, cross contra naive |
 
-El cuarto argumento opcional `[bs]` llama a `matmul_tiled_avx2_set_bs(bs)` antes de las corridas. La salida CSV de bench tiene **7 columnas** (una mas que los drivers de 6 columnas de `loop_*` y `tiled_ikj`) porque incluye `bs` entre `num_iters` y `median_seconds`; el consolidador `consolidate_perf_zen2.py` ya maneja este formato con la rama `len(parts) >= 7`.
+El cuarto argumento opcional `[bs]` llama a `matmul_tiled_ikj_avx2_set_bs(bs)` antes de las corridas. La columna `bs` del CSV preserva el formato de 7 columnas que ya manejaba el consolidador `consolidate_perf_zen2.py` (rama `len(parts) >= 7`).
 
-**Tolerancias de validacion:** `ABS_TOL = 1e-4f`, `REL_TOL = 1e-3f` (igual que `validate_tiled`).
+**Tolerancias de validacion:** `ABS_TOL = 1e-4f`, `REL_TOL = 1e-3f`.
 
 ---
 
-## 15. Modulo `matmul_omp` (Fase 1.4 — tiled_avx2 + OpenMP parallel for)
+## 15. Modulo `matmul_tiled_ikj_omp` (Fase 1.6 — kernel 6x16 + OpenMP `parallel for` en `ic`)
 
-**Archivo header:** `src/matmul_tiled_omp.h`
-**Implementacion:** `src/matmul_tiled_omp.c`
+**Archivo header:** [`src/matmul_tiled_ikj_omp.h`](../src/matmul_tiled_ikj_omp.h)
+**Implementacion:** [`src/matmul_tiled_ikj_omp.c`](../src/matmul_tiled_ikj_omp.c)
 **Compilacion requerida:** `-O3 -march=znver2 -mavx2 -mfma -fopenmp`
 
-Extiende `matmul_tiled_avx2` (Modulo 14) con un unico `#pragma omp parallel for schedule(static)` sobre el bucle externo `ii`. El interior del bucle (tiling sobre `kk`/`jj`, broadcast AVX2 + FMA) es identico al modulo base; solo cambia el tipo de paralelismo: data-parallel sobre filas de bloques.
+Hermano paralelo de `matmul_tiled_ikj_avx2` (Modulo 14). Mismo microkernel registrado $6 \times 16$, mismo loop nest, **pero el bucle externo $i_c$ esta distribuido entre threads** con `#pragma omp for schedule(static)`. La region `omp parallel` se abre una sola vez por invocacion y abarca el bucle $p_c$ entero; el barrier implicito al final de cada `omp for` sincroniza las pasadas $p_c$ (necesario porque $C$ se acumula entre pasadas).
 
-### 15.1 Constante y global
+### 15.1 Constantes y global
 
 ```c
-#define OMP_BS_DEFAULT 64u
-extern size_t g_omp_bs;
+#define TILED_IKJ_OMP_MR 6u
+#define TILED_IKJ_OMP_NR 16u
+#define TILED_IKJ_OMP_MC 192u
+#define TILED_IKJ_OMP_BS_DEFAULT 384u
+extern size_t g_tiled_ikj_omp_bs;
 ```
 
-`OMP_BS_DEFAULT`: block size por defecto; coincide con `TILED_AVX2_BS_DEFAULT` (64) para comparabilidad directa. Debe ser multiplo de 8 (requisito del paso AVX2 interno).
+Misma geometria que `matmul_tiled_ikj_avx2`. El microkernel esta duplicado adrede en el `.c` (no factorizado a un header compartido) para garantizar que GCC lo inline en cada unidad de compilacion sin spilling de los $12$ acumuladores YMM; explico la razon en el comentario de `matmul_tiled_ikj_omp.c`.
 
 ### 15.2 Funciones publicas
 
 ```c
-void matmul_omp_set_bs(size_t bs);
+void matmul_tiled_ikj_omp_set_bs(size_t bs);
+
+void matmul_tiled_ikj_omp(scalar_t *C,
+                      const scalar_t *A,
+                      const scalar_t *B,
+                      size_t m, size_t k, size_t n);
+
+void benchmark_iterations_tiled_ikj_omp(scalar_t *B_out,
+                                    const scalar_t *A,
+                                    const scalar_t *Z,
+                                    size_t m, size_t n,
+                                    size_t num_iters);
 ```
 
-Fija el block size en tiempo de ejecucion. Rechaza con warning si `bs == 0` o `bs % 8 != 0`.
+Mismo contrato externo que las contrapartes seriales:
 
-```c
-void matmul_omp(scalar_t *C,
-                const scalar_t *A,
-                const scalar_t *B,
-                size_t m, size_t k, size_t n);
-```
+- $C$ ($m \times n$) se inicializa con `memset` a cero secuencialmente (fuera del region paralelo).
+- $A$ ($m \times k$) y $B$ ($k \times n$) son solo lectura, compartidas entre threads.
+- Cada thread procesa un rango disjunto del loop $i_c$, escribiendo exclusivamente en filas $[i_c, i_c + m_c)$ de $C$ — sin conflictos de escritura ni false sharing entre tiles diferentes ($\text{MC} \cdot n \cdot 4 = 192 \cdot 128 \cdot 4 = 96$ KiB por bloque, varios ordenes de magnitud por encima de la linea de cache).
+- El numero de threads lo fija `OMP_NUM_THREADS` antes de invocar el binario.
 
-Calcula `C = A * B` (C se sobreescribe). Mismo contrato externo que `matmul_tiled_avx2`:
-- C (`m x n`) se inicializa a cero antes del bucle paralelo (secuencial, fuera del region OpenMP).
-- A (`m x k`) y B (`k x n`) son solo lectura, compartidas entre threads.
-- Cada thread procesa tiles `ii` disjuntos: escribe exclusivamente las filas `[ii, ii+BS)` de C — sin conflictos de escritura.
-- El numero de threads lo fija la variable de entorno `OMP_NUM_THREADS` antes de invocar el binario.
+### 15.3 Recomendacion para el Ryzen $5$ $4600$H
 
-```c
-void benchmark_iterations_omp(scalar_t *B_out,
-                               const scalar_t *A,
-                               const scalar_t *Z,
-                               size_t m, size_t n,
-                               size_t num_iters);
-```
+Configuracion empiricamente mejor en el sweep del Modulo 14: **`OMP_NUM_THREADS=6 OMP_PLACES=cores OMP_PROC_BIND=close`**. Un thread por core fisico (los $6$ cores fisicos del Renoir), evitando los hilos SMT que comparten las unidades FMA con sus siblings. `bind=close` mantiene los threads pegados a un CCX cuando hay $\leq 3$, y se reparte entre los dos cuando hay $\geq 4$.
 
-Misma recurrencia iterada que `benchmark_iterations_tiled_avx2`, delegando cada paso a `matmul_omp`.
+SMT a $12$ threads degrada el rendimiento $\sim 60\%$ porque los pares de hilos compiten por las dos pipas FMA de cada core fisico.
 
-### 15.3 Binarios
+### 15.4 Binarios
 
 | Binario | Target make | Flags |
 |---------|-------------|-------|
-| `bin/bench_tiled_omp_O3`    | `bench_tiled_omp`    | `CFLAGS_OMP_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma -fopenmp`) |
-| `bin/validate_tiled_omp_O3` | `validate_tiled_omp` | idem |
+| `bin/bench_tiled_ikj_omp_O3`    | `bench_tiled_ikj_omp`    | `CFLAGS_OMP_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma -fopenmp`) |
+| `bin/validate_tiled_ikj_omp_O3` | `validate_tiled_ikj_omp` | idem |
 
-**CLI bench:** `bench_tiled_omp_O3 <m> [num_iters] [num_runs] [bs]`
+**CLI bench:** `bench_tiled_ikj_omp_O3 <m> [num_iters] [num_runs] [bs]`
 
-**Salida CSV** (7 columnas, identico a `tiled_avx2`):
+**Salida CSV** (7 columnas, identica a `tiled_ikj_avx2`):
 ```
-tiled_omp,m,n,num_iters,bs,median_seconds,gflops
+tiled_ikj_omp,m,n,num_iters,bs,median_seconds,gflops
 ```
 
-**Integracion en el pipeline perf:** `profile_perf_zen2.sh` fija `OMP_NUM_THREADS=8 OMP_PLACES=cores OMP_PROC_BIND=close` cuando `VARIANT=tiled_omp`. `run_perf_zen2_sweep.sh` incluye `tiled_omp` en su array `VARIANTS` por defecto. `consolidate_perf_zen2.py` no requiere cambios (descubre celdas automaticamente y ya parsea el formato de 7 columnas).
+**Integracion en el pipeline perf:** `profile_perf_zen2.sh` fija `OMP_NUM_THREADS=6 OMP_PLACES=cores OMP_PROC_BIND=close` cuando `VARIANT=tiled_ikj_omp` (cambiado en Fase 1.6 desde $8/$close, que era subOptimo para el microkernel FMA-bound). `run_perf_zen2_sweep.sh` incluye `tiled_ikj_omp` en su array `VARIANTS` por defecto. `consolidate_perf_zen2.py` no requiere cambios.
 
 ---
 
