@@ -33,7 +33,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-VARIANTS=(${VARIANTS:-naive recursive morton morton_avx2 loop_ijk loop_ikj loop_jik loop_jki loop_kij loop_kji tiled_ikj tiled_avx2})
+VARIANTS=(${VARIANTS:-naive recursive morton morton_avx2 loop_ijk loop_ikj loop_jik loop_jki loop_kij loop_kji tiled_ikj tiled_avx2 tiled_omp})
 MS=(${MS:-1024 4096 8192})
 ITERS_PER_RUN=${ITERS_PER_RUN:-1}
 RUNS=${RUNS:-3}

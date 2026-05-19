@@ -73,11 +73,19 @@ ITERS_PER_RUN=${ITERS_PER_RUN:-1}
 RUNS=${RUNS:-3}
 
 # loop_* variants share a single binary; the order name is the suffix.
+# tiled_omp runs with a fixed OMP_NUM_THREADS=8.
 case "$VARIANT" in
     loop_*)
         LOOP_ORDER="${VARIANT#loop_}"
         BIN="$REPO_DIR/bin/bench_loop_O3"
         BIN_ARGS="$LOOP_ORDER $M $ITERS_PER_RUN $RUNS"
+        ;;
+    tiled_omp)
+        BIN="$REPO_DIR/bin/bench_tiled_omp_O3"
+        BIN_ARGS="$M $ITERS_PER_RUN $RUNS"
+        export OMP_NUM_THREADS=8
+        export OMP_PLACES=cores
+        export OMP_PROC_BIND=close
         ;;
     *)
         BIN="$REPO_DIR/bin/bench_${VARIANT}_O3"
