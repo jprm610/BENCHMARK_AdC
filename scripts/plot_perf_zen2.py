@@ -42,7 +42,8 @@ from pathlib import Path
 
 VARIANTS = ("naive", "recursive", "morton", "morton_avx2",
             "loop_ijk", "loop_ikj", "loop_jik",
-            "loop_jki", "loop_kij", "loop_kji")
+            "loop_jki", "loop_kij", "loop_kji",
+            "tiled_ikj", "tiled_avx2")
 
 STYLE = {
     "naive":       dict(color="tab:blue",   marker="o",
@@ -65,6 +66,10 @@ STYLE = {
                         label="loop kij"),
     "loop_kji":    dict(color="#b38f00",    marker="X",
                         label="loop kji"),
+    "tiled_ikj":   dict(color="tab:cyan",   marker="v",
+                        label="tiled ikj (2D)"),
+    "tiled_avx2":  dict(color="tab:orange", marker="*",
+                        label="tiled avx2 (6-loop)"),
 }
 
 VARIANT_ORDER = {v: i for i, v in enumerate(VARIANTS)}
