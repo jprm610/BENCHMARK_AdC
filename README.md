@@ -3,7 +3,7 @@
 **Curso:** Arquitectura de Computadores
 **Universidad:** Universidad Nacional de Colombia, Sede Medellin
 **Fecha:** Mayo 2026
-**Estado:** Fase 1 cerrada (baseline + profiling + escalamiento con $m$); Fase 1.1 cerrada (reordenamiento de bucles, 6 variantes); Fase 1.2 cerrada (tiling explicito `ikj` apuntando a L2); Fase 6 cerrada (cache-oblivious recursivo + Morton); Sesion 03 cerrada (microkernel AVX2 + FMA, OpenMP tasks, perf Zen 2, Roofline anclado al $4600$H).
+**Estado:** Fase 1 cerrada (baseline + profiling + escalamiento con $m$); Fase 1.1 cerrada (reordenamiento de bucles, 6 variantes); Fase 1.2 cerrada (tiling explicito `ikj` apuntando a L2); Fase 1.3 cerrada (`tiled_avx2`: 6-loop tiling AVX2+FMA, BS=64, integrado en `make results`); Fase 6 cerrada (cache-oblivious recursivo + Morton); Sesion 03 cerrada (microkernel AVX2 + FMA, OpenMP tasks, perf Zen 2, Roofline anclado al $4600$H).
 
 ---
 
@@ -62,6 +62,10 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |   |-- matmul_tiled.{h,c}             -> Tiling Mc x Kc sobre ikj, apunta a L2 (Mc=Kc=256)
 |   |-- bench_tiled.c                  -> Driver bench_tiled_ikj_O3
 |   |-- validate_tiled.c               -> 3 invariantes + cross-validation contra naive
+|   |   # Fase 1.3 - tiled_avx2: 6-loop tiling con AVX2+FMA
+|   |-- matmul_tiled_avx2.{h,c}        -> 6-loop tiling (ii,kk,jj+i,p,j) broadcast AVX2+FMA, BS=64
+|   |-- bench_tiled_avx2.c             -> Driver bench_tiled_avx2_O3 (CSV 7 columnas con bs)
+|   |-- validate_tiled_avx2.c          -> 4 invariantes + cross-validation contra naive
 |   |   # Sesion 03 - microkernel AVX2 + OpenMP + perf Zen 2
 |   |-- hwinfo.c                       -> Fingerprint runtime del CPU
 |   |-- kernel_avx2.{h,c}              -> Microkernel AVX2 + FMA 4x16 (Etapa A4)
@@ -242,7 +246,7 @@ make clean               # borra bin/ y build/
 make distclean           # clean + borra results/*.csv y plots/*
 ```
 
-Targets de Fase 1.1 (loop reorder) y Fase 1.2 (tiling):
+Targets de Fase 1.1 (loop reorder), Fase 1.2 (tiling) y Fase 1.3 (tiled_avx2):
 
 ```bash
 # Fase 1.1 - loop reorder
@@ -252,6 +256,10 @@ make validate_loop            # bin/validate_loop_O0
 # Fase 1.2 - tiling explicito
 make bench_tiled              # bin/bench_tiled_ikj_O3
 make validate_tiled           # bin/validate_tiled_O0
+
+# Fase 1.3 - tiled_avx2 (6-loop tiling con AVX2+FMA, compilado con -O3 -march=znver2)
+make bench_tiled_avx2         # bin/bench_tiled_avx2_O3
+make validate_tiled_avx2      # bin/validate_tiled_avx2_O3
 ```
 
 Targets de Fase 6 (cache-oblivious recursivo + Morton):
@@ -505,6 +513,46 @@ python3 scripts/consolidate_perf_zen2.py
 
 ---
 
+### 5.8 Flujo de Fase 1.3: tiled_avx2 (6-loop tiling AVX2+FMA)
+
+```bash
+# Compilar (requiere -O3 -march=znver2 -mavx2 -mfma)
+make bench_tiled_avx2
+make validate_tiled_avx2
+
+# Validar correctitud
+./bin/validate_tiled_avx2_O3 256        # m=256, BS=64
+./bin/validate_tiled_avx2_O3 256 32     # m=256, BS=32 (BS debe ser multiplo de 8)
+
+# Bench individual
+./bin/bench_tiled_avx2_O3 1024          # m=1024, defaults (iters auto, runs=5, BS=64)
+./bin/bench_tiled_avx2_O3 1024 4 1 32  # m=1024, 4 iters, 1 corrida, BS=32
+```
+
+Salida CSV (7 columnas, incluye `bs`):
+```
+tiled_avx2,1024,128,4,64,X.XXXXXX,X.XXXXXX
+```
+
+Para incluir `tiled_avx2` en el sweep de perf completo y regenerar `results/metrics.csv`:
+
+```bash
+make results
+```
+
+El target `results` incluye `bench_tiled_avx2_O3` como dependencia y `run_perf_zen2_sweep.sh` incluye `tiled_avx2` en su lista de variantes por defecto.
+
+Para correr solo la celda de `tiled_avx2` sin relanzar todo el sweep:
+
+```bash
+VARIANTS="tiled_avx2" MS="1024 2048" bash scripts/run_perf_zen2_sweep.sh
+python3 scripts/consolidate_perf_zen2.py
+```
+
+**Block size:** `BS = 64` por defecto. Tres paneles activos de `64×64` floats = 48 KiB, dentro del L2 de 512 KB del Ryzen 5 4600H. Cambiar via 4.o argumento del bench o `matmul_tiled_avx2_set_bs(bs)` en tiempo de ejecucion; `bs` debe ser multiplo de 8.
+
+---
+
 ### 5.6 Flujo de Sesion 03: microkernel AVX2 + OpenMP + Roofline
 
 La Sesion 03 lleva el proyecto al hardware del Ryzen $5$ $4600$H (Zen $2$): microkernel AVX2 + FMA $4 \times 16$, paralelizacion con OpenMP tasks, profiling con eventos PMC de Zen $2$ y Roofline anclado al bandwidth STREAM medido. Todos los targets nuevos viven bajo el bloque `# === Sesion 03 targets ===` del `Makefile` y no tocan los pipelines de Fases $1$ ni $6$.
@@ -691,6 +739,7 @@ Las fases siguientes mantendran la misma API descrita en `docs/API.md` y se suma
 |------|-----------------|--------|
 | 2 | Reordenamiento de bucles (ikj, kij) + pre-transposicion de $A$ | pendiente (Camino B, Juan Pablo) |
 | 3 | Tiling de un nivel para L2 | **COMPLETADO** (Fase 1.2: `matmul_tiled`, `tiled_ikj` con Mc=Kc=256 apuntando al L2 del $4600$H) |
+| 1.3 | 6-loop tiling con AVX2+FMA (`tiled_avx2`) | **COMPLETADO** (Fase 1.3: broadcast AVX2 + FMA, BS=64, integrado en `make results` y sweep de perf Zen 2) |
 | 4 | Flags de compilador y auto-vectorizacion (`-O3 -march=native`) | **COMPLETADO** como parte de la Sesion 03 (microkernel AVX2 + FMA explicito sobre Zen $2$) |
 | 5 | OpenMP + comparacion con OpenBLAS | OpenMP **COMPLETADO** (Sesion 03, `matmul_morton_omp`); comparacion OpenBLAS pendiente para Sesion 04 |
 | 6 / Opcional | Matmul recursivo cache-oblivious + layout Morton sobre $A$ | **COMPLETADO** (Sesion 02 codigo y validacion; Sesion 03 sweep masivo, perf compare, Roofline) |
