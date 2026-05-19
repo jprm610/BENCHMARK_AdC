@@ -59,9 +59,9 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |   |-- bench_morton.c                 -> Driver bench_morton_O0 (potencia de 2)
 |   |-- validate_morton.c              -> Verificador morton
 |   |   # Fase 1.2 - tiling explicito sobre ikj
-|   |-- matmul_tiled.{h,c}             -> Tiling Mc x Kc sobre ikj, apunta a L2 (Mc=Kc=256)
-|   |-- bench_tiled.c                  -> Driver bench_tiled_ikj_O3
-|   |-- validate_tiled.c               -> 3 invariantes + cross-validation contra naive
+|   |-- matmul_tiled_ikj.{h,c}             -> Tiling Mc x Kc sobre ikj, apunta a L2 (Mc=Kc=256)
+|   |-- bench_tiled_ikj.c                  -> Driver bench_tiled_ikj_O3
+|   |-- validate_tiled_ikj.c               -> 3 invariantes + cross-validation contra naive
 |   |   # Fase 1.3 - tiled_ikj_avx2: 6-loop tiling con AVX2+FMA
 |   |-- matmul_tiled_ikj_avx2.{h,c}        -> 6-loop tiling (ii,kk,jj+i,p,j) broadcast AVX2+FMA, BS=64
 |   |-- bench_tiled_ikj_avx2.c             -> Driver bench_tiled_ikj_avx2_O3 (CSV 7 columnas con bs)
@@ -258,8 +258,8 @@ make bench_loop               # bin/bench_loop_O0 y bin/bench_loop_O3
 make validate_loop            # bin/validate_loop_O0
 
 # Fase 1.2 - tiling explicito
-make bench_tiled              # bin/bench_tiled_ikj_O3
-make validate_tiled           # bin/validate_tiled_O0
+make bench_tiled_ikj              # bin/bench_tiled_ikj_O3
+make validate_tiled_ikj           # bin/validate_tiled_O0
 
 # Fase 1.3 - tiled_ikj_avx2 (6-loop tiling con AVX2+FMA, compilado con -O3 -march=znver2)
 make bench_tiled_ikj_avx2         # bin/bench_tiled_ikj_avx2_O3
@@ -485,8 +485,8 @@ Captura siete eventos (`L1-dcache-loads`, `L1-dcache-load-misses`, `LLC-loads`, 
 
 ```bash
 # Compilar
-make bench_tiled
-make validate_tiled
+make bench_tiled_ikj
+make validate_tiled_ikj
 
 # Validar correctitud
 ./bin/validate_tiled_O0 256
@@ -786,7 +786,7 @@ Las fases siguientes mantendran la misma API descrita en `docs/API.md` y se suma
 | Fase | Que se agregara | Estado |
 |------|-----------------|--------|
 | 2 | Reordenamiento de bucles (ikj, kij) + pre-transposicion de $A$ | pendiente (Camino B, Juan Pablo) |
-| 3 | Tiling de un nivel para L2 | **COMPLETADO** (Fase 1.2: `matmul_tiled`, `tiled_ikj` con Mc=Kc=256 apuntando al L2 del $4600$H) |
+| 3 | Tiling de un nivel para L2 | **COMPLETADO** (Fase 1.2: `matmul_tiled_ikj`, `tiled_ikj` con Mc=Kc=256 apuntando al L2 del $4600$H) |
 | 1.3 | 6-loop tiling con AVX2+FMA (`tiled_ikj_avx2`) | **COMPLETADO** (Fase 1.3: broadcast AVX2 + FMA, BS=64, integrado en `make results` y sweep de perf Zen 2) |
 | 4 | Flags de compilador y auto-vectorizacion (`-O3 -march=native`) | **COMPLETADO** como parte de la Sesion 03 (microkernel AVX2 + FMA explicito sobre Zen $2$) |
 | 1.4 | OpenMP sobre tiling explicito AVX2 | **COMPLETADO** (`tiled_ikj_omp`: `tiled_ikj_avx2` + `parallel for` en `ii`, 8 threads, integrado en `make results` y sweep perf) |

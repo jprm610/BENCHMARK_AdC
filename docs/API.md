@@ -81,7 +81,7 @@ void matmul_naive(scalar_t *C,
 
 **Complejidad:** $2 \cdot m \cdot k \cdot n$ flops. Sin optimizacion de localidad (orden `ijk` produce stride $n$ al acceder a $B$).
 
-**Notas:** esta funcion es el baseline obligatorio del proyecto. **No** debe modificarse para introducir optimizaciones; las versiones optimizadas iran en nuevos modulos (`matmul_reordered.c`, `matmul_tiled.c`, etc.) con firmas analogas.
+**Notas:** esta funcion es el baseline obligatorio del proyecto. **No** debe modificarse para introducir optimizaciones; las versiones optimizadas iran en nuevos modulos (`matmul_reordered.c`, `matmul_tiled_ikj.c`, etc.) con firmas analogas.
 
 ### 2.2 `benchmark_iterations`
 
@@ -407,8 +407,8 @@ A medida que se avancen las fases del proyecto se anadiran modulos manteniendo e
 | Fase | Nuevo modulo | Estado | Razon |
 |------|--------------|--------|-------|
 | 2 (reorden de bucles) | `matmul_reordered.c` | pendiente | Probar `ikj`, `kij`, etc. |
-| 3 (transposicion + tiling) | `matmul_tiled.c` | pendiente | Pre-transposicion y blocking de L2 |
-| 4 (vectorizacion) | igual `matmul_tiled.c` con flags | pendiente | Auto-vectorizacion |
+| 3 (transposicion + tiling) | `matmul_tiled_ikj.c` | pendiente | Pre-transposicion y blocking de L2 |
+| 4 (vectorizacion) | igual `matmul_tiled_ikj.c` con flags | pendiente | Auto-vectorizacion |
 | 5 (OpenMP) | `matmul_parallel.c` | pendiente | `#pragma omp parallel for` |
 | Opcional / Fase 6 (Morton) | `matmul_recursive.c` + `morton.c` + `matmul_morton.c` | **COMPLETADA** (codigo y validacion; mediciones masivas en Sesion 03) | Recursion cache-oblivious sobre row-major y sobre layout Z-order |
 | Fase 1.3 (tiled_ikj_avx2) | `matmul_tiled_ikj_avx2.c` | **COMPLETADA** (Sesion 03, integracion en `make results`) | 6-loop tiling (ii, kk, jj + i, p, j) con broadcast AVX2 + FMA; BS=64 configurable en runtime |
