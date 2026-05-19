@@ -411,6 +411,7 @@ A medida que se avancen las fases del proyecto se anadiran modulos manteniendo e
 | 4 (vectorizacion) | igual `matmul_tiled.c` con flags | pendiente | Auto-vectorizacion |
 | 5 (OpenMP) | `matmul_parallel.c` | pendiente | `#pragma omp parallel for` |
 | Opcional / Fase 6 (Morton) | `matmul_recursive.c` + `morton.c` + `matmul_morton.c` | **COMPLETADA** (codigo y validacion; mediciones masivas en Sesion 03) | Recursion cache-oblivious sobre row-major y sobre layout Z-order |
+| Fase 1.3 (tiled_avx2) | `matmul_tiled_avx2.c` | **COMPLETADA** (Sesion 03, integracion en `make results`) | 6-loop tiling (ii, kk, jj + i, p, j) con broadcast AVX2 + FMA; BS=64 configurable en runtime |
 
 Cada nuevo kernel debera tener la firma `void mm(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, size_t k, size_t n)` para que `validate.c` lo pueda probar sin cambios.
 
@@ -674,6 +675,15 @@ make plot_loop                  -> plots/loop_orders.png  (6 ordenes desde loop_
 make plot_loop_vs_naive         -> plots/loop_vs_naive.png  (naive + 6 ordenes)
 ```
 
+Targets de Fase 1.3 (tiled_avx2):
+
+```
+make bench_tiled_avx2           -> bin/bench_tiled_avx2_O3
+make validate_tiled_avx2        -> bin/validate_tiled_avx2_O3
+```
+
+Ambos se compilan con `CFLAGS_O3_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma`), que es obligatorio para que `_mm256_fmadd_ps` emita la instruccion FMA real. El `make results` incluye `bench_tiled_avx2_O3` como dependencia y `run_perf_zen2_sweep.sh` incluye `tiled_avx2` en su lista de variantes por defecto.
+
 Todos extienden el Makefile **al final**, sin modificar las recetas del baseline (`bench_naive_O0`, `bench_naive_pg`, `validate_naive`, `sweep_naive`, `profile_*_naive`, `clean`, `distclean`).
 
 ---
@@ -883,6 +893,89 @@ Misma estructura que en los modulos anteriores: el primero reorganiza $A$ intern
 
 ---
 
-## 14. Cambios y versionado
+## 14. Modulo `matmul_tiled_avx2` (Fase 1.3 — 6-loop tiling con AVX2+FMA)
+
+**Archivo:** [`src/matmul_tiled_avx2.h`](../src/matmul_tiled_avx2.h), [`src/matmul_tiled_avx2.c`](../src/matmul_tiled_avx2.c).
+
+Kernel de tiling explicito de seis bucles que extiende `matmul_tiled` (Fase 1.2, orden `ikj`, 2D) agregando un tercer nivel de bloque sobre la dimension `j`. El loop interno de `j` usa instrinsics AVX2 broadcast+FMA para procesar 8 elementos `float` por iteracion.
+
+### 14.1 Constante y variable de block size
+
+```c
+#define TILED_AVX2_BS_DEFAULT 64u
+extern size_t g_tiled_avx2_bs;
+```
+
+El bloque por defecto es `BS = 64`. Con tres paneles activos de `BS x BS` floats el working set es `3 x 64 x 64 x 4 B = 48 KiB`, que cabe en el L2 de 512 KB del Ryzen 5 4600H con margen para B y C. El block size debe ser multiplo de 8 (ancho de un vector AVX2 FP32); se rechaza cualquier valor que viole esta condicion.
+
+### 14.2 `matmul_tiled_avx2_set_bs`
+
+```c
+void matmul_tiled_avx2_set_bs(size_t bs);
+```
+
+Cambia el block size global en runtime. Si `bs == 0` o `bs % 8 != 0`, imprime un aviso a `stderr` y retorna sin modificar `g_tiled_avx2_bs`. Util para barrer block sizes desde los scripts de tuning sin recompilar.
+
+### 14.3 `matmul_tiled_avx2`
+
+```c
+void matmul_tiled_avx2(scalar_t *C,
+                        const scalar_t *A,
+                        const scalar_t *B,
+                        size_t m, size_t k, size_t n);
+```
+
+**Computa** $C = A \cdot B$ con 6 bucles anidados: tres exteriores de tiling `(ii, kk, jj)` y tres interiores `(i, p, j)`.
+
+**Parametros y precondiciones.** Identicos a `matmul_naive` (Seccion 2.1): `C` es $m \times n$ (out, sobrescrito), `A` es $m \times k$, `B` es $k \times n$, todos row-major, sin aliasing. No requiere que `m`, `k` ni `n` sean potencias de 2 ni multiplos de `BS`; el kernel maneja colas con un tail loop escalar.
+
+**Postcondiciones.** $C_{ij} = \sum_{p=0}^{k-1} A_{ip} B_{pj}$ para todo $(i, j)$.
+
+**Algoritmo vectorial.** Para cada bloque `(ii, kk, jj)` y cada par interior `(i, p)`:
+
+```c
+__m256 a_vec = _mm256_set1_ps(A[i*k + p]);          // broadcast del escalar a_ip
+for (j = jj; j < j_vec_end; j += 8) {               // j_vec_end = mayor multiplo de 8 <= j_end
+    __m256 b = _mm256_loadu_ps(&B[p*n + j]);
+    __m256 c = _mm256_loadu_ps(&C[i*n + j]);
+    c = _mm256_fmadd_ps(a_vec, b, c);
+    _mm256_storeu_ps(&C[i*n + j], c);
+}
+for (j = j_vec_end; j < j_end; ++j)                 // tail escalar
+    C[i*n + j] += A[i*k + p] * B[p*n + j];
+```
+
+`memset(C, 0, m*n*sizeof(scalar_t))` al inicio de la funcion garantiza que la acumulacion parcial por bloques sea correcta.
+
+**Compilacion.** Requiere `-O3 -march=znver2 -mavx2 -mfma`. Sin `-mavx2 -mfma` el compilador rechaza `_mm256_fmadd_ps`.
+
+**Complejidad.** $2 \cdot m \cdot k \cdot n$ flops (identica al baseline). Ganancia frente a `loop_ikj`: mejor reutilizacion de cache en los tres niveles gracias al tiling 3D, a costa de instrucciones adicionales de control de bloque.
+
+### 14.4 `benchmark_iterations_tiled_avx2`
+
+```c
+void benchmark_iterations_tiled_avx2(scalar_t *B_out,
+                                      const scalar_t *A,
+                                      const scalar_t *Z,
+                                      size_t m, size_t n,
+                                      size_t num_iters);
+```
+
+Mismo patron que `benchmark_iterations` (Seccion 2.2): doble buffer + swap de punteros, aloja y libera internamente. Invoca `matmul_tiled_avx2` en cada iteracion.
+
+### 14.5 Binarios
+
+| Binario | CLI | Salida CSV |
+|---------|-----|------------|
+| `bin/bench_tiled_avx2_O3` | `<m> [num_iters] [num_runs] [bs]` | `tiled_avx2,m,n,num_iters,bs,median_seconds,gflops` (7 columnas) |
+| `bin/validate_tiled_avx2_O3` | `[m] [bs]` (defaults: m=256, bs=64) | 4 tests: `A*0==0`, `I*Z==Z`, linealidad, cross contra naive |
+
+El cuarto argumento opcional `[bs]` llama a `matmul_tiled_avx2_set_bs(bs)` antes de las corridas. La salida CSV de bench tiene **7 columnas** (una mas que los drivers de 6 columnas de `loop_*` y `tiled_ikj`) porque incluye `bs` entre `num_iters` y `median_seconds`; el consolidador `consolidate_perf_zen2.py` ya maneja este formato con la rama `len(parts) >= 7`.
+
+**Tolerancias de validacion:** `ABS_TOL = 1e-4f`, `REL_TOL = 1e-3f` (igual que `validate_tiled`).
+
+---
+
+## 15. Cambios y versionado
 
 Este documento se actualiza con cada PR que toque la API publica. La regla es: **si una firma de funcion cambia, este documento debe cambiar en el mismo commit**.
