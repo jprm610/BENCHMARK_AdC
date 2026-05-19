@@ -548,7 +548,7 @@ BENCH_TILED_AVX2_O3 := $(BIN_DIR)/bench_tiled_avx2_O3
 
 results: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
          $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOP_O3) \
-         $(BENCH_TILED_O3) $(BENCH_TILED_AVX2_O3)
+         $(BENCH_TILED_O3) $(BENCH_TILED_AVX2_O3) $(BENCH_TILED_OMP_O3)
 	$(if $(M),MS="$(M)" )bash scripts/run_perf_zen2_sweep.sh
 	python3 scripts/consolidate_perf_zen2.py --out results/metrics.csv
 
@@ -644,3 +644,34 @@ $(BENCH_TILED_AVX2_O3): $(BENCH_TILED_AVX2_SRCS) | $(BIN_DIR)
 
 $(VALIDATE_TILED_AVX2_O3): $(VALIDATE_TILED_AVX2_SRCS) | $(BIN_DIR)
 	$(CC) $(CFLAGS_O3_ZEN2) $(VALIDATE_TILED_AVX2_SRCS) -o $@ $(LIBS)
+
+# =====================================================================
+# Fase 1.4 - tiled_omp: tiled_avx2 + OpenMP parallel for on ii loop
+#
+# Parallelizes the outermost ii tile loop with a single pragma omp
+# parallel for schedule(static). Each ii tile writes to disjoint rows
+# of C, so there are no write conflicts. A and B are shared read-only.
+#
+# Uses CFLAGS_OMP_ZEN2 (defined above as CFLAGS_O3_ZEN2 + -fopenmp)
+# so the hardware event comparisons remain apples-to-apples with the
+# other O3_ZEN2 variants.
+# =====================================================================
+
+TILED_OMP_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_omp.c
+BENCH_TILED_OMP_SRCS    := $(TILED_OMP_COMMON_SRCS) $(SRC_DIR)/bench_tiled_omp.c
+VALIDATE_TILED_OMP_SRCS := $(TILED_OMP_COMMON_SRCS) $(SRC_DIR)/validate_tiled_omp.c
+
+BENCH_TILED_OMP_O3    := $(BIN_DIR)/bench_tiled_omp_O3
+VALIDATE_TILED_OMP_O3 := $(BIN_DIR)/validate_tiled_omp_O3
+
+.PHONY: bench_tiled_omp bench_tiled_omp_O3 validate_tiled_omp
+
+bench_tiled_omp:    $(BENCH_TILED_OMP_O3)
+bench_tiled_omp_O3: $(BENCH_TILED_OMP_O3)
+validate_tiled_omp: $(VALIDATE_TILED_OMP_O3)
+
+$(BENCH_TILED_OMP_O3): $(BENCH_TILED_OMP_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_OMP_ZEN2) $(BENCH_TILED_OMP_SRCS) -o $@ $(LIBS)
+
+$(VALIDATE_TILED_OMP_O3): $(VALIDATE_TILED_OMP_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_OMP_ZEN2) $(VALIDATE_TILED_OMP_SRCS) -o $@ $(LIBS)
