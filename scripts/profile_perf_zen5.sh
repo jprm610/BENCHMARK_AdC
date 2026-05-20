@@ -5,29 +5,29 @@
 # Captura hardware counters para una celda (variant, m) en el servidor
 # AWS c8a.2xlarge (AMD EPYC 9R45 / Zen 5, hypervisor KVM).
 #
-# El KVM de esta instancia solo expone 8 eventos hardware genericos;
-# los eventos raw AMD (fp_ret_sse_avx_ops, ls_dispatch, l2_request_g1,
-# l2_cache_req_stat, bp_l1_tlb_miss_l2_tlb_miss) no estan disponibles.
-# Los 8 eventos genericos caben en el budget del PMU virtual en una
-# sola invocacion de perf sin multiplexing.
+# El KVM de esta instancia expone solo eventos hardware genericos. Se
+# usan dos grupos de 4 eventos cada uno para evitar multiplexing
+# (misma estrategia que profile_perf_zen2.sh):
 #
-# EVENTOS (grupo unico):
-#   cycles, instructions,
-#   cache-references      (proxy de accesos L3),
-#   cache-misses          (proxy de misses L3),
-#   stalled-cycles-frontend, stalled-cycles-backend,
-#   branch-instructions, branch-misses
+#   Grupo A (4 eventos - compute y LLC):
+#     cycles, instructions, cache-references, cache-misses
+#
+#   Grupo B (4 eventos - branches):
+#     cycles, instructions, branch-instructions, branch-misses
+#
+# stalled-cycles-frontend/backend se omiten: en AMD Zen bajo KVM
+# siempre retornan 0 sin valor diagnostico.
 #
 # METRICAS derivadas en el consolidador:
-#   ipc                  = instructions / cycles
-#   llc_miss_rate        = cache-misses / cache-references
-#   frontend_stall_rate  = stalled-cycles-frontend / cycles
-#   backend_stall_rate   = stalled-cycles-backend  / cycles
-#   branch_miss_rate     = branch-misses / branch-instructions
+#   ipc                  = instructions / cycles           (grupo A)
+#   llc_misses_per_kinst = cache-misses / instructions * 1000  (grupo A;
+#                          cache-references no esta disponible en KVM)
+#   branch_miss_rate     = branch-misses / branch-instructions (grupo B)
 #
 # OUTPUT:
-#   results/<variant>/perf_<variant>_m<M>_A.txt   (perf stat -x ,)
-#   results/<variant>/bench_<variant>_m<M>.csv     (bench stdout)
+#   results/<variant>/perf_<variant>_m<M>_A.txt   (perf stat -x , grupo A)
+#   results/<variant>/perf_<variant>_m<M>_B.txt   (perf stat -x , grupo B)
+#   results/<variant>/bench_<variant>_m<M>.csv     (bench stdout, desde grupo A)
 #
 # USAGE:
 #   scripts/profile_perf_zen5.sh [variant] [m]
@@ -83,9 +83,11 @@ esac
 
 RESULTS_DIR="$REPO_DIR/results/$VARIANT"
 OUT_A="$RESULTS_DIR/perf_${VARIANT}_m${M}_A.txt"
+OUT_B="$RESULTS_DIR/perf_${VARIANT}_m${M}_B.txt"
 BENCH_OUT="$RESULTS_DIR/bench_${VARIANT}_m${M}.csv"
 
-EVENTS="cycles,instructions,cache-references,cache-misses,stalled-cycles-frontend,stalled-cycles-backend,branch-instructions,branch-misses"
+EVENTS_A="cycles,instructions,cache-references,cache-misses"
+EVENTS_B="cycles,instructions,branch-instructions,branch-misses"
 
 # --- preflight checks ------------------------------------------------
 
@@ -123,17 +125,29 @@ case "$VARIANT" in
         ;;
 esac
 
+run_group() {
+    local group_name="$1"
+    local events="$2"
+    local out_file="$3"
+    local bench_out="${4:-/dev/null}"
+
+    echo "--- group $group_name : $events" >&2
+    if ! perf stat -x , -e "$events" -o "$out_file" -- \
+         "$BIN" $BIN_ARGS >"$bench_out" 2>>"${out_file}.bench.err"; then
+        echo "Error: perf returned non-zero for group $group_name." >&2
+        tail -20 "${out_file}.bench.err" >&2 || true
+        return 1
+    fi
+    [ -s "${out_file}.bench.err" ] || rm -f "${out_file}.bench.err"
+    echo "  wrote $out_file" >&2
+}
+
 echo "Profiling variant=$VARIANT m=$M (iters_per_run=$ITERS_PER_RUN runs=$RUNS)" >&2
 
-if ! perf stat -x , -e "$EVENTS" -o "$OUT_A" -- \
-     "$BIN" $BIN_ARGS >"$BENCH_OUT" 2>"${OUT_A}.bench.err"; then
-    echo "Error: perf returned non-zero." >&2
-    echo "stderr from bench (last lines):" >&2
-    tail -20 "${OUT_A}.bench.err" >&2 || true
-    exit 1
-fi
-[ -s "${OUT_A}.bench.err" ] || rm -f "${OUT_A}.bench.err"
+run_group "A" "$EVENTS_A" "$OUT_A" "$BENCH_OUT"
+run_group "B" "$EVENTS_B" "$OUT_B"
 
-echo "  wrote $OUT_A" >&2
-echo "  wrote $BENCH_OUT" >&2
-echo "Done." >&2
+echo "Done. Files:" >&2
+echo "  $OUT_A" >&2
+echo "  $OUT_B" >&2
+echo "  $BENCH_OUT" >&2

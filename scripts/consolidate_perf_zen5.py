@@ -5,22 +5,19 @@ Parsea los archivos de perf stat producidos por profile_perf_zen5.sh
 (servidor AWS c8a.2xlarge / AMD EPYC 9R45 / Zen 5 bajo KVM) y emite
 una fila por celda (variant, m) al CSV de salida.
 
-El KVM de esta instancia solo expone 8 eventos hardware genericos; los
-eventos raw AMD (fp_ret_sse_avx_ops, ls_dispatch, l2_request_g1, etc.)
-no estan disponibles. El esquema de columnas es mas estrecho que el de
-consolidate_perf_zen2.py.
-
-Input por celda (escrito por profile_perf_zen5.sh):
-    results/<variant>/perf_<variant>_m<M>_A.txt   (unico grupo perf)
+Input por celda:
+    results/<variant>/perf_<variant>_m<M>_A.txt   (grupo A: cycles,
+        instructions, cache-references, cache-misses)
+    results/<variant>/perf_<variant>_m<M>_B.txt   (grupo B: cycles,
+        instructions, branch-instructions, branch-misses)
     results/<variant>/bench_<variant>_m<M>.csv     (timing + gflops)
 
 Columnas de salida:
     variant, m,
     median_seconds, gflops,
     cycles, instructions, ipc,
-    llc_miss_rate,           cache-misses / cache-references
-    frontend_stall_rate,     stalled-cycles-frontend / cycles
-    backend_stall_rate,      stalled-cycles-backend  / cycles
+    llc_misses_per_kinst,    cache-misses / instructions * 1000
+                             (cache-references no disponible en KVM AMD)
     branch_miss_rate,        branch-misses / branch-instructions
     min_mux_pct
 """
@@ -123,34 +120,34 @@ def parse_bench_file(path: Path) -> tuple[float, float]:
 
 def process_cell(variant: str, m: int, results_dir: Path) -> dict | None:
     path_a = results_dir / variant / f"perf_{variant}_m{m}_A.txt"
+    path_b = results_dir / variant / f"perf_{variant}_m{m}_B.txt"
     events_a = parse_perf_file(path_a)
+    events_b = parse_perf_file(path_b)
 
-    if not events_a:
+    if not events_a and not events_b:
         return None
 
     bench_path = results_dir / variant / f"bench_{variant}_m{m}.csv"
     median_seconds, gflops = parse_bench_file(bench_path)
 
-    cycles,        mux_cycles = get(events_a, "cycles")
-    instructions,  mux_inst   = get(events_a, "instructions")
-    cache_refs,    mux_cref   = get(events_a, "cache-references")
-    cache_misses,  mux_cm     = get(events_a, "cache-misses")
-    stall_front,   mux_sf     = get(events_a, "stalled-cycles-frontend")
-    stall_back,    mux_sb     = get(events_a, "stalled-cycles-backend")
-    branch_insts,  mux_bi     = get(events_a, "branch-instructions")
-    branch_misses, mux_bm     = get(events_a, "branch-misses")
+    # Grupo A: compute y LLC
+    cycles,       mux_cycles = get(events_a, "cycles")
+    instructions, mux_inst   = get(events_a, "instructions")
+    cache_misses, mux_cm     = get(events_a, "cache-misses")
+
+    # Grupo B: branches (cycles e instructions duplicados para cross-check)
+    branch_insts,  mux_bi = get(events_b, "branch-instructions")
+    branch_misses, mux_bm = get(events_b, "branch-misses")
 
     cyc = cycles        if cycles        is not None else None
     ins = instructions  if instructions  is not None else None
 
-    ipc                 = safe_div(ins, cyc)
-    llc_miss_rate       = safe_div(cache_misses, cache_refs)
-    frontend_stall_rate = safe_div(stall_front, cyc)
-    backend_stall_rate  = safe_div(stall_back, cyc)
-    branch_miss_rate    = safe_div(branch_misses, branch_insts)
+    ipc                  = safe_div(ins, cyc)
+    llc_misses_per_kinst = (safe_div(cache_misses, ins) * 1000.0
+                            if ins else math.nan)
+    branch_miss_rate     = safe_div(branch_misses, branch_insts)
 
-    mux_values = [v for v in (mux_cycles, mux_inst, mux_cref, mux_cm,
-                               mux_sf, mux_sb, mux_bi, mux_bm)
+    mux_values = [v for v in (mux_cycles, mux_inst, mux_cm, mux_bi, mux_bm)
                   if v is not None]
     min_mux_pct = min(mux_values) if mux_values else math.nan
 
@@ -162,9 +159,7 @@ def process_cell(variant: str, m: int, results_dir: Path) -> dict | None:
         "cycles":              cycles       if cycles       is not None else math.nan,
         "instructions":        instructions if instructions is not None else math.nan,
         "ipc":                 ipc,
-        "llc_miss_rate":       llc_miss_rate,
-        "frontend_stall_rate": frontend_stall_rate,
-        "backend_stall_rate":  backend_stall_rate,
+        "llc_misses_per_kinst": llc_misses_per_kinst,
         "branch_miss_rate":    branch_miss_rate,
         "min_mux_pct":         min_mux_pct,
     }
@@ -228,8 +223,7 @@ def main() -> int:
         "variant", "m",
         "median_seconds", "gflops",
         "cycles", "instructions", "ipc",
-        "llc_miss_rate",
-        "frontend_stall_rate", "backend_stall_rate",
+        "llc_misses_per_kinst",
         "branch_miss_rate",
         "min_mux_pct",
     ]
