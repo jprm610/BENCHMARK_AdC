@@ -660,7 +660,8 @@ CFLAGS_O3_ZEN5          := $(CSTD) $(WARN) $(INCS) -O3 -march=native \
                             -DTILED_IKJ_AVX2_BS_DEFAULT=512u                   \
                             -DTILED_IKJ_AVX2_MC=288u                           \
                             -DTILED_IKJ_OMP_BS_DEFAULT=512u                    \
-                            -DTILED_IKJ_OMP_MC=288u
+                            -DTILED_IKJ_OMP_MC=288u                            \
+                            -DUSE_AVX512=1
 CFLAGS_OMP_ZEN5         := $(CFLAGS_O3_ZEN5) -fopenmp
 CFLAGS_AVX2_KERNEL_ZEN5 := $(CSTD) -Wall -Wextra $(INCS) \
                             -O3 -march=native -funroll-loops -ffast-math
