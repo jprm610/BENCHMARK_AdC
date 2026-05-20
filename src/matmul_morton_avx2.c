@@ -35,7 +35,10 @@
 #define MR KERNEL_AVX2_MR   /* 4 */
 #define NR KERNEL_AVX2_NR   /* 16 */
 
-size_t g_recursion_threshold_avx2 = (size_t)64 * 64 * 128;  /* 524288 */
+#ifndef MORTON_AVX2_THRESHOLD_DEFAULT
+#define MORTON_AVX2_THRESHOLD_DEFAULT ((size_t)64 * 64 * 128)  /* 524288 - Zen 2 default */
+#endif
+size_t g_recursion_threshold_avx2 = MORTON_AVX2_THRESHOLD_DEFAULT;
 
 void matmul_morton_avx2_set_threshold(size_t threshold)
 {

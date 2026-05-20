@@ -46,12 +46,16 @@
  * of pc iterations (k / kc) small enough that the per-tile C round-trip
  * does not dominate the FMA throughput. Sweeping bs in the validator
  * still works for any positive value. */
+#ifndef TILED_IKJ_AVX2_BS_DEFAULT
 #define TILED_IKJ_AVX2_BS_DEFAULT 384u
+#endif
 
 /* Microkernel geometry (compile-time, not user-tunable). */
 #define TILED_IKJ_AVX2_MR 6u
 #define TILED_IKJ_AVX2_NR 16u
+#ifndef TILED_IKJ_AVX2_MC
 #define TILED_IKJ_AVX2_MC 192u
+#endif
 
 extern size_t g_tiled_ikj_avx2_bs;
 

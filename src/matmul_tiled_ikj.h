@@ -23,8 +23,12 @@
 #include <stddef.h>
 #include "matmul_naive.h"   /* scalar_t */
 
+#ifndef TILED_IKJ_MC_DEFAULT
 #define TILED_IKJ_MC_DEFAULT 256u
+#endif
+#ifndef TILED_IKJ_KC_DEFAULT
 #define TILED_IKJ_KC_DEFAULT 256u
+#endif
 
 /*
  * matmul_tiled_ikj: compute C = A * B with explicit Mc x Kc blocking.
