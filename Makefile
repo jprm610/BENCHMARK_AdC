@@ -485,7 +485,16 @@ profile_zen2: $(BENCH_NAIVE_O3) \
 	$(if $(M),MS="$(M)" )bash scripts/run_perf_zen2_sweep.sh
 	python3 scripts/consolidate_perf_zen2.py
 
+# Forward declaration of the tiled_ikj* bench output paths so the
+# `results` target prerequisite list expands correctly. GNU Make expands
+# variables in target prerequisites during the read phase; if a variable
+# is defined later in the file, it expands to empty here and the
+# corresponding binary is silently dropped from the dependency set. The
+# canonical recipes for these binaries live further down in the
+# Fase 1.2 / 1.3 / 1.4 blocks and consume the variables defined here.
+BENCH_TILED_IKJ_O3      := $(BIN_DIR)/bench_tiled_ikj_O3
 BENCH_TILED_IKJ_AVX2_O3 := $(BIN_DIR)/bench_tiled_ikj_avx2_O3
+BENCH_TILED_IKJ_OMP_O3  := $(BIN_DIR)/bench_tiled_ikj_omp_O3
 
 results: $(BENCH_NAIVE_O3) \
          $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_MORTON_OMP_O3) \
@@ -544,7 +553,8 @@ TILED_IKJ_COMMON_SRCS    := $(COMMON_SRCS) $(SRC_DIR)/matmul_tiled_ikj.c
 BENCH_TILED_IKJ_SRCS     := $(TILED_IKJ_COMMON_SRCS) $(SRC_DIR)/bench_tiled_ikj.c
 VALIDATE_TILED_IKJ_SRCS  := $(TILED_IKJ_COMMON_SRCS) $(SRC_DIR)/validate_tiled_ikj.c
 
-BENCH_TILED_IKJ_O3       := $(BIN_DIR)/bench_tiled_ikj_O3
+# BENCH_TILED_IKJ_O3 is forward-declared above (just before the `results`
+# target) so its expansion in `results`'s prerequisite list works.
 VALIDATE_TILED_IKJ_O0    := $(BIN_DIR)/validate_tiled_ikj_O0
 
 .PHONY: bench_tiled_ikj validate_tiled_ikj
@@ -573,7 +583,8 @@ TILED_IKJ_AVX2_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_tiled_ikj_avx2.
 BENCH_TILED_IKJ_AVX2_SRCS    := $(TILED_IKJ_AVX2_COMMON_SRCS) $(SRC_DIR)/bench_tiled_ikj_avx2.c
 VALIDATE_TILED_IKJ_AVX2_SRCS := $(TILED_IKJ_AVX2_COMMON_SRCS) $(SRC_DIR)/validate_tiled_ikj_avx2.c
 
-BENCH_TILED_IKJ_AVX2_O3    := $(BIN_DIR)/bench_tiled_ikj_avx2_O3
+# BENCH_TILED_IKJ_AVX2_O3 is forward-declared above; only the validate
+# binary path is defined here.
 VALIDATE_TILED_IKJ_AVX2_O3 := $(BIN_DIR)/validate_tiled_ikj_avx2_O3
 
 .PHONY: bench_tiled_ikj_avx2 validate_tiled_ikj_avx2
@@ -603,7 +614,8 @@ TILED_IKJ_OMP_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_tiled_ikj_omp.c
 BENCH_TILED_IKJ_OMP_SRCS    := $(TILED_IKJ_OMP_COMMON_SRCS) $(SRC_DIR)/bench_tiled_ikj_omp.c
 VALIDATE_TILED_IKJ_OMP_SRCS := $(TILED_IKJ_OMP_COMMON_SRCS) $(SRC_DIR)/validate_tiled_ikj_omp.c
 
-BENCH_TILED_IKJ_OMP_O3    := $(BIN_DIR)/bench_tiled_ikj_omp_O3
+# BENCH_TILED_IKJ_OMP_O3 is forward-declared above; only the validate
+# binary path is defined here.
 VALIDATE_TILED_IKJ_OMP_O3 := $(BIN_DIR)/validate_tiled_ikj_omp_O3
 
 .PHONY: bench_tiled_ikj_omp bench_tiled_ikj_omp_O3 validate_tiled_ikj_omp
