@@ -32,8 +32,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MR KERNEL_AVX2_MR   /* 4 */
+#define MR KERNEL_AVX2_MR   /* 4 — unchanged: tied to MORTON_AVX2_TILE */
+#ifdef USE_AVX512
+#include "kernel_avx512.h"
+#define NR 32u
+#define LEAF_KERNEL kernel_avx512_4x32
+#else
 #define NR KERNEL_AVX2_NR   /* 16 */
+#define LEAF_KERNEL kernel_avx2_4x16
+#endif
 
 #ifndef MORTON_AVX2_THRESHOLD_DEFAULT
 #define MORTON_AVX2_THRESHOLD_DEFAULT ((size_t)64 * 64 * 128)  /* 524288 - Zen 2 default */
@@ -217,10 +224,10 @@ static void kernel_base_morton_avx2(
      * into the global B and C). */
     for (size_t ii = 0; ii < m_block; ii += MR) {
         for (size_t jj = 0; jj < n_block; jj += NR) {
-            kernel_avx2_4x16(&C[ii * ldc + jj], ldc,
-                             &A_local_scratch[ii * k_block], k_block,
-                             &B[jj], ldb,
-                             k_block);
+            LEAF_KERNEL(&C[ii * ldc + jj], ldc,
+                        &A_local_scratch[ii * k_block], k_block,
+                        &B[jj], ldb,
+                        k_block);
         }
     }
 }
@@ -249,10 +256,10 @@ static void kernel_base_morton_avx2_add(
 
     for (size_t ii = 0; ii < m_block; ii += MR) {
         for (size_t jj = 0; jj < n_block; jj += NR) {
-            kernel_avx2_4x16(&C[ii * ldc + jj], ldc,
-                             &A_local_scratch[ii * k_block], k_block,
-                             &B[jj], ldb,
-                             k_block);
+            LEAF_KERNEL(&C[ii * ldc + jj], ldc,
+                        &A_local_scratch[ii * k_block], k_block,
+                        &B[jj], ldb,
+                        k_block);
         }
     }
 }

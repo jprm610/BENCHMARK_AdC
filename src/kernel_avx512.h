@@ -30,8 +30,13 @@
 #include <stddef.h>
 #include "matmul_naive.h"   /* scalar_t */
 
+/* 6x32 kernel geometry (tiled_ikj variants) */
 #define KERNEL_AVX512_MR 6u
 #define KERNEL_AVX512_NR 32u
+
+/* 4x32 kernel geometry (morton variants — MR=4 matches MORTON_AVX2_TILE) */
+#define KERNEL_AVX512_4X32_MR 4u
+#define KERNEL_AVX512_4X32_NR 32u
 
 /*
  * kernel_avx512_6x32: accumulate a 6x32 C tile from a kc-deep rank-1
@@ -101,6 +106,59 @@ static inline void kernel_avx512_6x32(scalar_t       *restrict C, size_t ldc,
     _mm512_storeu_ps(&C[4 * ldc + 16], c41);
     _mm512_storeu_ps(&C[5 * ldc +  0], c50);
     _mm512_storeu_ps(&C[5 * ldc + 16], c51);
+}
+
+/*
+ * kernel_avx512_4x32: accumulate a 4x32 C tile from a kc-deep rank-1
+ * update. Sibling of kernel_avx512_6x32 tuned for the Morton leaf where
+ * MR=4 matches the Morton-of-blocks tile size (MORTON_AVX2_TILE).
+ *
+ * Register layout (14 of 32 ZMM registers):
+ *   8 ZMM accumulators: c[row][half], row in 0..3, half in {0,1}
+ *   2 ZMM for B panels:  b0 = cols 0-15, b1 = cols 16-31
+ *   4 ZMM for A bcast:   a0..a3 = A[row, p] broadcast to all 16 lanes
+ */
+static inline void kernel_avx512_4x32(scalar_t       *restrict C, size_t ldc,
+                                      const scalar_t *restrict A, size_t lda,
+                                      const scalar_t *restrict B, size_t ldb,
+                                      size_t kc)
+{
+    __m512 c00 = _mm512_loadu_ps(&C[0 * ldc +  0]);
+    __m512 c01 = _mm512_loadu_ps(&C[0 * ldc + 16]);
+    __m512 c10 = _mm512_loadu_ps(&C[1 * ldc +  0]);
+    __m512 c11 = _mm512_loadu_ps(&C[1 * ldc + 16]);
+    __m512 c20 = _mm512_loadu_ps(&C[2 * ldc +  0]);
+    __m512 c21 = _mm512_loadu_ps(&C[2 * ldc + 16]);
+    __m512 c30 = _mm512_loadu_ps(&C[3 * ldc +  0]);
+    __m512 c31 = _mm512_loadu_ps(&C[3 * ldc + 16]);
+
+    for (size_t p = 0; p < kc; ++p) {
+        __m512 b0 = _mm512_loadu_ps(&B[p * ldb +  0]);
+        __m512 b1 = _mm512_loadu_ps(&B[p * ldb + 16]);
+
+        __m512 a0 = _mm512_set1_ps(A[0 * lda + p]);
+        __m512 a1 = _mm512_set1_ps(A[1 * lda + p]);
+        __m512 a2 = _mm512_set1_ps(A[2 * lda + p]);
+        __m512 a3 = _mm512_set1_ps(A[3 * lda + p]);
+
+        c00 = _mm512_fmadd_ps(a0, b0, c00);
+        c01 = _mm512_fmadd_ps(a0, b1, c01);
+        c10 = _mm512_fmadd_ps(a1, b0, c10);
+        c11 = _mm512_fmadd_ps(a1, b1, c11);
+        c20 = _mm512_fmadd_ps(a2, b0, c20);
+        c21 = _mm512_fmadd_ps(a2, b1, c21);
+        c30 = _mm512_fmadd_ps(a3, b0, c30);
+        c31 = _mm512_fmadd_ps(a3, b1, c31);
+    }
+
+    _mm512_storeu_ps(&C[0 * ldc +  0], c00);
+    _mm512_storeu_ps(&C[0 * ldc + 16], c01);
+    _mm512_storeu_ps(&C[1 * ldc +  0], c10);
+    _mm512_storeu_ps(&C[1 * ldc + 16], c11);
+    _mm512_storeu_ps(&C[2 * ldc +  0], c20);
+    _mm512_storeu_ps(&C[2 * ldc + 16], c21);
+    _mm512_storeu_ps(&C[3 * ldc +  0], c30);
+    _mm512_storeu_ps(&C[3 * ldc + 16], c31);
 }
 
 #endif /* KERNEL_AVX512_H */
