@@ -6,7 +6,6 @@
 **Estado:** Fase 1 cerrada (baseline + profiling + escalamiento con $m$); Fase 1.1 cerrada (reordenamiento de bucles, 6 variantes); Fase 1.2 cerrada (tiling explicito `ikj` apuntando a L2); Fase 1.3 cerrada (`tiled_ikj_avx2`, integrada en `make results`); Fase 1.4 cerrada (`tiled_ikj_omp`, integrada en `make results` y sweep perf); Fase 1.6 cerrada (microkernel BLIS-style $6 \times 16$ inline para `tiled_ikj_avx2` y `tiled_ikj_omp`, $M_R = 6$, $N_R = 16$, $M_C = 192$, $BS = 384$ por defecto, default OMP a 6 threads `close`); Fase 1.6.1 cerrada (rename `tiled` $\to$ `tiled_ikj` por consistencia); Fase 6 cerrada (Morton Z-order cache-oblivious); Sesion 03 cerrada (microkernel AVX2 + FMA, OpenMP tasks, perf Zen 2, Roofline anclado al $4600$H).
 
 ---
-
 ## 1. Que hace este proyecto
 
 Implementa y mide el benchmark de multiplicacion iterada de matrices:
