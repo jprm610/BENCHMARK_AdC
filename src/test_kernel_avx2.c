@@ -34,7 +34,6 @@
 
 #include "kernel_avx2.h"
 #include "matrix_utils.h"
-#include "matmul_naive.h"  /* scalar_t */
 
 #define MR KERNEL_AVX2_MR  /* 4  */
 #define NR KERNEL_AVX2_NR  /* 16 */

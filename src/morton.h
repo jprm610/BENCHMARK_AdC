@@ -31,7 +31,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "matmul_naive.h"  /* for scalar_t */
+#include "matrix_utils.h"  /* scalar_t */
 
 /*
  * Interleave the bits of i and j to produce the Morton code, following

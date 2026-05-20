@@ -21,7 +21,7 @@
 #define MATMUL_TILED_IKJ_H
 
 #include <stddef.h>
-#include "matmul_naive.h"   /* scalar_t */
+#include "matrix_utils.h"   /* scalar_t */
 
 #ifndef TILED_IKJ_MC_DEFAULT
 #define TILED_IKJ_MC_DEFAULT 256u
