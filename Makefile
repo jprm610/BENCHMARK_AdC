@@ -629,3 +629,111 @@ $(BENCH_TILED_IKJ_OMP_O3): $(BENCH_TILED_IKJ_OMP_SRCS) | $(BIN_DIR)
 
 $(VALIDATE_TILED_IKJ_OMP_O3): $(VALIDATE_TILED_IKJ_OMP_SRCS) | $(BIN_DIR)
 	$(CC) $(CFLAGS_OMP_ZEN2) $(VALIDATE_TILED_IKJ_OMP_SRCS) -o $@ $(LIBS)
+
+# =====================================================================
+# Servidor AWS c8a.2xlarge - AMD EPYC 9R45 / Zen 5
+#
+# GCC 11 no reconoce -march=znver4/5 por nombre; -march=native lee
+# CPUID en tiempo de compilacion y habilita AVX-512F/BW/VL/DQ/IFMA y
+# el resto de extensiones del EPYC 9R45 automaticamente. Los binarios
+# se nombran *_ZEN5 para no pisar los builds locales de Zen 2.
+#
+# El KVM de AWS solo expone 8 eventos hardware genericos; no hay
+# eventos raw AMD (fp_ret_sse_avx_ops, ls_dispatch, l2_request_g1,
+# etc.). El perfil se recoge con profile_perf_zen5.sh en un unico
+# grupo sin multiplexing.
+#
+# Targets principales:
+#   make results_zen5       -> build + sweep + metrics.csv
+#   make profile_zen5       -> solo sweep perf (binarios ya existentes)
+#   make profile_zen5_one   -> celda unica (VARIANT=... M=...)
+#   make consolidate_zen5   -> reparsear archivos perf existentes
+# =====================================================================
+
+CFLAGS_O3_ZEN5          := $(CSTD) $(WARN) $(INCS) -O3 -march=native \
+                            -D_POSIX_C_SOURCE=200809L
+CFLAGS_OMP_ZEN5         := $(CFLAGS_O3_ZEN5) -fopenmp
+CFLAGS_AVX2_KERNEL_ZEN5 := $(CSTD) -Wall -Wextra $(INCS) \
+                            -O3 -march=native -funroll-loops -ffast-math
+
+KERNEL_AVX2_ZEN5_OBJ       := $(OBJ_DIR)/kernel_avx2_zen5.o
+
+BENCH_NAIVE_ZEN5           := $(BIN_DIR)/bench_naive_ZEN5
+BENCH_MORTON_ZEN5          := $(BIN_DIR)/bench_morton_ZEN5
+BENCH_MORTON_AVX2_ZEN5     := $(BIN_DIR)/bench_morton_avx2_ZEN5
+BENCH_MORTON_OMP_ZEN5      := $(BIN_DIR)/bench_morton_omp_ZEN5
+BENCH_LOOPS_ZEN5           := $(BIN_DIR)/bench_loops_ZEN5
+BENCH_TILED_IKJ_ZEN5       := $(BIN_DIR)/bench_tiled_ikj_ZEN5
+BENCH_TILED_IKJ_AVX2_ZEN5  := $(BIN_DIR)/bench_tiled_ikj_avx2_ZEN5
+BENCH_TILED_IKJ_OMP_ZEN5   := $(BIN_DIR)/bench_tiled_ikj_omp_ZEN5
+
+ALL_ZEN5_BINS := $(BENCH_NAIVE_ZEN5) \
+                 $(BENCH_MORTON_ZEN5) $(BENCH_MORTON_AVX2_ZEN5) \
+                 $(BENCH_MORTON_OMP_ZEN5) \
+                 $(BENCH_LOOPS_ZEN5) \
+                 $(BENCH_TILED_IKJ_ZEN5) $(BENCH_TILED_IKJ_AVX2_ZEN5) \
+                 $(BENCH_TILED_IKJ_OMP_ZEN5)
+
+.PHONY: results_zen5 profile_zen5 profile_zen5_one consolidate_zen5 \
+        bench_naive_ZEN5 bench_morton_ZEN5 bench_morton_avx2_ZEN5 \
+        bench_morton_omp_ZEN5 bench_loops_ZEN5 bench_tiled_ikj_ZEN5 \
+        bench_tiled_ikj_avx2_ZEN5 bench_tiled_ikj_omp_ZEN5
+
+bench_naive_ZEN5:          $(BENCH_NAIVE_ZEN5)
+bench_morton_ZEN5:         $(BENCH_MORTON_ZEN5)
+bench_morton_avx2_ZEN5:    $(BENCH_MORTON_AVX2_ZEN5)
+bench_morton_omp_ZEN5:     $(BENCH_MORTON_OMP_ZEN5)
+bench_loops_ZEN5:          $(BENCH_LOOPS_ZEN5)
+bench_tiled_ikj_ZEN5:      $(BENCH_TILED_IKJ_ZEN5)
+bench_tiled_ikj_avx2_ZEN5: $(BENCH_TILED_IKJ_AVX2_ZEN5)
+bench_tiled_ikj_omp_ZEN5:  $(BENCH_TILED_IKJ_OMP_ZEN5)
+
+$(KERNEL_AVX2_ZEN5_OBJ): $(SRC_DIR)/kernel_avx2.c $(SRC_DIR)/kernel_avx2.h \
+                          $(SRC_DIR)/matmul_naive.h | $(OBJ_DIR)
+	$(CC) $(CFLAGS_AVX2_KERNEL_ZEN5) -c -o $@ $<
+
+$(BENCH_NAIVE_ZEN5): $(BENCH_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN5) $(BENCH_SRCS) -o $@ $(LIBS)
+
+$(BENCH_MORTON_ZEN5): $(BENCH_MORTON_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN5) $(BENCH_MORTON_SRCS) -o $@ $(LIBS)
+
+$(BENCH_MORTON_AVX2_ZEN5): $(BENCH_MORTON_AVX2_SRCS) $(KERNEL_AVX2_ZEN5_OBJ) \
+                            | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN5) \
+	      $(BENCH_MORTON_AVX2_SRCS) \
+	      $(KERNEL_AVX2_ZEN5_OBJ) \
+	      -o $@ $(LIBS)
+
+$(BENCH_MORTON_OMP_ZEN5): $(BENCH_MORTON_OMP_SRCS) $(KERNEL_AVX2_ZEN5_OBJ) \
+                           | $(BIN_DIR)
+	$(CC) $(CFLAGS_OMP_ZEN5) \
+	      $(BENCH_MORTON_OMP_SRCS) \
+	      $(KERNEL_AVX2_ZEN5_OBJ) \
+	      -o $@ $(LIBS)
+
+$(BENCH_LOOPS_ZEN5): $(BENCH_LOOPS_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN5) $(BENCH_LOOPS_SRCS) -o $@ $(LIBS)
+
+$(BENCH_TILED_IKJ_ZEN5): $(BENCH_TILED_IKJ_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN5) $(BENCH_TILED_IKJ_SRCS) -o $@ $(LIBS)
+
+$(BENCH_TILED_IKJ_AVX2_ZEN5): $(BENCH_TILED_IKJ_AVX2_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN5) $(BENCH_TILED_IKJ_AVX2_SRCS) -o $@ $(LIBS)
+
+$(BENCH_TILED_IKJ_OMP_ZEN5): $(BENCH_TILED_IKJ_OMP_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_OMP_ZEN5) $(BENCH_TILED_IKJ_OMP_SRCS) -o $@ $(LIBS)
+
+results_zen5: $(ALL_ZEN5_BINS)
+	$(if $(M),MS="$(M)" )bash scripts/run_perf_zen5_sweep.sh
+	python3 scripts/consolidate_perf_zen5.py --out results/metrics.csv
+
+profile_zen5: $(ALL_ZEN5_BINS)
+	$(if $(M),MS="$(M)" )bash scripts/run_perf_zen5_sweep.sh
+	python3 scripts/consolidate_perf_zen5.py --out results/metrics.csv
+
+profile_zen5_one: $(ALL_ZEN5_BINS)
+	bash scripts/profile_perf_zen5.sh $(VARIANT) $(M)
+
+consolidate_zen5:
+	python3 scripts/consolidate_perf_zen5.py --out results/metrics.csv
