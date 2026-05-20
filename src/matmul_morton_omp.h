@@ -45,7 +45,7 @@
 
 #include <stddef.h>
 
-#include "matmul_naive.h"        /* for scalar_t */
+#include "matrix_utils.h"        /* scalar_t */
 #include "matmul_morton_avx2.h"  /* reuse MORTON_AVX2_TILE and
                                   * reorganize_to_morton_blocks */
 

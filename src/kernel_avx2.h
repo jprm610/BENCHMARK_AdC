@@ -31,7 +31,7 @@
 
 #include <stddef.h>
 
-#include "matmul_naive.h"  /* for scalar_t (typedef float) */
+#include "matrix_utils.h"  /* scalar_t */
 
 void kernel_avx2_4x16(scalar_t       *restrict C, size_t ldc,
                       const scalar_t *restrict A, size_t lda,

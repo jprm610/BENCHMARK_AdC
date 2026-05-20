@@ -21,7 +21,6 @@
 
 #include "morton.h"
 #include "matrix_utils.h"
-#include "matmul_naive.h"  /* for scalar_t */
 
 /* ---------- Test 1: 4x4 reference table from the technical document. */
 

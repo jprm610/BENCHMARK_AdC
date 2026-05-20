@@ -45,7 +45,7 @@
 
 #include <stddef.h>
 
-#include "matmul_naive.h"   /* for scalar_t */
+#include "matrix_utils.h"   /* scalar_t */
 #include "kernel_avx2.h"    /* for KERNEL_AVX2_MR / KERNEL_AVX2_NR */
 
 /* Tile side used by the Morton-of-blocks layout. Same as the row

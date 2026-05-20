@@ -37,7 +37,7 @@
 #define MATMUL_TILED_IKJ_AVX2_H
 
 #include <stddef.h>
-#include "matmul_naive.h"   /* scalar_t */
+#include "matrix_utils.h"   /* scalar_t */
 
 /* Default kc (depth of the inner panel of A, in units of scalar_t).
  * 384 chosen empirically on the Ryzen 5 4600H as a compromise across
