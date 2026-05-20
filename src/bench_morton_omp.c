@@ -24,7 +24,6 @@
 
 #include <omp.h>
 
-#include "matmul_naive.h"            /* scalar_t */
 #include "matmul_morton_avx2.h"      /* reorganize_to_morton_blocks */
 #include "matmul_morton_omp.h"
 #include "morton.h"                  /* is_power_of_two */

@@ -26,7 +26,7 @@
 
 #include <stddef.h>
 
-#include "matmul_naive.h"  /* for scalar_t */
+#include "matrix_utils.h"  /* scalar_t */
 
 /*
  * matmul_morton: compute C = A * B where A is supplied in Morton layout

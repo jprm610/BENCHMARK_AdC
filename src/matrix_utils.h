@@ -9,7 +9,13 @@
 #define MATRIX_UTILS_H
 
 #include <stddef.h>
-#include "matmul_naive.h"  /* for scalar_t */
+
+/*
+ * scalar_t is the floating-point type used by every matrix in the project.
+ * Centralized here so that switching to double touches only this typedef
+ * and the tolerance constants in validate.c.
+ */
+typedef float scalar_t;
 
 /*
  * xalloc_aligned: allocate num_elements * sizeof(scalar_t) bytes with

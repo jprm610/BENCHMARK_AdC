@@ -22,7 +22,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "matmul_naive.h"            /* scalar_t */
 #include "matmul_morton_avx2.h"
 #include "morton.h"                  /* is_power_of_two */
 #include "matrix_utils.h"

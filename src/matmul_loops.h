@@ -21,7 +21,7 @@
 #define MATMUL_LOOPS_H
 
 #include <stddef.h>
-#include "matmul_naive.h"   /* scalar_t */
+#include "matrix_utils.h"   /* scalar_t */
 
 /* Function-pointer type shared by all six variants. */
 typedef void (*matmul_fn_t)(scalar_t *C,
