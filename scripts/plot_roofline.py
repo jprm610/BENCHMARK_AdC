@@ -12,7 +12,7 @@ Inputs:
                                  raw perf stat -x , output per cell
 
 Variants discovered automatically from the filenames; the canonical set
-is (naive, recursive, morton, morton_avx2) at m in {1024, 4096, 8192}.
+is (naive, morton, morton_avx2) at m in {1024, 4096, 8192}.
 If perf_morton_omp_m<M>_{A,B}.txt are present (run
 'make profile_zen2_omp' first) they are added as the multi-thread
 points.
@@ -49,13 +49,11 @@ from pathlib import Path
 
 # Variants and rendering style. morton_omp is included unconditionally;
 # the loader silently skips it if no files are present.
-VARIANTS = ("naive", "recursive", "morton", "morton_avx2", "morton_omp")
+VARIANTS = ("naive", "morton", "morton_avx2", "morton_omp")
 
 STYLE = {
     "naive":       dict(color="tab:blue",   marker="o",
                         label="naive (ijk, row-major, -O3 znver2)"),
-    "recursive":   dict(color="tab:green",  marker="s",
-                        label="recursive (cache-oblivious, row-major)"),
     "morton":      dict(color="tab:red",    marker="D",
                         label="morton (fino, Z-order de elementos)"),
     "morton_avx2": dict(color="tab:purple", marker="^",

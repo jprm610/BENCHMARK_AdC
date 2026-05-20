@@ -51,7 +51,7 @@
 #
 # USAGE:
 #   scripts/profile_perf_zen2.sh [variant] [m]
-#     variant : naive | recursive | morton | morton_avx2
+#     variant : naive | morton | morton_avx2 | morton_omp | loop_* | tiled_ikj*
 #               (default: morton_avx2)
 #     m       : square problem size (default: 4096)
 #
