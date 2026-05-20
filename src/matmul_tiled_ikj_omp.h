@@ -28,10 +28,14 @@
 #include <stddef.h>
 #include "matmul_naive.h"   /* scalar_t */
 
+#ifndef TILED_IKJ_OMP_BS_DEFAULT
 #define TILED_IKJ_OMP_BS_DEFAULT 384u
+#endif
 #define TILED_IKJ_OMP_MR 6u
 #define TILED_IKJ_OMP_NR 16u
+#ifndef TILED_IKJ_OMP_MC
 #define TILED_IKJ_OMP_MC 192u
+#endif
 
 extern size_t g_tiled_ikj_omp_bs;
 

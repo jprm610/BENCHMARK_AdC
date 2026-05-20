@@ -651,7 +651,16 @@ $(VALIDATE_TILED_IKJ_OMP_O3): $(VALIDATE_TILED_IKJ_OMP_SRCS) | $(BIN_DIR)
 # =====================================================================
 
 CFLAGS_O3_ZEN5          := $(CSTD) $(WARN) $(INCS) -O3 -march=native \
-                            -D_POSIX_C_SOURCE=200809L
+                            -D_POSIX_C_SOURCE=200809L                          \
+                            -DMORTON_AVX2_THRESHOLD_DEFAULT=1048576UL          \
+                            -DMORTON_OMP_RECURSION_THRESHOLD_DEFAULT=1048576UL \
+                            -DMORTON_OMP_PARALLEL_THRESHOLD_DEFAULT=1048576UL  \
+                            -DTILED_IKJ_MC_DEFAULT=384u                        \
+                            -DTILED_IKJ_KC_DEFAULT=384u                        \
+                            -DTILED_IKJ_AVX2_BS_DEFAULT=512u                   \
+                            -DTILED_IKJ_AVX2_MC=288u                           \
+                            -DTILED_IKJ_OMP_BS_DEFAULT=512u                    \
+                            -DTILED_IKJ_OMP_MC=288u
 CFLAGS_OMP_ZEN5         := $(CFLAGS_O3_ZEN5) -fopenmp
 CFLAGS_AVX2_KERNEL_ZEN5 := $(CSTD) -Wall -Wextra $(INCS) \
                             -O3 -march=native -funroll-loops -ffast-math

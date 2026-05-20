@@ -61,8 +61,14 @@
 /* Tunables                                                            */
 /* ------------------------------------------------------------------ */
 
-size_t g_recursion_threshold_omp = (size_t)64 * 64 * 128;  /* 524288 */
-size_t g_parallel_threshold_omp  = (size_t)64 * 64 * 128;  /* 524288 */
+#ifndef MORTON_OMP_RECURSION_THRESHOLD_DEFAULT
+#define MORTON_OMP_RECURSION_THRESHOLD_DEFAULT ((size_t)64 * 64 * 128)  /* 524288 - Zen 2 default */
+#endif
+#ifndef MORTON_OMP_PARALLEL_THRESHOLD_DEFAULT
+#define MORTON_OMP_PARALLEL_THRESHOLD_DEFAULT  ((size_t)64 * 64 * 128)  /* 524288 - Zen 2 default */
+#endif
+size_t g_recursion_threshold_omp = MORTON_OMP_RECURSION_THRESHOLD_DEFAULT;
+size_t g_parallel_threshold_omp  = MORTON_OMP_PARALLEL_THRESHOLD_DEFAULT;
 
 void matmul_morton_omp_set_threshold(size_t threshold)
 {
