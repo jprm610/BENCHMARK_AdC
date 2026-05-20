@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# run_sweep_loop.sh - Measure one loop-order kernel across a range of m.
+# run_sweep_loops.sh - Measure one loop-order kernel across a range of m.
 #
 # Each order must be run as a separate invocation so that process state
 # (cache, branch predictor, thermal budget) does not bleed between orders.
 #
 # Usage:
-#   bash scripts/run_sweep_loop.sh <order>              # default m list
-#   bash scripts/run_sweep_loop.sh <order> "<m list>"   # custom m list
+#   bash scripts/run_sweep_loops.sh <order>              # default m list
+#   bash scripts/run_sweep_loops.sh <order> "<m list>"   # custom m list
 #
 #   <order>  : one of ijk ikj jik jki kij kji
 #   <m list> : space-separated sizes, e.g. "512 1024 2048"
@@ -18,11 +18,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BENCH="${REPO_ROOT}/bin/bench_loop_O0"
+BENCH="${REPO_ROOT}/bin/bench_loops_O0"
 RESULTS_DIR="${REPO_ROOT}/results"
 
 if [[ ! -x "${BENCH}" ]]; then
-    echo "Error: ${BENCH} not found. Run 'make bench_loop' first." >&2
+    echo "Error: ${BENCH} not found. Run 'make bench_loops' first." >&2
     exit 1
 fi
 

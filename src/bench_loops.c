@@ -1,8 +1,8 @@
 /*
- * bench_loop.c - Benchmark driver for the six loop-order kernels.
+ * bench_loops.c - Benchmark driver for the six loop-order kernels.
  *
  * Usage:
- *   bench_loop_O0 <order> <m> [num_iters] [num_runs]
+ *   bench_loops_O0 <order> <m> [num_iters] [num_runs]
  *
  *   order     : one of ijk ikj jik jki kij kji
  *   m         : problem size (A is m x m, B is m x 128)
@@ -12,7 +12,7 @@
  * Output (one CSV line on stdout):
  *   kernel,m,n,num_iters,median_seconds,gflops
  *
- * The header line is NOT printed here; run_sweep_loop.sh prints it once
+ * The header line is NOT printed here; run_sweep_loops.sh prints it once
  * before invoking this binary multiple times.
  *
  * One warm-up run precedes the measured runs to populate caches and
@@ -23,7 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "matmul_loop.h"
+#include "matmul_loops.h"
 #include "matrix_utils.h"
 #include "timing.h"
 
@@ -52,7 +52,7 @@ int main(int argc, char **argv)
     }
 
     const char *order = argv[1];
-    matmul_fn_t kernel = matmul_loop_lookup(order);
+    matmul_fn_t kernel = matmul_loops_lookup(order);
     if (kernel == NULL) {
         fprintf(stderr,
                 "Error: unknown loop order '%s'. "
@@ -105,7 +105,7 @@ int main(int argc, char **argv)
     init_matrix_random(Z, m, n, 43u);
 
     /* Warm-up: one short iteration, result discarded. */
-    benchmark_iterations_loop(B_out, A, Z, m, n, 1, kernel);
+    benchmark_iterations_loops(B_out, A, Z, m, n, 1, kernel);
 
     double *times = (double *)malloc(num_runs * sizeof(double));
     if (times == NULL) {
@@ -114,7 +114,7 @@ int main(int argc, char **argv)
     }
     for (size_t r = 0; r < num_runs; ++r) {
         double t0 = now_seconds();
-        benchmark_iterations_loop(B_out, A, Z, m, n, I_meas, kernel);
+        benchmark_iterations_loops(B_out, A, Z, m, n, I_meas, kernel);
         double t1 = now_seconds();
         times[r] = t1 - t0;
     }

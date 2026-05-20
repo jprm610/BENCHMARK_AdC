@@ -1,5 +1,5 @@
 /*
- * matmul_loop.c - Six loop-order variants of C = A * B (Phase 1.1).
+ * matmul_loops.c - Six loop-order variants of C = A * B (Phase 1.1).
  *
  * All matrices are row-major. A is m x k_dim, B is k_dim x n, C is m x n.
  * The loop variable over the shared dimension is named p (not k) to avoid
@@ -19,7 +19,7 @@
  *   kji : A column walk (stride k_dim), B scalar reuse -- bad A
  */
 
-#include "matmul_loop.h"
+#include "matmul_loops.h"
 #include "matrix_utils.h"   /* xalloc_aligned, xfree */
 
 #include <string.h>         /* memset, memcpy, strcmp */
@@ -160,7 +160,7 @@ void matmul_kji(scalar_t *C,
 /* Lookup by name                                                       */
 /* ------------------------------------------------------------------ */
 
-matmul_fn_t matmul_loop_lookup(const char *name)
+matmul_fn_t matmul_loops_lookup(const char *name)
 {
     if (strcmp(name, "ijk") == 0) return matmul_ijk;
     if (strcmp(name, "ikj") == 0) return matmul_ikj;
@@ -175,12 +175,12 @@ matmul_fn_t matmul_loop_lookup(const char *name)
 /* Benchmark orchestrator                                               */
 /* ------------------------------------------------------------------ */
 
-void benchmark_iterations_loop(scalar_t *B_out,
-                                const scalar_t *A,
-                                const scalar_t *Z,
-                                size_t m, size_t n,
-                                size_t num_iters,
-                                matmul_fn_t kernel)
+void benchmark_iterations_loops(scalar_t *B_out,
+                                 const scalar_t *A,
+                                 const scalar_t *Z,
+                                 size_t m, size_t n,
+                                 size_t num_iters,
+                                 matmul_fn_t kernel)
 {
     scalar_t *B_curr = xalloc_aligned(m * n);
     scalar_t *B_next = xalloc_aligned(m * n);

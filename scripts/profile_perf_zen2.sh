@@ -84,7 +84,7 @@ RUNS=${RUNS:-3}
 case "$VARIANT" in
     loop_*)
         LOOP_ORDER="${VARIANT#loop_}"
-        BIN="$REPO_DIR/bin/bench_loop_O3"
+        BIN="$REPO_DIR/bin/bench_loops_O3"
         BIN_ARGS="$LOOP_ORDER $M $ITERS_PER_RUN $RUNS"
         ;;
     tiled_ikj_omp)
