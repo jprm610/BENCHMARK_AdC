@@ -330,9 +330,9 @@ python3 scripts/plot_results.py results/naive_O0.csv results/loop_order.csv \
 
 ---
 
-## 6. Modulo `matmul_loop` (Fase 1.1 — cache-aware)
+## 6. Modulo `matmul_loops` (Fase 1.1 — cache-aware)
 
-**Archivo:** [`src/matmul_loop.h`](../src/matmul_loop.h), [`src/matmul_loop.c`](../src/matmul_loop.c).
+**Archivo:** [`src/matmul_loops.h`](../src/matmul_loops.h), [`src/matmul_loops.c`](../src/matmul_loops.c).
 
 Las seis variantes de orden de bucles de $C = A \cdot B$. Misma firma que `matmul_naive`.
 
@@ -358,23 +358,23 @@ void matmul_kji(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, siz
 
 Precondiciones y postcondiciones identicas a `matmul_naive`. Las variantes con la dimension de reduccion no en el bucle interno (ikj, jki, kij, kji) hacen `memset(C, 0, ...)` internamente antes de acumular.
 
-### 6.3 `matmul_loop_lookup`
+### 6.3 `matmul_loops_lookup`
 
 ```c
-matmul_fn_t matmul_loop_lookup(const char *name);
+matmul_fn_t matmul_loops_lookup(const char *name);
 ```
 
 Devuelve el puntero de funcion para el nombre dado (`"ijk"`, `"ikj"`, `"jik"`, `"jki"`, `"kij"`, `"kji"`), o `NULL` si el nombre no es reconocido.
 
-### 6.4 `benchmark_iterations_loop`
+### 6.4 `benchmark_iterations_loops`
 
 ```c
-void benchmark_iterations_loop(scalar_t *B_out,
-                                const scalar_t *A,
-                                const scalar_t *Z,
-                                size_t m, size_t n,
-                                size_t num_iters,
-                                matmul_fn_t kernel);
+void benchmark_iterations_loops(scalar_t *B_out,
+                                 const scalar_t *A,
+                                 const scalar_t *Z,
+                                 size_t m, size_t n,
+                                 size_t num_iters,
+                                 matmul_fn_t kernel);
 ```
 
 Misma semantica que `benchmark_iterations` (Seccion 2.2) pero delegando cada paso $A \cdot B$ al `kernel` suministrado. Doble buffer + swap de punteros; aloja y libera los buffers internamente.
@@ -383,37 +383,37 @@ Misma semantica que `benchmark_iterations` (Seccion 2.2) pero delegando cada pas
 
 | Binario | CLI | Salida |
 |---------|-----|--------|
-| `bin/bench_loop_O0` | `<order> <m> [num_iters] [num_runs]` | `kernel,m,n,num_iters,median_seconds,gflops` |
-| `bin/validate_loop_O0` | `[m]` (default 256) | 4 tests por variante (3 invariantes + cross-val vs naive) |
+| `bin/bench_loops_O0` | `<order> <m> [num_iters] [num_runs]` | `kernel,m,n,num_iters,median_seconds,gflops` |
+| `bin/validate_loops_O0` | `[m]` (default 256) | 4 tests por variante (3 invariantes + cross-val vs naive) |
 
-`run_sweep_loop.sh` requiere un orden como argumento obligatorio para evitar que los kernels se midan en el mismo proceso (lo que contamina el estado de cache y el presupuesto termico entre ordenes):
+`run_sweep_loops.sh` requiere un orden como argumento obligatorio para evitar que los kernels se midan en el mismo proceso (lo que contamina el estado de cache y el presupuesto termico entre ordenes):
 
 ```
-scripts/run_sweep_loop.sh <order> ["<m list>"]
+scripts/run_sweep_loops.sh <order> ["<m list>"]
 ```
 
 - `<order>`: uno de `ijk ikj jik jki kij kji` (obligatorio)
 - `"<m list>"`: lista separada por espacios (opcional; default `256 384 512 768 1024 1536 2048 3072 4096`)
 - Salida: `results/loop_<order>.csv`
 
-Para correr los seis ordenes y obtener un CSV combinado usar `make sweep_loop_all`, que los encadena como procesos separados y concatena los resultados en `results/loop_order.csv`.
+Para correr los seis ordenes y obtener un CSV combinado usar `make sweep_loops_all`, que los encadena como procesos separados y concatena los resultados en `results/loop_order.csv`.
 
 ---
 
-## 7. Roadmap de la API
+## 6.5 Roadmap de modulos por fase
 
-A medida que se avancen las fases del proyecto se anadiran modulos manteniendo el mismo estilo:
+A medida que se avanzan las fases del proyecto se anaden modulos manteniendo el mismo estilo. El estado consolidado y actualizado de cada fase vive en la seccion 9 del [`README.md`](../README.md); aqui se documenta el contrato de firma que todo nuevo kernel debe respetar:
 
-| Fase | Nuevo modulo | Estado | Razon |
-|------|--------------|--------|-------|
-| 2 (reorden de bucles) | `matmul_reordered.c` | pendiente | Probar `ikj`, `kij`, etc. |
-| 3 (transposicion + tiling) | `matmul_tiled_ikj.c` | pendiente | Pre-transposicion y blocking de L2 |
-| 4 (vectorizacion) | igual `matmul_tiled_ikj.c` con flags | pendiente | Auto-vectorizacion |
-| 5 (OpenMP) | `matmul_parallel.c` | pendiente | `#pragma omp parallel for` |
-| Opcional / Fase 6 (Morton) | `matmul_recursive.c` + `morton.c` + `matmul_morton.c` | **COMPLETADA** (codigo y validacion; mediciones masivas en Sesion 03) | Recursion cache-oblivious sobre row-major y sobre layout Z-order |
-| Fase 1.3 (tiled_ikj_avx2) | `matmul_tiled_ikj_avx2.c` | **COMPLETADA** (Sesion 03, integracion en `make results`) | 6-loop tiling (ii, kk, jj + i, p, j) con broadcast AVX2 + FMA; BS=64 configurable en runtime |
+Cada nuevo kernel debe exponer la firma:
 
-Cada nuevo kernel debera tener la firma `void mm(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, size_t k, size_t n)` para que `validate.c` lo pueda probar sin cambios.
+```c
+void mm(scalar_t *C,
+        const scalar_t *A,
+        const scalar_t *B,
+        size_t m, size_t k, size_t n);
+```
+
+para que los binarios `validate_*` puedan compararlo contra `matmul_naive` sin cambios estructurales. Las precondiciones y postcondiciones son las de la Seccion 2.1.
 
 ---
 
@@ -661,15 +661,15 @@ make plots_perf                 -> python3 scripts/plot_perf_compare.py
 Targets de Fase 1.1 (loop-reorder):
 
 ```
-make bench_loop                 -> bin/bench_loop_O0
-make validate_loop              -> bin/validate_loop_O0
-make sweep_loop_ijk             -> results/loop_ijk.csv  (proceso independiente)
-make sweep_loop_ikj             -> results/loop_ikj.csv
-make sweep_loop_jik             -> results/loop_jik.csv
-make sweep_loop_jki             -> results/loop_jki.csv
-make sweep_loop_kij             -> results/loop_kij.csv
-make sweep_loop_kji             -> results/loop_kji.csv
-make sweep_loop_all             -> los seis anteriores + results/loop_order.csv (combinado)
+make bench_loops                -> bin/bench_loops_O0
+make validate_loops             -> bin/validate_loops_O0
+make sweep_loops_ijk            -> results/loop_ijk.csv  (proceso independiente)
+make sweep_loops_ikj            -> results/loop_ikj.csv
+make sweep_loops_jik            -> results/loop_jik.csv
+make sweep_loops_jki            -> results/loop_jki.csv
+make sweep_loops_kij            -> results/loop_kij.csv
+make sweep_loops_kji            -> results/loop_kji.csv
+make sweep_loops_all            -> los seis anteriores + results/loop_order.csv (combinado)
 make plot_naive                 -> plots/naive_O0.png  (solo baseline)
 make plot_loop                  -> plots/loop_orders.png  (6 ordenes desde loop_order.csv)
 make plot_loop_vs_naive         -> plots/loop_vs_naive.png  (naive + 6 ordenes)
@@ -970,25 +970,13 @@ for (size_t p = 0; p < kc; ++p) {
 
 ```c
 void benchmark_iterations_tiled_ikj_avx2(scalar_t *B_out,
-                                      const scalar_t *A,
-                                      const scalar_t *Z,
-                                      size_t m, size_t n,
-                                      size_t num_iters);
+                                          const scalar_t *A,
+                                          const scalar_t *Z,
+                                          size_t m, size_t n,
+                                          size_t num_iters);
 ```
 
-Mismo patron que `benchmark_iterations` (Seccion 2.2): doble buffer + swap de punteros, aloja y libera internamente. Invoca `matmul_tiled_ikj_avx2` en cada iteracion.
-
-### 14.4 `benchmark_iterations_tiled_ikj_avx2`
-
-```c
-void benchmark_iterations_tiled_ikj_avx2(scalar_t *B_out,
-                                     const scalar_t *A,
-                                     const scalar_t *Z,
-                                     size_t m, size_t n,
-                                     size_t num_iters);
-```
-
-Doble buffer + swap de punteros, identico al patron de `benchmark_iterations` (Seccion 2.2). Invoca `matmul_tiled_ikj_avx2` en cada iteracion de la recurrencia.
+Mismo patron que `benchmark_iterations` (Seccion 2.2): doble buffer + swap de punteros, aloja y libera internamente. Invoca `matmul_tiled_ikj_avx2` en cada iteracion de la recurrencia.
 
 ### 14.5 Binarios
 

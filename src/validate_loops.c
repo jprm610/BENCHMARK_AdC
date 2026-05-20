@@ -1,5 +1,5 @@
 /*
- * validate_loop.c - Algebraic sanity checks for all six loop-order kernels.
+ * validate_loops.c - Algebraic sanity checks for all six loop-order kernels.
  *
  * For each variant (ijk, ikj, jik, jki, kij, kji) runs three invariants:
  *   1. A * 0 == 0
@@ -10,7 +10,7 @@
  * (A, B) pair to catch sign or index errors.
  *
  * Usage:
- *   validate_loop_O0 [m]     (default m = 256)
+ *   validate_loops_O0 [m]     (default m = 256)
  *
  * Exits 0 if all tests pass, 1 on first failure.
  */
@@ -19,7 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "matmul_loop.h"
+#include "matmul_loops.h"
 #include "matmul_naive.h"
 #include "matrix_utils.h"
 
@@ -90,7 +90,7 @@ int main(int argc, char **argv)
 
     for (int o = 0; o < N_ORDERS; ++o) {
         const char *name = ORDERS[o];
-        matmul_fn_t fn   = matmul_loop_lookup(name);
+        matmul_fn_t fn   = matmul_loops_lookup(name);
         printf("\n--- %s ---\n", name);
 
         /* Test 1: A * 0 == 0 */

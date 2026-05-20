@@ -180,60 +180,60 @@ plots_perf:
 # =====================================================================
 # Fase 1.1 - Cache-aware: loop reorder
 #
-# bench_loop_O0  : benchmark that selects kernel by name at runtime
-# validate_loop  : algebraic + cross-validation for all 6 orders
-# sweep_loop     : runs scripts/run_sweep_loop.sh -> results/loop_order.csv
+# bench_loops_O0 : benchmark that selects kernel by name at runtime
+# validate_loops : algebraic + cross-validation for all 6 orders
+# sweep_loops    : runs scripts/run_sweep_loops.sh -> results/loop_order.csv
 # =====================================================================
 
-LOOP_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_loop.c
-BENCH_LOOP_SRCS    := $(LOOP_COMMON_SRCS) $(SRC_DIR)/bench_loop.c
-VALIDATE_LOOP_SRCS := $(LOOP_COMMON_SRCS) $(SRC_DIR)/validate_loop.c
+LOOPS_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_loops.c
+BENCH_LOOPS_SRCS    := $(LOOPS_COMMON_SRCS) $(SRC_DIR)/bench_loops.c
+VALIDATE_LOOPS_SRCS := $(LOOPS_COMMON_SRCS) $(SRC_DIR)/validate_loops.c
 
-BENCH_LOOP_O0      := $(BIN_DIR)/bench_loop_O0
-BENCH_LOOP_O3      := $(BIN_DIR)/bench_loop_O3
-VALIDATE_LOOP_O0   := $(BIN_DIR)/validate_loop_O0
+BENCH_LOOPS_O0      := $(BIN_DIR)/bench_loops_O0
+BENCH_LOOPS_O3      := $(BIN_DIR)/bench_loops_O3
+VALIDATE_LOOPS_O0   := $(BIN_DIR)/validate_loops_O0
 
-.PHONY: bench_loop bench_loop_O3 validate_loop \
-        sweep_loop_ijk sweep_loop_ikj sweep_loop_jik \
-        sweep_loop_jki sweep_loop_kij sweep_loop_kji \
-        sweep_loop_all
+.PHONY: bench_loops bench_loops_O3 validate_loops \
+        sweep_loops_ijk sweep_loops_ikj sweep_loops_jik \
+        sweep_loops_jki sweep_loops_kij sweep_loops_kji \
+        sweep_loops_all
 
-bench_loop: $(BENCH_LOOP_O0)
-bench_loop_O3: $(BENCH_LOOP_O3)
-validate_loop: $(VALIDATE_LOOP_O0)
+bench_loops: $(BENCH_LOOPS_O0)
+bench_loops_O3: $(BENCH_LOOPS_O3)
+validate_loops: $(VALIDATE_LOOPS_O0)
 
-$(BENCH_LOOP_O0): $(BENCH_LOOP_SRCS) | $(BIN_DIR)
-	$(CC) $(BASE_CFLAGS) $(BENCH_LOOP_SRCS) -o $@ $(LIBS)
+$(BENCH_LOOPS_O0): $(BENCH_LOOPS_SRCS) | $(BIN_DIR)
+	$(CC) $(BASE_CFLAGS) $(BENCH_LOOPS_SRCS) -o $@ $(LIBS)
 
-$(BENCH_LOOP_O3): $(BENCH_LOOP_SRCS) | $(BIN_DIR)
-	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_LOOP_SRCS) -o $@ $(LIBS)
+$(BENCH_LOOPS_O3): $(BENCH_LOOPS_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_LOOPS_SRCS) -o $@ $(LIBS)
 
-$(VALIDATE_LOOP_O0): $(VALIDATE_LOOP_SRCS) | $(BIN_DIR)
-	$(CC) $(BASE_CFLAGS) $(VALIDATE_LOOP_SRCS) -o $@ $(LIBS)
+$(VALIDATE_LOOPS_O0): $(VALIDATE_LOOPS_SRCS) | $(BIN_DIR)
+	$(CC) $(BASE_CFLAGS) $(VALIDATE_LOOPS_SRCS) -o $@ $(LIBS)
 
 # Per-order targets: each runs in its own process to avoid cross-contamination.
-sweep_loop_ijk: $(BENCH_LOOP_O0)
-	bash scripts/run_sweep_loop.sh ijk
+sweep_loops_ijk: $(BENCH_LOOPS_O0)
+	bash scripts/run_sweep_loops.sh ijk
 
-sweep_loop_ikj: $(BENCH_LOOP_O0)
-	bash scripts/run_sweep_loop.sh ikj
+sweep_loops_ikj: $(BENCH_LOOPS_O0)
+	bash scripts/run_sweep_loops.sh ikj
 
-sweep_loop_jik: $(BENCH_LOOP_O0)
-	bash scripts/run_sweep_loop.sh jik
+sweep_loops_jik: $(BENCH_LOOPS_O0)
+	bash scripts/run_sweep_loops.sh jik
 
-sweep_loop_jki: $(BENCH_LOOP_O0)
-	bash scripts/run_sweep_loop.sh jki
+sweep_loops_jki: $(BENCH_LOOPS_O0)
+	bash scripts/run_sweep_loops.sh jki
 
-sweep_loop_kij: $(BENCH_LOOP_O0)
-	bash scripts/run_sweep_loop.sh kij
+sweep_loops_kij: $(BENCH_LOOPS_O0)
+	bash scripts/run_sweep_loops.sh kij
 
-sweep_loop_kji: $(BENCH_LOOP_O0)
-	bash scripts/run_sweep_loop.sh kji
+sweep_loops_kji: $(BENCH_LOOPS_O0)
+	bash scripts/run_sweep_loops.sh kji
 
 # Runs all six orders sequentially (each as a separate process) and
 # concatenates the results into a single results/loop_order.csv.
-sweep_loop_all: sweep_loop_ijk sweep_loop_ikj sweep_loop_jik \
-                sweep_loop_jki sweep_loop_kij sweep_loop_kji
+sweep_loops_all: sweep_loops_ijk sweep_loops_ikj sweep_loops_jik \
+                 sweep_loops_jki sweep_loops_kij sweep_loops_kji
 	@echo "kernel,m,n,num_iters,median_seconds,gflops" > results/loop_order.csv
 	@for f in results/loop_ijk.csv results/loop_ikj.csv results/loop_jik.csv \
 	           results/loop_jki.csv results/loop_kij.csv results/loop_kji.csv; do \
@@ -536,11 +536,11 @@ plot_omp_scaling:
 VARIANT ?= morton_avx2
 M       ?= 4096
 profile_zen2_one: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
-                  $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOP_O3)
+                  $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOPS_O3)
 	bash scripts/profile_perf_zen2.sh $(VARIANT) $(M)
 
 profile_zen2: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
-              $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOP_O3)
+              $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOPS_O3)
 	$(if $(M),MS="$(M)" )bash scripts/run_perf_zen2_sweep.sh
 	python3 scripts/consolidate_perf_zen2.py
 
@@ -548,7 +548,7 @@ BENCH_TILED_IKJ_AVX2_O3 := $(BIN_DIR)/bench_tiled_ikj_avx2_O3
 
 results: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
          $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_MORTON_OMP_O3) \
-         $(BENCH_LOOP_O3) \
+         $(BENCH_LOOPS_O3) \
          $(BENCH_TILED_IKJ_O3) $(BENCH_TILED_IKJ_AVX2_O3) $(BENCH_TILED_IKJ_OMP_O3)
 	$(if $(M),MS="$(M)" )bash scripts/run_perf_zen2_sweep.sh
 	python3 scripts/consolidate_perf_zen2.py --out results/metrics.csv
@@ -594,7 +594,7 @@ roofline: stream plot_roofline
 #
 # bench_tiled_O3   : benchmark with the same flags as the loop-reorder
 #                    study (CFLAGS_O3_ZEN2) so results are directly
-#                    comparable with bench_loop_O3 and bench_naive_O3.
+#                    comparable with bench_loops_O3 and bench_naive_O3.
 # validate_tiled_ikj   : algebraic + cross-validation against matmul_naive,
 #                    compiled at -O0 for deterministic numerical output.
 # =====================================================================
