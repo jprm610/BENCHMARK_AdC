@@ -1,0 +1,8 @@
+# started on Tue May 19 21:31:31 2026
+
+16158349207,,cycles,4161882239,100.00,,
+4333441339,,instructions,4161882239,100.00,0.27,insn per cycle
+325463660,,l2_cache_req_stat.ls_rd_blk_l_hit_x,4161882239,100.00,,
+717455953,,cache-misses,4161882239,100.00,,
+72883,,bp_l1_tlb_miss_l2_tlb_miss,4161882239,100.00,,
+4021190,,dTLB-load-misses,4161882239,100.00,,
