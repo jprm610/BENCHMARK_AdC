@@ -48,7 +48,6 @@ from pathlib import Path
 # in alphabetical order so unexpected results still show up.
 CANONICAL_VARIANTS = (
     "naive",
-    "recursive",
     "morton",
     "morton_avx2",
     "morton_omp",

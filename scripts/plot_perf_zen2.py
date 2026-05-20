@@ -15,8 +15,8 @@ Layout (2 rows x 2 cols):
     (b) FP ops / cycle       vs m, idem; horizontal line at 16 (Zen 2
                              single-core peak: 2 FMA pipes x 8 FP32 lanes)
     (c) L3 miss rate         vs m, one curve per variant; cliff visible
-                             at m ~ 1024 for naive / recursive (4 MiB
-                             effective L3 per CCX)
+                             at m ~ 1024 for naive (4 MiB effective L3
+                             per CCX)
     (d) TLB walks / kinst    vs m, one curve per variant; expectation is
                              that morton variants stay well below naive
                              at m=8192 because Z-order keeps the working
@@ -40,7 +40,7 @@ import sys
 from pathlib import Path
 
 
-VARIANTS = ("naive", "recursive", "morton", "morton_avx2",
+VARIANTS = ("naive", "morton", "morton_avx2",
             "loop_ijk", "loop_ikj", "loop_jik",
             "loop_jki", "loop_kij", "loop_kji",
             "tiled_ikj", "tiled_ikj_avx2")
@@ -48,8 +48,6 @@ VARIANTS = ("naive", "recursive", "morton", "morton_avx2",
 STYLE = {
     "naive":       dict(color="tab:blue",   marker="o",
                         label="naive"),
-    "recursive":   dict(color="tab:green",  marker="s",
-                        label="recursive"),
     "morton":      dict(color="tab:red",    marker="D",
                         label="morton (fino)"),
     "morton_avx2": dict(color="tab:purple", marker="^",

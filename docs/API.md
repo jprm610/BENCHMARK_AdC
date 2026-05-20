@@ -330,9 +330,9 @@ python3 scripts/plot_results.py results/naive_O0.csv results/loop_order.csv \
 
 ---
 
-## 6. Modulo `matmul_loop` (Fase 1.1 — cache-aware)
+## 6. Modulo `matmul_loops` (Fase 1.1 — cache-aware)
 
-**Archivo:** [`src/matmul_loop.h`](../src/matmul_loop.h), [`src/matmul_loop.c`](../src/matmul_loop.c).
+**Archivo:** [`src/matmul_loops.h`](../src/matmul_loops.h), [`src/matmul_loops.c`](../src/matmul_loops.c).
 
 Las seis variantes de orden de bucles de $C = A \cdot B$. Misma firma que `matmul_naive`.
 
@@ -358,23 +358,23 @@ void matmul_kji(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, siz
 
 Precondiciones y postcondiciones identicas a `matmul_naive`. Las variantes con la dimension de reduccion no en el bucle interno (ikj, jki, kij, kji) hacen `memset(C, 0, ...)` internamente antes de acumular.
 
-### 6.3 `matmul_loop_lookup`
+### 6.3 `matmul_loops_lookup`
 
 ```c
-matmul_fn_t matmul_loop_lookup(const char *name);
+matmul_fn_t matmul_loops_lookup(const char *name);
 ```
 
 Devuelve el puntero de funcion para el nombre dado (`"ijk"`, `"ikj"`, `"jik"`, `"jki"`, `"kij"`, `"kji"`), o `NULL` si el nombre no es reconocido.
 
-### 6.4 `benchmark_iterations_loop`
+### 6.4 `benchmark_iterations_loops`
 
 ```c
-void benchmark_iterations_loop(scalar_t *B_out,
-                                const scalar_t *A,
-                                const scalar_t *Z,
-                                size_t m, size_t n,
-                                size_t num_iters,
-                                matmul_fn_t kernel);
+void benchmark_iterations_loops(scalar_t *B_out,
+                                 const scalar_t *A,
+                                 const scalar_t *Z,
+                                 size_t m, size_t n,
+                                 size_t num_iters,
+                                 matmul_fn_t kernel);
 ```
 
 Misma semantica que `benchmark_iterations` (Seccion 2.2) pero delegando cada paso $A \cdot B$ al `kernel` suministrado. Doble buffer + swap de punteros; aloja y libera los buffers internamente.
@@ -383,82 +383,37 @@ Misma semantica que `benchmark_iterations` (Seccion 2.2) pero delegando cada pas
 
 | Binario | CLI | Salida |
 |---------|-----|--------|
-| `bin/bench_loop_O0` | `<order> <m> [num_iters] [num_runs]` | `kernel,m,n,num_iters,median_seconds,gflops` |
-| `bin/validate_loop_O0` | `[m]` (default 256) | 4 tests por variante (3 invariantes + cross-val vs naive) |
+| `bin/bench_loops_O0` | `<order> <m> [num_iters] [num_runs]` | `kernel,m,n,num_iters,median_seconds,gflops` |
+| `bin/validate_loops_O0` | `[m]` (default 256) | 4 tests por variante (3 invariantes + cross-val vs naive) |
 
-`run_sweep_loop.sh` requiere un orden como argumento obligatorio para evitar que los kernels se midan en el mismo proceso (lo que contamina el estado de cache y el presupuesto termico entre ordenes):
+`run_sweep_loops.sh` requiere un orden como argumento obligatorio para evitar que los kernels se midan en el mismo proceso (lo que contamina el estado de cache y el presupuesto termico entre ordenes):
 
 ```
-scripts/run_sweep_loop.sh <order> ["<m list>"]
+scripts/run_sweep_loops.sh <order> ["<m list>"]
 ```
 
 - `<order>`: uno de `ijk ikj jik jki kij kji` (obligatorio)
 - `"<m list>"`: lista separada por espacios (opcional; default `256 384 512 768 1024 1536 2048 3072 4096`)
 - Salida: `results/loop_<order>.csv`
 
-Para correr los seis ordenes y obtener un CSV combinado usar `make sweep_loop_all`, que los encadena como procesos separados y concatena los resultados en `results/loop_order.csv`.
+Para correr los seis ordenes y obtener un CSV combinado usar `make sweep_loops_all`, que los encadena como procesos separados y concatena los resultados en `results/loop_order.csv`.
 
 ---
 
-## 7. Roadmap de la API
+## 6.5 Roadmap de modulos por fase
 
-A medida que se avancen las fases del proyecto se anadiran modulos manteniendo el mismo estilo:
+A medida que se avanzan las fases del proyecto se anaden modulos manteniendo el mismo estilo. El estado consolidado y actualizado de cada fase vive en la seccion 9 del [`README.md`](../README.md); aqui se documenta el contrato de firma que todo nuevo kernel debe respetar:
 
-| Fase | Nuevo modulo | Estado | Razon |
-|------|--------------|--------|-------|
-| 2 (reorden de bucles) | `matmul_reordered.c` | pendiente | Probar `ikj`, `kij`, etc. |
-| 3 (transposicion + tiling) | `matmul_tiled_ikj.c` | pendiente | Pre-transposicion y blocking de L2 |
-| 4 (vectorizacion) | igual `matmul_tiled_ikj.c` con flags | pendiente | Auto-vectorizacion |
-| 5 (OpenMP) | `matmul_parallel.c` | pendiente | `#pragma omp parallel for` |
-| Opcional / Fase 6 (Morton) | `matmul_recursive.c` + `morton.c` + `matmul_morton.c` | **COMPLETADA** (codigo y validacion; mediciones masivas en Sesion 03) | Recursion cache-oblivious sobre row-major y sobre layout Z-order |
-| Fase 1.3 (tiled_ikj_avx2) | `matmul_tiled_ikj_avx2.c` | **COMPLETADA** (Sesion 03, integracion en `make results`) | 6-loop tiling (ii, kk, jj + i, p, j) con broadcast AVX2 + FMA; BS=64 configurable en runtime |
-
-Cada nuevo kernel debera tener la firma `void mm(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, size_t k, size_t n)` para que `validate.c` lo pueda probar sin cambios.
-
----
-
-## 7. Modulo `matmul_recursive` (Fase 6, Etapa A2)
-
-**Archivo:** [`src/matmul_recursive.h`](../src/matmul_recursive.h), [`src/matmul_recursive.c`](../src/matmul_recursive.c).
-
-Kernel cache-oblivious que computa $C = A \cdot B$ recursivamente, dividiendo la dimension mas grande de $\{m, k, n\}$ en cada nivel hasta que el sub-problema cae bajo `RECURSION_THRESHOLD = 32 \cdot 32 \cdot 128 = 131072` flops elementales, donde un kernel base `ijk` cierra la recursion.
-
-### 7.1 `matmul_recursive`
+Cada nuevo kernel debe exponer la firma:
 
 ```c
-void matmul_recursive(scalar_t *C,
-                      const scalar_t *A,
-                      const scalar_t *B,
-                      size_t m, size_t k, size_t n);
+void mm(scalar_t *C,
+        const scalar_t *A,
+        const scalar_t *B,
+        size_t m, size_t k, size_t n);
 ```
 
-**Computa** $C = A \cdot B$ por recursion cache-oblivious. Firma identica en estructura a `matmul_naive`: $C$ es $m \times n$ (out), $A$ es $m \times k$, $B$ es $k \times n$, todos row-major, $C$ no aliasa $A$ ni $B$.
-
-**Algoritmo.** Wrapper publico que delega en `matmul_recursive_inner` con `ldc=n, lda=k, ldb=n`. La funcion interna evalua en orden:
-
-1. Si $m \cdot k \cdot n \leq$ `RECURSION_THRESHOLD`, llamar al kernel base.
-2. Si $m \geq k$ y $m \geq n$ y $m \geq 2$: dividir $m$ por la mitad. Las dos sub-llamadas trabajan sobre regiones disjuntas de $C$; ambas sobreescriben.
-3. Si $n \geq m$ y $n \geq k$ y $n \geq 2$: dividir $n$. Igual, regiones disjuntas en $C$.
-4. Si $k \geq 2$: dividir $k$. **No** son sub-llamadas independientes — la primera sobreescribe $C$, la segunda acumula sobre $C$ (variante `_inner_add` + `kernel_base_add`).
-5. Fallback degenerado ($m = k = n = 1$): kernel base directo.
-
-**Complejidad teorica.** $2 \cdot m \cdot k \cdot n$ flops, **identica** a la del baseline. La ganancia respecto a `matmul_naive` es de **localidad**, no de operaciones: el teorema de Hong y Kung [1981] muestra que cualquier algoritmo $\Theta(n^3)$ de multiplicacion de matrices realiza al menos $\Omega(n^3 / \sqrt{M})$ transferencias entre dos niveles de memoria de tamano $M$ palabras. El esquema recursivo cache-oblivious alcanza este limite asintotico **sin** conocer $M$: al dividir hasta que el sub-problema cabe en cualquier nivel de la jerarquia, automaticamente respeta el tradeoff transferencias-vs-trabajo a todas las escalas. Esto es lo que distingue al cache-oblivious del tiling explicito (que requiere conocer el tamano de cache para elegir el block size).
-
-**Precondiciones y postcondiciones.** Identicas a `matmul_naive`.
-
-**Notas.** El kernel base interno es un triple bucle `ijk` por consistencia conceptual con el baseline — optimizar el leaf no es objetivo de la Etapa A2.
-
-### 7.2 `benchmark_iterations_recursive`
-
-```c
-void benchmark_iterations_recursive(scalar_t *B_out,
-                                    const scalar_t *A,
-                                    const scalar_t *Z,
-                                    size_t m, size_t n,
-                                    size_t num_iters);
-```
-
-Misma semantica que `benchmark_iterations` (Seccion 2.2) pero invocando `matmul_recursive` como kernel. Doble buffer + swap de punteros; aloja y libera los buffers internamente. Vive en `matmul_recursive.c` porque `matmul_naive.c` es inmutable.
+para que los binarios `validate_*` puedan compararlo contra `matmul_naive` sin cambios estructurales. Las precondiciones y postcondiciones son las de la Seccion 2.1.
 
 ---
 
@@ -574,7 +529,7 @@ $$
 
 El invariante `m_block == k_block == a_block_dim` garantiza que `morton_encode(i, k)` se mantiene dentro de $[0, a\_block\_dim^2)$, por lo que `A_idx` queda dentro del segmento del sub-bloque.
 
-**Complejidad.** $2 \cdot m \cdot k \cdot n$ flops (igual al baseline). La ganancia esperada respecto a `matmul_recursive` es localidad espacial adicional: en `matmul_recursive` row-major los sub-bloques al dividir por $m$ y $k$ producen strides cuando los sub-bloques son mas anchos que la linea de cache; en `matmul_morton` los cuatro cuadrantes son contiguos, eliminando ese mismatch.
+**Complejidad.** $2 \cdot m \cdot k \cdot n$ flops (igual al baseline). La ganancia respecto a `matmul_naive` viene de **localidad** (no de operaciones): los cuatro cuadrantes del sub-bloque cuadrado de $A$ son contiguos en memoria gracias a la propiedad de la Seccion 8.1, eliminando los strides que un layout row-major produciria al dividir por $m$ y $k$ cuando los sub-bloques son mas anchos que la linea de cache. El esquema cache-oblivious recursivo alcanza asintoticamente $\Omega(n^3 / \sqrt{M})$ transferencias (Hong y Kung, 1981) **sin** conocer el tamano de cache $M$.
 
 ### 9.2 `benchmark_iterations_morton`
 
@@ -608,10 +563,8 @@ Misma logica que la anterior pero recibiendo $A$ **ya en Morton**. Usada por `be
 
 | Binario | Archivo fuente | CLI | Salida |
 |---------|----------------|-----|--------|
-| `bin/bench_recursive_O0`    | `bench_recursive.c`    | `<m> [num_iters] [num_runs]`           | linea CSV `recursive,m,n,num_iters,median_seconds,gflops` |
-| `bin/validate_recursive_O0` | `validate_recursive.c` | `[m]` (default 256)                    | 7 tests: 3 invariantes + 4 cross-validation contra `matmul_naive` |
 | `bin/bench_morton_O0`       | `bench_morton.c`       | `<m> [num_iters] [num_runs]`           | linea CSV `morton,m,n,num_iters,median_seconds,gflops`; aborta si $m$ no es potencia de 2 |
-| `bin/validate_morton_O0`    | `validate_morton.c`    | `[m]` (default 256, potencia de 2)     | 11 tests: 3 invariantes + 4 cross contra `matmul_naive` + 4 cross contra `matmul_recursive` |
+| `bin/validate_morton_O0`    | `validate_morton.c`    | `[m]` (default 256, potencia de 2)     | 7 tests: 3 invariantes + 4 cross-validation contra `matmul_naive` (en $m \in \{4, 16, 64, 256\}$) |
 | `bin/test_morton`           | `test_morton.c`        | sin args                               | 4 grupos: tabla 4x4, round-trip encode/decode (4096 pares), contiguidad de cuadrantes para $m=8$, round-trip de reorganizacion para $m \in \{16, 64, 256\}$ |
 
 Los binarios de bench reusan el patron del baseline: 1 warm-up + `num_runs` corridas medidas con mediana, `num_iters` default = $\min(2m/n, 4)$, semillas 42 ($A$) y 43 ($Z$). En `bench_morton_O0` la reorganizacion a Morton se ejecuta una sola vez **antes** del warm-up para que el tiempo cronometrado sea solo el del kernel.
@@ -620,56 +573,37 @@ Los binarios de bench reusan el patron del baseline: 1 warm-up + `num_runs` corr
 
 | Script | Lista por defecto de $m$ | Salida CSV |
 |--------|--------------------------|------------|
-| `scripts/run_sweep_recursive.sh` | $\{256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192\}$ | `results/recursive_O0.csv` |
 | `scripts/run_sweep_morton.sh`    | $\{1024, 2048, 4096, 8192\}$; filtra y omite no-potencias-de-2 con `Warning:` a stderr | `results/morton_O0.csv` |
 
 Misma CLI que `run_sweep_naive.sh`: el listado de $m$ se puede pasar como primer argumento.
 
-### 10.3 Comparacion entre kernels
+### 10.3 Profiling con perf
 
-| Script | Lee | Produce |
-|--------|-----|---------|
-| `scripts/plot_comparison.py` | `naive_O0.csv`, `recursive_O0.csv`, `morton_O0.csv` | `results/comparison_all.csv` (consolidado con columna `kernel` al inicio) + 4 PNG en `plots/`: `comparison_gflops_vs_m.png`, `comparison_time_vs_m.png`, `speedup_morton_vs_recursive.png`, `speedup_morton_vs_naive.png` |
-
-CLI con defaults calibrados para Ryzen 5 4600H (`--l1-kb 32 --l2-kb 512 --l3-kb 4096`). Si `naive_O0.csv` o `recursive_O0.csv` falta, imprime mensaje claro con el comando para regenerarlo. Morton ausente produce solo un warning (no es bloqueante).
-
-### 10.4 Profiling con perf
-
-| Script | Eventos | Salida |
-|--------|---------|--------|
-| `scripts/profile_perf_compare.sh` | `L1-dcache-loads`, `L1-dcache-load-misses`, `LLC-loads`, `LLC-load-misses`, `dTLB-load-misses`, `cycles`, `instructions` | `results/perf_compare.csv` con columnas `m,variant,l1_loads,l1_misses,llc_loads,llc_misses,dtlb_misses,cycles,instructions` |
-| `scripts/plot_perf_compare.py` | `perf_compare.csv` | 3 PNG (`perf_l1_misses.png`, `perf_llc_misses.png`, `perf_dtlb_misses.png`) + `plots/perf_summary_table.txt` con tasas L1 miss / LLC miss / dTLB-per-instruction |
+Para comparaciones entre kernels usar el pipeline unificado de la Sesion 03: `make profile_zen2` (o `make results`) corre `scripts/run_perf_zen2_sweep.sh` sobre las 13 variantes activas en $m \in \{1024, 4096, 8192\}$ y el consolidador `scripts/consolidate_perf_zen2.py` produce `results/metrics.csv`. Ese pipeline reemplaza el comparador ad-hoc (`profile_perf_compare.sh` / `plot_perf_compare.py`) que se uso en Sesion 02.
 
 Si `perf_event_paranoid` esta demasiado restrictivo, el script aborta con mensaje claro indicando el comando exacto para arreglarlo y la referencia a la seccion 3.3 del `README.md`.
 
-### 10.5 Targets de Makefile
+### 10.4 Targets de Makefile
 
 ```
-make bench_recursive            -> bin/bench_recursive_O0
-make validate_recursive         -> bin/validate_recursive_O0
 make test_morton                -> bin/test_morton
 make bench_morton               -> bin/bench_morton_O0
 make validate_morton            -> bin/validate_morton_O0
-make sweep_recursive_run        -> bash scripts/run_sweep_recursive.sh
 make sweep_morton_run           -> bash scripts/run_sweep_morton.sh
-make plots_comparison           -> python3 scripts/plot_comparison.py
-make sweep_full_santiago        -> los tres anteriores en cadena
-make perf_compare               -> bash scripts/profile_perf_compare.sh
-make plots_perf                 -> python3 scripts/plot_perf_compare.py
 ```
 
 Targets de Fase 1.1 (loop-reorder):
 
 ```
-make bench_loop                 -> bin/bench_loop_O0
-make validate_loop              -> bin/validate_loop_O0
-make sweep_loop_ijk             -> results/loop_ijk.csv  (proceso independiente)
-make sweep_loop_ikj             -> results/loop_ikj.csv
-make sweep_loop_jik             -> results/loop_jik.csv
-make sweep_loop_jki             -> results/loop_jki.csv
-make sweep_loop_kij             -> results/loop_kij.csv
-make sweep_loop_kji             -> results/loop_kji.csv
-make sweep_loop_all             -> los seis anteriores + results/loop_order.csv (combinado)
+make bench_loops                -> bin/bench_loops_O0
+make validate_loops             -> bin/validate_loops_O0
+make sweep_loops_ijk            -> results/loop_ijk.csv  (proceso independiente)
+make sweep_loops_ikj            -> results/loop_ikj.csv
+make sweep_loops_jik            -> results/loop_jik.csv
+make sweep_loops_jki            -> results/loop_jki.csv
+make sweep_loops_kij            -> results/loop_kij.csv
+make sweep_loops_kji            -> results/loop_kji.csv
+make sweep_loops_all            -> los seis anteriores + results/loop_order.csv (combinado)
 make plot_naive                 -> plots/naive_O0.png  (solo baseline)
 make plot_loop                  -> plots/loop_orders.png  (6 ordenes desde loop_order.csv)
 make plot_loop_vs_naive         -> plots/loop_vs_naive.png  (naive + 6 ordenes)
@@ -970,25 +904,13 @@ for (size_t p = 0; p < kc; ++p) {
 
 ```c
 void benchmark_iterations_tiled_ikj_avx2(scalar_t *B_out,
-                                      const scalar_t *A,
-                                      const scalar_t *Z,
-                                      size_t m, size_t n,
-                                      size_t num_iters);
+                                          const scalar_t *A,
+                                          const scalar_t *Z,
+                                          size_t m, size_t n,
+                                          size_t num_iters);
 ```
 
-Mismo patron que `benchmark_iterations` (Seccion 2.2): doble buffer + swap de punteros, aloja y libera internamente. Invoca `matmul_tiled_ikj_avx2` en cada iteracion.
-
-### 14.4 `benchmark_iterations_tiled_ikj_avx2`
-
-```c
-void benchmark_iterations_tiled_ikj_avx2(scalar_t *B_out,
-                                     const scalar_t *A,
-                                     const scalar_t *Z,
-                                     size_t m, size_t n,
-                                     size_t num_iters);
-```
-
-Doble buffer + swap de punteros, identico al patron de `benchmark_iterations` (Seccion 2.2). Invoca `matmul_tiled_ikj_avx2` en cada iteracion de la recurrencia.
+Mismo patron que `benchmark_iterations` (Seccion 2.2): doble buffer + swap de punteros, aloja y libera internamente. Invoca `matmul_tiled_ikj_avx2` en cada iteracion de la recurrencia.
 
 ### 14.5 Binarios
 

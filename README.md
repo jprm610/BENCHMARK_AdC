@@ -3,7 +3,7 @@
 **Curso:** Arquitectura de Computadores
 **Universidad:** Universidad Nacional de Colombia, Sede Medellin
 **Fecha:** Mayo 2026
-**Estado:** Fase 1 cerrada (baseline + profiling + escalamiento con $m$); Fase 1.1 cerrada (reordenamiento de bucles, 6 variantes); Fase 1.2 cerrada (tiling explicito `ikj` apuntando a L2); Fase 1.3 cerrada (`tiled_ikj_avx2`: 6-loop tiling AVX2+FMA, BS=64, integrado en `make results`); Fase 1.4 cerrada (`tiled_ikj_omp`: `tiled_ikj_avx2` + `#pragma omp parallel for` en el bucle `ii`, 8 threads fijos, integrado en `make results` y sweep perf); Fase 6 cerrada (cache-oblivious recursivo + Morton); Sesion 03 cerrada (microkernel AVX2 + FMA, OpenMP tasks, perf Zen 2, Roofline anclado al $4600$H).
+**Estado:** Fase 1 cerrada (baseline + profiling + escalamiento con $m$); Fase 1.1 cerrada (reordenamiento de bucles, 6 variantes); Fase 1.2 cerrada (tiling explicito `ikj` apuntando a L2); Fase 1.3 cerrada (`tiled_ikj_avx2`, integrada en `make results`); Fase 1.4 cerrada (`tiled_ikj_omp`, integrada en `make results` y sweep perf); Fase 1.6 cerrada (microkernel BLIS-style $6 \times 16$ inline para `tiled_ikj_avx2` y `tiled_ikj_omp`, $M_R = 6$, $N_R = 16$, $M_C = 192$, $BS = 384$ por defecto, default OMP a 6 threads `close`); Fase 1.6.1 cerrada (rename `tiled` $\to$ `tiled_ikj` por consistencia); Fase 6 cerrada (Morton Z-order cache-oblivious); Sesion 03 cerrada (microkernel AVX2 + FMA, OpenMP tasks, perf Zen 2, Roofline anclado al $4600$H).
 
 ---
 
@@ -36,8 +36,6 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |-- docs/
 |   |-- API.md                         -> Contrato publico de las funciones
 |   |-- SESION_01_RESUMEN.md           -> Resumen para retomar Fase 1
-|   |-- PLAN_FASE6.md                  -> Plan ejecutivo de la Fase 6 (Sesion 02)
-|   |-- SESION_02_RESUMEN.md           -> Resumen para retomar Fase 6
 |   |-- PROMPTS_SESION_02.md           -> Guion de prompts de la Sesion 02
 |   |-- PLAN_SESION_03.md              -> Plan tecnico de la Sesion 03 + bitacora de hallazgos
 |   |-- PROMPTS_SESION_03.md           -> Guion completo de los 10 prompts de la Sesion 03
@@ -49,26 +47,23 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |   |-- timing.h                       -> clock_gettime(CLOCK_MONOTONIC) inline
 |   |-- bench_naive.c                  -> Driver bench_naive_O0
 |   |-- validate_naive.c               -> Verificador baseline
-|   |   # Fase 6 (Sesion 02) - cache-oblivious + Morton fino
-|   |-- matmul_recursive.{h,c}         -> Kernel recursivo row-major (Etapa A2)
+|   |   # Fase 6 (Sesion 02) - Morton (Z-order) cache-oblivious
 |   |-- morton.{h,c}                   -> Encoding Z-order + reorganizacion (Etapa A3)
 |   |-- matmul_morton.{h,c}            -> Kernel recursivo con A en Morton fino (A3)
 |   |-- test_morton.c                  -> Tests unitarios del modulo Morton
-|   |-- bench_recursive.c              -> Driver bench_recursive_O0
-|   |-- validate_recursive.c           -> Verificador recursive
 |   |-- bench_morton.c                 -> Driver bench_morton_O0 (potencia de 2)
-|   |-- validate_morton.c              -> Verificador morton
+|   |-- validate_morton.c              -> Verificador morton (cross-validation contra naive)
 |   |   # Fase 1.2 - tiling explicito sobre ikj
 |   |-- matmul_tiled_ikj.{h,c}             -> Tiling Mc x Kc sobre ikj, apunta a L2 (Mc=Kc=256)
 |   |-- bench_tiled_ikj.c                  -> Driver bench_tiled_ikj_O3
 |   |-- validate_tiled_ikj.c               -> 3 invariantes + cross-validation contra naive
-|   |   # Fase 1.3 - tiled_ikj_avx2: 6-loop tiling con AVX2+FMA
-|   |-- matmul_tiled_ikj_avx2.{h,c}        -> 6-loop tiling (ii,kk,jj+i,p,j) broadcast AVX2+FMA, BS=64
+|   |   # Fase 1.3 / 1.6 - tiled_ikj_avx2: microkernel BLIS-style 6x16 (AVX2+FMA)
+|   |-- matmul_tiled_ikj_avx2.{h,c}        -> Microkernel inline 6x16 (MR=6, NR=16, MC=192), BS=384 default, AVX2+FMA
 |   |-- bench_tiled_ikj_avx2.c             -> Driver bench_tiled_ikj_avx2_O3 (CSV 7 columnas con bs)
 |   |-- validate_tiled_ikj_avx2.c          -> 4 invariantes + cross-validation contra naive
-|   |   # Fase 1.4 - tiled_ikj_omp: tiled_ikj_avx2 + OpenMP parallel for en bucle ii
-|   |-- matmul_tiled_ikj_omp.{h,c}         -> tiled_ikj_avx2 + #pragma omp parallel for schedule(static) en ii
-|   |-- bench_tiled_ikj_omp.c              -> Driver bench_tiled_ikj_omp_O3 (CSV 7 columnas, OMP_NUM_THREADS=8)
+|   |   # Fase 1.4 / 1.6 - tiled_ikj_omp: microkernel 6x16 + OpenMP parallel for en bucle ic
+|   |-- matmul_tiled_ikj_omp.{h,c}         -> Microkernel 6x16 + #pragma omp parallel for schedule(static) en ic
+|   |-- bench_tiled_ikj_omp.c              -> Driver bench_tiled_ikj_omp_O3 (CSV 7 columnas, OMP_NUM_THREADS=6 close)
 |   |-- validate_tiled_ikj_omp.c           -> 4 invariantes + cross-validation contra naive
 |   |   # Sesion 03 - microkernel AVX2 + OpenMP + perf Zen 2
 |   |-- hwinfo.c                       -> Fingerprint runtime del CPU
@@ -87,24 +82,18 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |   |-- profile_perf_naive.sh          -> perf standalone
 |   |-- plot_results.py                -> Graficas del baseline
 |   |   # Fase 6 (Sesion 02)
-|   |-- run_sweep_recursive.sh         -> Sweep -> results/recursive_O0.csv
 |   |-- run_sweep_morton.sh            -> Sweep -> results/morton_O0.csv (potencias de 2)
-|   |-- plot_comparison.py             -> 3 CSV -> comparison_all.csv + 4 PNG
-|   |-- profile_perf_compare.sh        -> perf stat sobre los 3 binarios
-|   |-- plot_perf_compare.py           -> perf_compare.csv -> 3 PNG + tabla
 |   |   # Sesion 03
 |   |-- audit_no_pdep.sh               -> Auditoria de PDEP/PEXT (Zen 2)
 |   |-- run_threshold_sweep.sh         -> Tuning empirico RECURSION_THRESHOLD
 |   |-- plot_threshold_sweep.py        -> Plot del threshold sweep
-|   |-- run_sweep_session_03.sh        -> Sweep comparativo 4 variantes
-|   |-- plot_sweep_session_03.py       -> 2 PNG (gflops y speedup vs naive)
 |   |-- run_sweep_morton_avx2_xl.sh    -> Extension de morton_avx2 hasta m=32768
 |   |-- plot_morton_avx2_xl.py         -> Plot de la extension
 |   |-- run_omp_scaling.sh             -> Escalado threads 1..12 close/spread
 |   |-- plot_omp_scaling.py            -> Plot escalado OMP
 |   |-- profile_perf_zen2.sh           -> Captura perf por celda (variant, m)
-|   |-- run_perf_zen2_sweep.sh         -> Orquesta 12 celdas (4 variantes x 3 m)
-|   |-- consolidate_perf_zen2.py       -> Consolida grupos A+B -> perf_zen2_summary.csv
+|   |-- run_perf_zen2_sweep.sh         -> Orquesta 39 celdas (13 variantes x 3 m)
+|   |-- consolidate_perf_zen2.py       -> Consolida grupos A+B -> results/metrics.csv
 |   |-- plot_perf_zen2.py              -> 4 paneles: IPC, FMA, L3 miss, TLB walks
 |   |-- measure_stream.sh              -> Descarga, compila y corre STREAM (Triad 1T y 6T)
 |   `-- plot_roofline.py               -> Roofline anclado a STREAM medido
@@ -254,12 +243,12 @@ Targets de Fase 1.1 (loop reorder), Fase 1.2 (tiling) y Fase 1.3 (tiled_ikj_avx2
 
 ```bash
 # Fase 1.1 - loop reorder
-make bench_loop               # bin/bench_loop_O0 y bin/bench_loop_O3
-make validate_loop            # bin/validate_loop_O0
+make bench_loops              # bin/bench_loops_O0 y bin/bench_loops_O3
+make validate_loops           # bin/validate_loops_O0
 
 # Fase 1.2 - tiling explicito
 make bench_tiled_ikj              # bin/bench_tiled_ikj_O3
-make validate_tiled_ikj           # bin/validate_tiled_O0
+make validate_tiled_ikj           # bin/validate_tiled_ikj_O0
 
 # Fase 1.3 - tiled_ikj_avx2 (6-loop tiling con AVX2+FMA, compilado con -O3 -march=znver2)
 make bench_tiled_ikj_avx2         # bin/bench_tiled_ikj_avx2_O3
@@ -270,22 +259,20 @@ make bench_tiled_ikj_omp          # bin/bench_tiled_ikj_omp_O3
 make validate_tiled_ikj_omp       # bin/validate_tiled_ikj_omp_O3
 ```
 
-Targets de Fase 6 (cache-oblivious recursivo + Morton):
+Targets de Fase 6 (Morton Z-order cache-oblivious):
 
 ```bash
-make bench_recursive          # bin/bench_recursive_O0
-make validate_recursive       # bin/validate_recursive_O0
 make test_morton              # bin/test_morton (tests del modulo morton)
 make bench_morton             # bin/bench_morton_O0   (m debe ser potencia de 2)
 make validate_morton          # bin/validate_morton_O0 (idem)
 
-make sweep_recursive_run      # produce results/recursive_O0.csv
 make sweep_morton_run         # produce results/morton_O0.csv
-make plots_comparison         # consolida los 3 CSV y genera 4 PNG
-make sweep_full_santiago      # los tres anteriores en cadena
+```
 
-make perf_compare             # produce results/perf_compare.csv
-make plots_perf               # genera 3 PNG + plots/perf_summary_table.txt
+Para comparaciones entre kernels (naive + loops + tiled_ikj* + morton*) usar el pipeline unificado de la Sesion 03:
+
+```bash
+make results                  # sweep perf Zen 2 + consolida -> results/metrics.csv
 ```
 
 **Flags fijos en el Makefile** (`BASE_CFLAGS`):
@@ -421,13 +408,12 @@ getconf -a | grep CACHE
 
 **Importante:** los valores que pides en el script son **por core** para L1 y L2, y **totales (compartido)** para L3. `lscpu` reporta el total de L1/L2 sumado a traves de los cores ("192 KiB (6 instances)"); divide entre el numero de instancias para sacar el valor por core.
 
-### 5.5 Flujo de Fase 6: recursivo + Morton
+### 5.5 Flujo de Fase 6: Morton (Z-order) cache-oblivious
 
 #### 5.5.1 Validacion
 
 ```bash
-./bin/validate_recursive_O0 256   # 3 invariantes + cross-validation contra naive
-./bin/validate_morton_O0    256   # idem + cross-validation contra recursive (m potencia de 2)
+./bin/validate_morton_O0    256   # 3 invariantes + cross-validation contra naive (m potencia de 2)
 ./bin/test_morton                 # tests del modulo Morton (encode/decode/reorganize)
 ```
 
@@ -436,50 +422,35 @@ Cada uno imprime `VALIDATION OK` (o `MORTON TESTS OK`) y retorna 0 cuando todo p
 #### 5.5.2 Bench individual
 
 ```bash
-./bin/bench_recursive_O0 1024            # m=1024, defaults
-./bin/bench_recursive_O0 1024 4 1        # m, iters, runs
 ./bin/bench_morton_O0    1024 4 1        # m debe ser potencia de 2
 ```
 
 Misma CLI y mismo CSV de salida que `bench_naive_O0`. `bench_morton_O0` ejecuta `reorganize_to_morton(A)` una sola vez antes del warm-up, fuera del tiempo medido, para que las GFLOP/s reflejen solo el kernel.
 
-#### 5.5.3 Sweep comparativo
+#### 5.5.3 Sweep individual
 
 ```bash
-make sweep_full_santiago
+make sweep_morton_run                         # produce results/morton_O0.csv
 # equivalente a:
-bash scripts/run_sweep_recursive.sh           # 11 puntos, ~20 min a -O0
 bash scripts/run_sweep_morton.sh              # 4 potencias de 2, ~50 min a -O0
-source ~/venvs/matmul/bin/activate
-python3 scripts/plot_comparison.py
 ```
-
-Asume `results/naive_O0.csv` existe (generalo con `make sweep_naive` si no). El plot produce:
-
-- `results/comparison_all.csv` — union de los tres CSV con columna `kernel` al inicio.
-- `plots/comparison_gflops_vs_m.png` — tres curvas, eje $x$ log, guias L1/L2/L3.
-- `plots/comparison_time_vs_m.png` — tres curvas tiempo/iter en log-log + curva teorica $O(m^2 n)$.
-- `plots/speedup_morton_vs_recursive.png` — cociente solo donde ambos existen.
-- `plots/speedup_morton_vs_naive.png` — analogo.
 
 Para un rango custom:
 
 ```bash
-bash scripts/run_sweep_recursive.sh "1024 2048 4096"
 bash scripts/run_sweep_morton.sh    "1024 2048 4096 8192"
 ```
 
 `run_sweep_morton.sh` filtra y omite con warning a stderr cualquier $m$ que no sea potencia de 2.
 
-#### 5.5.4 Perf comparativo
+#### 5.5.4 Comparacion entre kernels
+
+Para comparar Morton contra el resto del pipeline (naive, loops, tiled_ikj*, morton_avx2, morton_omp) se usa el pipeline unificado de la Sesion 03 (seccion 5.6):
 
 ```bash
 sudo sh -c 'echo 1 > /proc/sys/kernel/perf_event_paranoid'   # una vez por boot
-make perf_compare        # produce results/perf_compare.csv
-make plots_perf          # produce 3 PNG + plots/perf_summary_table.txt
+make results              # sweep perf Zen 2 sobre 13 variantes -> results/metrics.csv
 ```
-
-Captura siete eventos (`L1-dcache-loads`, `L1-dcache-load-misses`, `LLC-loads`, `LLC-load-misses`, `dTLB-load-misses`, `cycles`, `instructions`) para los tres kernels en $m \in \{1024, 2048, 4096, 8192\}$. Si `perf` falla por permisos, el script imprime el comando exacto para arreglarlo (referencia a la seccion 3.3).
 
 ### 5.7 Flujo de Fase 1.2: tiling explicito (`tiled_ikj`)
 
@@ -489,7 +460,7 @@ make bench_tiled_ikj
 make validate_tiled_ikj
 
 # Validar correctitud
-./bin/validate_tiled_O0 256
+./bin/validate_tiled_ikj_O0 256
 
 # Bench individual
 ./bin/bench_tiled_ikj_O3 1024          # m=1024, defaults
@@ -521,7 +492,7 @@ python3 scripts/consolidate_perf_zen2.py
 
 ---
 
-### 5.8 Flujo de Fase 1.3: tiled_ikj_avx2 (6-loop tiling AVX2+FMA)
+### 5.8 Flujo de Fase 1.3 / 1.6: tiled_ikj_avx2 (microkernel BLIS-style 6x16 con AVX2+FMA)
 
 ```bash
 # Compilar (requiere -O3 -march=znver2 -mavx2 -mfma)
@@ -529,17 +500,17 @@ make bench_tiled_ikj_avx2
 make validate_tiled_ikj_avx2
 
 # Validar correctitud
-./bin/validate_tiled_ikj_avx2_O3 256        # m=256, BS=64
-./bin/validate_tiled_ikj_avx2_O3 256 32     # m=256, BS=32 (BS debe ser multiplo de 8)
+./bin/validate_tiled_ikj_avx2_O3 256        # m=256, BS=384 (default)
+./bin/validate_tiled_ikj_avx2_O3 256 128    # m=256, BS=128 custom
 
 # Bench individual
-./bin/bench_tiled_ikj_avx2_O3 1024          # m=1024, defaults (iters auto, runs=5, BS=64)
-./bin/bench_tiled_ikj_avx2_O3 1024 4 1 32  # m=1024, 4 iters, 1 corrida, BS=32
+./bin/bench_tiled_ikj_avx2_O3 1024          # m=1024, defaults (iters auto, runs=5, BS=384)
+./bin/bench_tiled_ikj_avx2_O3 1024 4 1 256  # m=1024, 4 iters, 1 corrida, BS=256
 ```
 
 Salida CSV (7 columnas, incluye `bs`):
 ```
-tiled_ikj_avx2,1024,128,4,64,X.XXXXXX,X.XXXXXX
+tiled_ikj_avx2,1024,128,4,384,X.XXXXXX,X.XXXXXX
 ```
 
 Para incluir `tiled_ikj_avx2` en el sweep de perf completo y regenerar `results/metrics.csv`:
@@ -557,11 +528,11 @@ VARIANTS="tiled_ikj_avx2" MS="1024 2048" bash scripts/run_perf_zen2_sweep.sh
 python3 scripts/consolidate_perf_zen2.py
 ```
 
-**Block size:** `BS = 64` por defecto. Tres paneles activos de `64×64` floats = 48 KiB, dentro del L2 de 512 KB del Ryzen 5 4600H. Cambiar via 4.o argumento del bench o `matmul_tiled_ikj_avx2_set_bs(bs)` en tiempo de ejecucion; `bs` debe ser multiplo de 8.
+**Geometria del microkernel BLIS-style (Fase 1.6):** $M_R = 6$, $N_R = 16$, $M_C = 192$ fijos en source; $BS$ (= $k_c$) configurable runtime, default $384$. Los $12$ acumuladores YMM del tile $6 \times 16$ de $C$ se mantienen vivos durante toda la pasada $k_c$ (verificado con `objdump` que GCC no spillea ningun YMM). El panel $A$ activo $M_C \times k_c = 192 \times 384$ ocupa $288$ KiB y cabe en el L2 de $512$ KB del Ryzen 5 4600H; el panel $B$ activo $k_c \times N_R = 384 \times 16$ ocupa $24$ KiB y cabe en el L1d de $32$ KB. Cambiar $BS$ via 4.o argumento del bench o `matmul_tiled_ikj_avx2_set_bs(bs)` en runtime (cualquier valor positivo es valido; el microkernel itera $p$ uno a la vez).
 
 ---
 
-### 5.9 Flujo de Fase 1.4: tiled_ikj_omp (tiled_ikj_avx2 + OpenMP)
+### 5.9 Flujo de Fase 1.4 / 1.6: tiled_ikj_omp (microkernel 6x16 + OpenMP)
 
 ```bash
 # Compilar (requiere -O3 -march=znver2 -mavx2 -mfma -fopenmp)
@@ -569,26 +540,26 @@ make bench_tiled_ikj_omp
 make validate_tiled_ikj_omp
 
 # Validar correctitud
-./bin/validate_tiled_ikj_omp_O3 256        # m=256, BS=64
-./bin/validate_tiled_ikj_omp_O3 256 32     # m=256, BS=32 (BS debe ser multiplo de 8)
+./bin/validate_tiled_ikj_omp_O3 256        # m=256, BS=384 (default)
+./bin/validate_tiled_ikj_omp_O3 256 128    # m=256, BS=128 custom
 
 # Bench individual (OMP_NUM_THREADS controla el numero de threads)
-OMP_NUM_THREADS=8 ./bin/bench_tiled_ikj_omp_O3 4096       # m=4096, BS=64, 8 threads
-OMP_NUM_THREADS=8 ./bin/bench_tiled_ikj_omp_O3 4096 4 5 64  # m, iters, runs, bs
+OMP_NUM_THREADS=6 OMP_PROC_BIND=close ./bin/bench_tiled_ikj_omp_O3 4096          # m=4096, BS=384, 6 threads close
+OMP_NUM_THREADS=6 OMP_PROC_BIND=close ./bin/bench_tiled_ikj_omp_O3 4096 4 5 256  # m, iters, runs, bs
 ```
 
 Salida CSV (7 columnas, mismo formato que `tiled_ikj_avx2`):
 ```
-tiled_ikj_omp,4096,128,4,64,X.XXXXXX,X.XXXXXX
+tiled_ikj_omp,4096,128,4,384,X.XXXXXX,X.XXXXXX
 ```
 
-Para incluir `tiled_ikj_omp` en el sweep de perf completo con 8 threads fijos y regenerar `results/metrics.csv`:
+Para incluir `tiled_ikj_omp` en el sweep de perf completo con 6 threads fijos y regenerar `results/metrics.csv`:
 
 ```bash
 make results
 ```
 
-El target `results` incluye `bench_tiled_ikj_omp_O3` como dependencia. `run_perf_zen2_sweep.sh` incluye `tiled_ikj_omp` en su lista de variantes y `profile_perf_zen2.sh` fija `OMP_NUM_THREADS=8 OMP_PLACES=cores OMP_PROC_BIND=close` automaticamente para esa variante.
+El target `results` incluye `bench_tiled_ikj_omp_O3` como dependencia. `run_perf_zen2_sweep.sh` incluye `tiled_ikj_omp` en su lista de variantes y `profile_perf_zen2.sh` fija `OMP_NUM_THREADS=6 OMP_PLACES=cores OMP_PROC_BIND=close` automaticamente para esa variante (cambiado en Fase 1.6 desde $8$/close, que era suboptimo para el microkernel FMA-bound del $6 \times 16$).
 
 Para correr solo la celda de `tiled_ikj_omp` sin relanzar todo el sweep:
 
@@ -597,7 +568,7 @@ bash scripts/profile_perf_zen2.sh tiled_ikj_omp 4096
 python3 scripts/consolidate_perf_zen2.py --out results/metrics.csv
 ```
 
-**Paralelizacion:** un unico `#pragma omp parallel for schedule(static)` sobre el bucle `ii` (tiles de filas). Cada tile escribe exclusivamente las filas `[ii, ii+BS)` de C; no hay conflictos de escritura. A y B son `const` y compartidas. El `memset` de C corre antes del region paralela.
+**Paralelizacion:** un unico `#pragma omp parallel for schedule(static)` sobre el bucle externo $i_c$ (tiles de filas de altura $M_C = 192$). Cada tile escribe exclusivamente las filas $[i_c, i_c + M_C)$ de $C$; no hay conflictos de escritura entre threads. $A$ y $B$ son `const` y compartidas. El `memset` inicial de $C$ corre fuera de la region paralela. SMT a $12$ threads degrada $\sim 60\%$ porque los dos hilos comparten las pipas FMA del core fisico, por eso el default empirico es $6$ threads.
 
 ---
 
@@ -614,9 +585,9 @@ make sweep_threshold                  # mide el RECURSION_THRESHOLD optimo de Mo
 make validate_morton_avx2             # cross-valida la variante AVX2 contra naive y morton
 make bench_morton_avx2                # bench single-core del microkernel AVX2
 OMP_NUM_THREADS=6 make bench_morton_omp   # version paralela (OpenMP tasks)
-make sweep_session_03                 # sweep comparativo de las 4 variantes en m={512..16384}
+make results                          # sweep perf Zen 2 sobre 13 variantes -> results/metrics.csv
 make stream                           # mide DRAM bandwidth con STREAM (Triad 1T y 6T)
-make profile_zen2                     # captura 12 celdas de eventos perf Zen 2
+make profile_zen2                     # captura eventos perf Zen 2 (group A + group B por celda)
 make plot_roofline                    # genera plots/roofline_4600h.png anclado al STREAM medido
 ```
 
@@ -645,8 +616,8 @@ source ~/venvs/matmul/bin/activate
 sudo sysctl -w kernel.perf_event_paranoid=1
 
 make audit                            # PASS
-make sweep_session_03 plot_session_03  # ~25 min, plots/session_03_*.png
-make profile_zen2 plot_perf_zen2       # ~5  min, plots/perf_zen2_breakdown.png
+make results                           # ~25 min, sweep perf Zen 2 -> results/metrics.csv
+make plot_perf_zen2                    # ~1  min, plots/perf_zen2_breakdown.png
 make stream                            # ~2  min
 make profile_zen2_omp                  # ~3  min, perf de morton_omp para el Roofline
 make plot_roofline                     # < 1 min, plots/roofline_4600h.png
@@ -785,12 +756,12 @@ Las fases siguientes mantendran la misma API descrita en `docs/API.md` y se suma
 
 | Fase | Que se agregara | Estado |
 |------|-----------------|--------|
-| 2 | Reordenamiento de bucles (ikj, kij) + pre-transposicion de $A$ | pendiente (Camino B, Juan Pablo) |
-| 3 | Tiling de un nivel para L2 | **COMPLETADO** (Fase 1.2: `matmul_tiled_ikj`, `tiled_ikj` con Mc=Kc=256 apuntando al L2 del $4600$H) |
-| 1.3 | 6-loop tiling con AVX2+FMA (`tiled_ikj_avx2`) | **COMPLETADO** (Fase 1.3: broadcast AVX2 + FMA, BS=64, integrado en `make results` y sweep de perf Zen 2) |
+| 1.1 | Reordenamiento de bucles (6 ordenes seleccionables por nombre) | **COMPLETADO** (`matmul_loops`, integrado en `make results` y sweep perf Zen 2) |
+| 1.2 | Tiling explicito de un nivel para L2 | **COMPLETADO** (`matmul_tiled_ikj`, $M_c = K_c = 256$ apuntando al L2 del $4600$H) |
+| 1.3 / 1.6 | Tiling con AVX2+FMA y microkernel BLIS-style | **COMPLETADO** (`tiled_ikj_avx2`: microkernel inline $6 \times 16$, $M_C = 192$, $BS = 384$ default; integrado en `make results`) |
+| 1.4 / 1.6 | OpenMP sobre microkernel $6 \times 16$ | **COMPLETADO** (`tiled_ikj_omp`: `#pragma omp parallel for` en bucle $i_c$, $6$ threads `close` default) |
 | 4 | Flags de compilador y auto-vectorizacion (`-O3 -march=native`) | **COMPLETADO** como parte de la Sesion 03 (microkernel AVX2 + FMA explicito sobre Zen $2$) |
-| 1.4 | OpenMP sobre tiling explicito AVX2 | **COMPLETADO** (`tiled_ikj_omp`: `tiled_ikj_avx2` + `parallel for` en `ii`, 8 threads, integrado en `make results` y sweep perf) |
-| 5 | OpenMP + comparacion con OpenBLAS | OpenMP **COMPLETADO** (Sesion 03, `matmul_morton_omp`; Fase 1.4, `tiled_ikj_omp`); comparacion OpenBLAS pendiente para Sesion 04 |
+| 5 | OpenMP + comparacion con OpenBLAS | OpenMP **COMPLETADO** (Sesion 03 `matmul_morton_omp`; Fase 1.4/1.6 `tiled_ikj_omp`); comparacion contra OpenBLAS pendiente para Sesion 04 |
 | 6 / Opcional | Matmul recursivo cache-oblivious + layout Morton sobre $A$ | **COMPLETADO** (Sesion 02 codigo y validacion; Sesion 03 sweep masivo, perf compare, Roofline) |
 
 El proyecto **esta disenado para que cada fase se entregue de forma incremental** y se pueda comparar contra el baseline producido aqui.

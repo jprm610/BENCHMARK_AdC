@@ -12,13 +12,7 @@
 #define MATMUL_NAIVE_H
 
 #include <stddef.h>
-
-/*
- * scalar_t is the floating-point type used by every matrix in the project.
- * Centralized here so that switching to double touches only this typedef
- * and the tolerance constants in validate.c.
- */
-typedef float scalar_t;
+#include "matrix_utils.h"
 
 /*
  * matmul_naive: compute C = A * B with three nested loops in ijk order.

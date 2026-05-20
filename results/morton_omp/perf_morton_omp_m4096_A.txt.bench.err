@@ -1,1 +1,0 @@
-INFO bench_morton_omp: m=4096 n=128 I_meas=1 runs=3 threads_max=6 leaf_thr=524288 par_thr=524288

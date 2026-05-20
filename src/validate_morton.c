@@ -1,25 +1,24 @@
 /*
  * validate_morton.c - Sanity checks for the recursive Morton matmul kernel.
  *
- * Five test groups exercise matmul_morton:
+ * Four test groups exercise matmul_morton:
  *   1. A * 0 = 0.
  *   2. I * Z = Z.
  *   3. A * (Z1 + Z2) = A * Z1 + A * Z2 (linearity).
  *   4. Cross-validation against matmul_naive on random data.
- *   5. Cross-validation against matmul_recursive on random data.
  *
- * Test 5 is the strongest because both kernels are recursive: they apply
- * the same recurrence to A and B (but on different layouts), so any bug
- * in the propagation of a_morton_offset, in the quadrant order TL/TR/BL/BR,
- * or in the local/global index handling of kernel_base_morton would show
- * up as a divergence.
+ * Test 4 is the canonical correctness check: matmul_naive is the trusted
+ * baseline. Any bug in the propagation of a_morton_offset, in the
+ * quadrant order TL/TR/BL/BR, or in the local/global index handling of
+ * kernel_base_morton would show up as a divergence against the naive
+ * triple-loop reference.
  *
  * Usage:
  *   validate_morton_O0 [m]
  *
  * The CLI m controls the size used by the three invariant tests; it must
- * be a power of two. The cross-validation sweep (Tests 4 and 5) always
- * runs over m in {4, 16, 64, 256}.
+ * be a power of two. The cross-validation sweep (Test 4) always runs over
+ * m in {4, 16, 64, 256}.
  */
 
 #include <stdio.h>
@@ -27,7 +26,6 @@
 #include <string.h>
 
 #include "matmul_naive.h"
-#include "matmul_recursive.h"
 #include "matmul_morton.h"
 #include "morton.h"
 #include "matrix_utils.h"
@@ -163,38 +161,6 @@ static int test_cross_naive_one(size_t m, size_t k, size_t n)
     return rc;
 }
 
-/* Test 5 helper: morton(C, A, B) == recursive(C, A, B) for one shape. */
-static int test_cross_recursive_one(size_t m, size_t k, size_t n)
-{
-    scalar_t *A_row    = xalloc_aligned(m * k);
-    scalar_t *A_morton = xalloc_aligned(m * k);
-    scalar_t *B        = xalloc_aligned(k * n);
-    scalar_t *C_rec    = xalloc_aligned(m * n);
-    scalar_t *C_morton = xalloc_aligned(m * n);
-
-    /* Different seeds from Test 4 so the two tests probe independent
-     * random inputs, in case one of them happens to hide a sign bug. */
-    init_matrix_random(A_row, m, k, 91u + (unsigned int)m);
-    init_matrix_random(B,     k, n, 113u + (unsigned int)m);
-    reorganize_to_morton(A_row, A_morton, m);
-
-    matmul_recursive(C_rec,    A_row,    B, m, k, n);
-    matmul_morton   (C_morton, A_morton, B, m, k, n);
-
-    char label[96];
-    snprintf(label, sizeof(label),
-             "morton == recursive (m=%llu, k=%llu, n=%llu)",
-             (unsigned long long)m,
-             (unsigned long long)k,
-             (unsigned long long)n);
-
-    int rc = check_or_report(label, C_rec, C_morton, m * n);
-
-    xfree(A_row); xfree(A_morton);
-    xfree(B); xfree(C_rec); xfree(C_morton);
-    return rc;
-}
-
 /* Sweep over m in {4, 16, 64, 256} with k = m and n = 128. */
 static int test_cross_sweep(int (*test_one)(size_t, size_t, size_t))
 {
@@ -241,7 +207,6 @@ int main(int argc, char **argv)
     failures += test_identity(m, n);
     failures += test_linearity(m, n);
     failures += test_cross_sweep(test_cross_naive_one);
-    failures += test_cross_sweep(test_cross_recursive_one);
 
     if (failures == 0) {
         printf("VALIDATION OK\n");

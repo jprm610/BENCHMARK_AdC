@@ -81,33 +81,6 @@ distclean: clean
 	rm -f results/*.csv plots/*
 
 # =====================================================================
-# Fase 6 / Etapa A2 targets - cache-oblivious recursive kernel
-#
-# These build on top of the naive baseline without modifying any of
-# the targets above. The validate binary links matmul_naive.c too
-# because the cross-validation test compares the two kernels element
-# by element.
-# =====================================================================
-
-RECURSIVE_COMMON_SRCS    := $(COMMON_SRCS) $(SRC_DIR)/matmul_recursive.c
-BENCH_RECURSIVE_SRCS     := $(RECURSIVE_COMMON_SRCS) $(SRC_DIR)/bench_recursive.c
-VALIDATE_RECURSIVE_SRCS  := $(RECURSIVE_COMMON_SRCS) $(SRC_DIR)/validate_recursive.c
-
-BENCH_RECURSIVE_O0       := $(BIN_DIR)/bench_recursive_O0
-VALIDATE_RECURSIVE_O0    := $(BIN_DIR)/validate_recursive_O0
-
-.PHONY: bench_recursive validate_recursive
-
-bench_recursive: $(BENCH_RECURSIVE_O0)
-validate_recursive: $(VALIDATE_RECURSIVE_O0)
-
-$(BENCH_RECURSIVE_O0): $(BENCH_RECURSIVE_SRCS) | $(BIN_DIR)
-	$(CC) $(BASE_CFLAGS) $(BENCH_RECURSIVE_SRCS) -o $@ $(LIBS)
-
-$(VALIDATE_RECURSIVE_O0): $(VALIDATE_RECURSIVE_SRCS) | $(BIN_DIR)
-	$(CC) $(BASE_CFLAGS) $(VALIDATE_RECURSIVE_SRCS) -o $@ $(LIBS)
-
-# =====================================================================
 # Fase 6 / Etapa A3 support module - Morton (Z-order) encoding tests
 # =====================================================================
 
@@ -124,14 +97,13 @@ $(TEST_MORTON): $(TEST_MORTON_SRCS) | $(BIN_DIR)
 # =====================================================================
 # Fase 6 / Etapa A3 targets - Morton kernel bench and validate
 #
-# validate_morton links matmul_recursive.c too because Test 5 cross-
-# validates the Morton kernel against the recursive row-major one.
+# validate_morton cross-validates the Morton kernel against matmul_naive
+# (Test 4); matmul_naive is the canonical reference baseline.
 # =====================================================================
 
 MORTON_KERNEL_SRCS       := $(SRC_DIR)/matmul_morton.c $(SRC_DIR)/morton.c
 BENCH_MORTON_SRCS        := $(COMMON_SRCS) $(MORTON_KERNEL_SRCS) $(SRC_DIR)/bench_morton.c
 VALIDATE_MORTON_SRCS     := $(COMMON_SRCS) $(MORTON_KERNEL_SRCS) \
-                            $(SRC_DIR)/matmul_recursive.c \
                             $(SRC_DIR)/validate_morton.c
 
 BENCH_MORTON_O0          := $(BIN_DIR)/bench_morton_O0
@@ -149,91 +121,71 @@ $(VALIDATE_MORTON_O0): $(VALIDATE_MORTON_SRCS) | $(BIN_DIR)
 	$(CC) $(BASE_CFLAGS) $(VALIDATE_MORTON_SRCS) -o $@ $(LIBS)
 
 # =====================================================================
-# Fase 6 / Prompt 6 - comparative sweeps and plots
+# Fase 6 / Prompt 6 - Morton sweep
 # =====================================================================
 
-.PHONY: sweep_recursive_run sweep_morton_run plots_comparison sweep_full_santiago
-
-sweep_recursive_run: $(BENCH_RECURSIVE_O0)
-	bash scripts/run_sweep_recursive.sh
+.PHONY: sweep_morton_run
 
 sweep_morton_run: $(BENCH_MORTON_O0)
 	bash scripts/run_sweep_morton.sh
 
-plots_comparison:
-	python3 scripts/plot_comparison.py
-
-sweep_full_santiago: sweep_recursive_run sweep_morton_run plots_comparison
-
-# =====================================================================
-# Fase 6 / Prompt 7 - hardware-event comparison via perf
-# =====================================================================
-
-.PHONY: perf_compare plots_perf
-
-perf_compare: $(BENCH_NAIVE_O0) $(BENCH_RECURSIVE_O0) $(BENCH_MORTON_O0)
-	bash scripts/profile_perf_compare.sh
-
-plots_perf:
-	python3 scripts/plot_perf_compare.py
-
 # =====================================================================
 # Fase 1.1 - Cache-aware: loop reorder
 #
-# bench_loop_O0  : benchmark that selects kernel by name at runtime
-# validate_loop  : algebraic + cross-validation for all 6 orders
-# sweep_loop     : runs scripts/run_sweep_loop.sh -> results/loop_order.csv
+# bench_loops_O0 : benchmark that selects kernel by name at runtime
+# validate_loops : algebraic + cross-validation for all 6 orders
+# sweep_loops    : runs scripts/run_sweep_loops.sh -> results/loop_order.csv
 # =====================================================================
 
-LOOP_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_loop.c
-BENCH_LOOP_SRCS    := $(LOOP_COMMON_SRCS) $(SRC_DIR)/bench_loop.c
-VALIDATE_LOOP_SRCS := $(LOOP_COMMON_SRCS) $(SRC_DIR)/validate_loop.c
+LOOPS_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_loops.c
+BENCH_LOOPS_SRCS    := $(LOOPS_COMMON_SRCS) $(SRC_DIR)/bench_loops.c
+VALIDATE_LOOPS_SRCS := $(LOOPS_COMMON_SRCS) $(SRC_DIR)/validate_loops.c
 
-BENCH_LOOP_O0      := $(BIN_DIR)/bench_loop_O0
-BENCH_LOOP_O3      := $(BIN_DIR)/bench_loop_O3
-VALIDATE_LOOP_O0   := $(BIN_DIR)/validate_loop_O0
+BENCH_LOOPS_O0      := $(BIN_DIR)/bench_loops_O0
+BENCH_LOOPS_O3      := $(BIN_DIR)/bench_loops_O3
+VALIDATE_LOOPS_O0   := $(BIN_DIR)/validate_loops_O0
 
-.PHONY: bench_loop bench_loop_O3 validate_loop \
-        sweep_loop_ijk sweep_loop_ikj sweep_loop_jik \
-        sweep_loop_jki sweep_loop_kij sweep_loop_kji \
-        sweep_loop_all
+.PHONY: bench_loops bench_loops_O3 validate_loops \
+        sweep_loops_ijk sweep_loops_ikj sweep_loops_jik \
+        sweep_loops_jki sweep_loops_kij sweep_loops_kji \
+        sweep_loops_all
 
-bench_loop: $(BENCH_LOOP_O0)
-bench_loop_O3: $(BENCH_LOOP_O3)
-validate_loop: $(VALIDATE_LOOP_O0)
+bench_loops: $(BENCH_LOOPS_O0)
+bench_loops_O3: $(BENCH_LOOPS_O3)
+validate_loops: $(VALIDATE_LOOPS_O0)
 
-$(BENCH_LOOP_O0): $(BENCH_LOOP_SRCS) | $(BIN_DIR)
-	$(CC) $(BASE_CFLAGS) $(BENCH_LOOP_SRCS) -o $@ $(LIBS)
+$(BENCH_LOOPS_O0): $(BENCH_LOOPS_SRCS) | $(BIN_DIR)
+	$(CC) $(BASE_CFLAGS) $(BENCH_LOOPS_SRCS) -o $@ $(LIBS)
 
-$(BENCH_LOOP_O3): $(BENCH_LOOP_SRCS) | $(BIN_DIR)
-	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_LOOP_SRCS) -o $@ $(LIBS)
+$(BENCH_LOOPS_O3): $(BENCH_LOOPS_SRCS) | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_LOOPS_SRCS) -o $@ $(LIBS)
 
-$(VALIDATE_LOOP_O0): $(VALIDATE_LOOP_SRCS) | $(BIN_DIR)
-	$(CC) $(BASE_CFLAGS) $(VALIDATE_LOOP_SRCS) -o $@ $(LIBS)
+$(VALIDATE_LOOPS_O0): $(VALIDATE_LOOPS_SRCS) | $(BIN_DIR)
+	$(CC) $(BASE_CFLAGS) $(VALIDATE_LOOPS_SRCS) -o $@ $(LIBS)
 
 # Per-order targets: each runs in its own process to avoid cross-contamination.
-sweep_loop_ijk: $(BENCH_LOOP_O0)
-	bash scripts/run_sweep_loop.sh ijk
+sweep_loops_ijk: $(BENCH_LOOPS_O0)
+	bash scripts/run_sweep_loops.sh ijk
 
-sweep_loop_ikj: $(BENCH_LOOP_O0)
-	bash scripts/run_sweep_loop.sh ikj
+sweep_loops_ikj: $(BENCH_LOOPS_O0)
+	bash scripts/run_sweep_loops.sh ikj
 
-sweep_loop_jik: $(BENCH_LOOP_O0)
-	bash scripts/run_sweep_loop.sh jik
+sweep_loops_jik: $(BENCH_LOOPS_O0)
+	bash scripts/run_sweep_loops.sh jik
 
-sweep_loop_jki: $(BENCH_LOOP_O0)
-	bash scripts/run_sweep_loop.sh jki
+sweep_loops_jki: $(BENCH_LOOPS_O0)
+	bash scripts/run_sweep_loops.sh jki
 
-sweep_loop_kij: $(BENCH_LOOP_O0)
-	bash scripts/run_sweep_loop.sh kij
+sweep_loops_kij: $(BENCH_LOOPS_O0)
+	bash scripts/run_sweep_loops.sh kij
 
-sweep_loop_kji: $(BENCH_LOOP_O0)
-	bash scripts/run_sweep_loop.sh kji
+sweep_loops_kji: $(BENCH_LOOPS_O0)
+	bash scripts/run_sweep_loops.sh kji
 
 # Runs all six orders sequentially (each as a separate process) and
 # concatenates the results into a single results/loop_order.csv.
-sweep_loop_all: sweep_loop_ijk sweep_loop_ikj sweep_loop_jik \
-                sweep_loop_jki sweep_loop_kij sweep_loop_kji
+sweep_loops_all: sweep_loops_ijk sweep_loops_ikj sweep_loops_jik \
+                 sweep_loops_jki sweep_loops_kij sweep_loops_kji
 	@echo "kernel,m,n,num_iters,median_seconds,gflops" > results/loop_order.csv
 	@for f in results/loop_ijk.csv results/loop_ikj.csv results/loop_jik.csv \
 	           results/loop_jki.csv results/loop_kij.csv results/loop_kji.csv; do \
@@ -380,9 +332,9 @@ VALIDATE_MORTON_AVX2_O3 := $(BIN_DIR)/validate_morton_avx2_O3
 .PHONY: bench_morton_avx2 bench_morton_avx2_O3 validate_morton_avx2
 
 # bench_morton_avx2_O3 is an alias that matches the naming convention
-# of bench_naive_O3 / bench_recursive_O3 / bench_morton_O3, so the
-# sweep_session_03 target and downstream scripts can talk about the
-# four bench binaries with a uniform name.
+# of bench_naive_O3 / bench_morton_O3, so the perf Zen 2 sweep and
+# downstream scripts can talk about the bench binaries with a uniform
+# name.
 bench_morton_avx2:    $(BENCH_MORTON_AVX2_O3)
 bench_morton_avx2_O3: $(BENCH_MORTON_AVX2_O3)
 validate_morton_avx2: $(VALIDATE_MORTON_AVX2_O3)
@@ -402,38 +354,27 @@ $(VALIDATE_MORTON_AVX2_O3): $(VALIDATE_MORTON_AVX2_SRCS) $(KERNEL_AVX2_OBJ) \
 	      -o $@ $(LIBS)
 
 # ---------------------------------------------------------------------
-# Sesion 03 / Prompt 5 - comparative sweep across four variants
+# Sesion 03 / Prompt 5 - bench_naive_O3 driver for fair flag-set
+# comparisons across the perf Zen 2 sweep
 #
-# The sweep compares naive, recursive, morton and morton_avx2 at the
-# same -O3 -march=znver2 -mavx2 -mfma flag set, so the only difference
-# between curves is the algorithm and the layout (not the optimization
-# regime). To make that comparison possible we need -O3 versions of
-# the naive and recursive bench drivers; bench_morton_O3 already
-# exists from Prompt 2, and bench_morton_avx2_O3 from Prompt 4. The
-# _O0 binaries remain untouched because validate_*_O0 and the Sesion
-# 01/02 reproducibility artifacts depend on them.
+# The perf Zen 2 sweep compares all variants at the same -O3 -march=znver2
+# -mavx2 -mfma flag set so the only difference between curves is the
+# algorithm and the layout, not the optimization regime. To make that
+# comparison possible we need an -O3 version of the naive bench driver;
+# bench_morton_O3 already exists from Prompt 2, and bench_morton_avx2_O3
+# from Prompt 4. The _O0 binary remains untouched because
+# validate_naive_O0 and the Sesion 01 reproducibility artifacts depend
+# on it.
 # ---------------------------------------------------------------------
 
-BENCH_NAIVE_O3     := $(BIN_DIR)/bench_naive_O3
-BENCH_RECURSIVE_O3 := $(BIN_DIR)/bench_recursive_O3
+BENCH_NAIVE_O3 := $(BIN_DIR)/bench_naive_O3
 
-.PHONY: bench_naive_O3 bench_recursive_O3 sweep_session_03 plot_session_03
+.PHONY: bench_naive_O3
 
-bench_naive_O3:     $(BENCH_NAIVE_O3)
-bench_recursive_O3: $(BENCH_RECURSIVE_O3)
+bench_naive_O3: $(BENCH_NAIVE_O3)
 
 $(BENCH_NAIVE_O3): $(BENCH_SRCS) | $(BIN_DIR)
 	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_SRCS) -o $@ $(LIBS)
-
-$(BENCH_RECURSIVE_O3): $(BENCH_RECURSIVE_SRCS) | $(BIN_DIR)
-	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_RECURSIVE_SRCS) -o $@ $(LIBS)
-
-sweep_session_03: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
-                  $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3)
-	bash scripts/run_sweep_session_03.sh
-
-plot_session_03:
-	python3 scripts/plot_sweep_session_03.py
 
 # ---------------------------------------------------------------------
 # Sesion 03 / extension de Prompt 5 - matmul_morton_avx2 hasta m=32768
@@ -521,7 +462,7 @@ plot_omp_scaling:
 # invocations per cell (group A: compute side, group B: memory + TLB
 # side) to keep multiplexing percentages close to 100%. The
 # consolidator merges both groups into one CSV row per cell.
-# Variants: naive recursive morton morton_avx2 + 6 loop orders.
+# Variants: naive morton morton_avx2 morton_omp + 6 loop orders + tiled_ikj* family.
 #
 # Dependencies:
 #   - perf (linux-tools-generic on Ubuntu, or built from the kernel tree)
@@ -535,20 +476,29 @@ plot_omp_scaling:
 # during development. Use as: make profile_zen2_one VARIANT=loop_ikj M=4096
 VARIANT ?= morton_avx2
 M       ?= 4096
-profile_zen2_one: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
-                  $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOP_O3)
+profile_zen2_one: $(BENCH_NAIVE_O3) \
+                  $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOPS_O3)
 	bash scripts/profile_perf_zen2.sh $(VARIANT) $(M)
 
-profile_zen2: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
-              $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOP_O3)
+profile_zen2: $(BENCH_NAIVE_O3) \
+              $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_LOOPS_O3)
 	$(if $(M),MS="$(M)" )bash scripts/run_perf_zen2_sweep.sh
 	python3 scripts/consolidate_perf_zen2.py
 
+# Forward declaration of the tiled_ikj* bench output paths so the
+# `results` target prerequisite list expands correctly. GNU Make expands
+# variables in target prerequisites during the read phase; if a variable
+# is defined later in the file, it expands to empty here and the
+# corresponding binary is silently dropped from the dependency set. The
+# canonical recipes for these binaries live further down in the
+# Fase 1.2 / 1.3 / 1.4 blocks and consume the variables defined here.
+BENCH_TILED_IKJ_O3      := $(BIN_DIR)/bench_tiled_ikj_O3
 BENCH_TILED_IKJ_AVX2_O3 := $(BIN_DIR)/bench_tiled_ikj_avx2_O3
+BENCH_TILED_IKJ_OMP_O3  := $(BIN_DIR)/bench_tiled_ikj_omp_O3
 
-results: $(BENCH_NAIVE_O3) $(BENCH_RECURSIVE_O3) \
+results: $(BENCH_NAIVE_O3) \
          $(BENCH_MORTON_O3) $(BENCH_MORTON_AVX2_O3) $(BENCH_MORTON_OMP_O3) \
-         $(BENCH_LOOP_O3) \
+         $(BENCH_LOOPS_O3) \
          $(BENCH_TILED_IKJ_O3) $(BENCH_TILED_IKJ_AVX2_O3) $(BENCH_TILED_IKJ_OMP_O3)
 	$(if $(M),MS="$(M)" )bash scripts/run_perf_zen2_sweep.sh
 	python3 scripts/consolidate_perf_zen2.py --out results/metrics.csv
@@ -594,7 +544,7 @@ roofline: stream plot_roofline
 #
 # bench_tiled_O3   : benchmark with the same flags as the loop-reorder
 #                    study (CFLAGS_O3_ZEN2) so results are directly
-#                    comparable with bench_loop_O3 and bench_naive_O3.
+#                    comparable with bench_loops_O3 and bench_naive_O3.
 # validate_tiled_ikj   : algebraic + cross-validation against matmul_naive,
 #                    compiled at -O0 for deterministic numerical output.
 # =====================================================================
@@ -603,7 +553,8 @@ TILED_IKJ_COMMON_SRCS    := $(COMMON_SRCS) $(SRC_DIR)/matmul_tiled_ikj.c
 BENCH_TILED_IKJ_SRCS     := $(TILED_IKJ_COMMON_SRCS) $(SRC_DIR)/bench_tiled_ikj.c
 VALIDATE_TILED_IKJ_SRCS  := $(TILED_IKJ_COMMON_SRCS) $(SRC_DIR)/validate_tiled_ikj.c
 
-BENCH_TILED_IKJ_O3       := $(BIN_DIR)/bench_tiled_ikj_O3
+# BENCH_TILED_IKJ_O3 is forward-declared above (just before the `results`
+# target) so its expansion in `results`'s prerequisite list works.
 VALIDATE_TILED_IKJ_O0    := $(BIN_DIR)/validate_tiled_ikj_O0
 
 .PHONY: bench_tiled_ikj validate_tiled_ikj
@@ -632,7 +583,8 @@ TILED_IKJ_AVX2_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_tiled_ikj_avx2.
 BENCH_TILED_IKJ_AVX2_SRCS    := $(TILED_IKJ_AVX2_COMMON_SRCS) $(SRC_DIR)/bench_tiled_ikj_avx2.c
 VALIDATE_TILED_IKJ_AVX2_SRCS := $(TILED_IKJ_AVX2_COMMON_SRCS) $(SRC_DIR)/validate_tiled_ikj_avx2.c
 
-BENCH_TILED_IKJ_AVX2_O3    := $(BIN_DIR)/bench_tiled_ikj_avx2_O3
+# BENCH_TILED_IKJ_AVX2_O3 is forward-declared above; only the validate
+# binary path is defined here.
 VALIDATE_TILED_IKJ_AVX2_O3 := $(BIN_DIR)/validate_tiled_ikj_avx2_O3
 
 .PHONY: bench_tiled_ikj_avx2 validate_tiled_ikj_avx2
@@ -662,7 +614,8 @@ TILED_IKJ_OMP_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_tiled_ikj_omp.c
 BENCH_TILED_IKJ_OMP_SRCS    := $(TILED_IKJ_OMP_COMMON_SRCS) $(SRC_DIR)/bench_tiled_ikj_omp.c
 VALIDATE_TILED_IKJ_OMP_SRCS := $(TILED_IKJ_OMP_COMMON_SRCS) $(SRC_DIR)/validate_tiled_ikj_omp.c
 
-BENCH_TILED_IKJ_OMP_O3    := $(BIN_DIR)/bench_tiled_ikj_omp_O3
+# BENCH_TILED_IKJ_OMP_O3 is forward-declared above; only the validate
+# binary path is defined here.
 VALIDATE_TILED_IKJ_OMP_O3 := $(BIN_DIR)/validate_tiled_ikj_omp_O3
 
 .PHONY: bench_tiled_ikj_omp bench_tiled_ikj_omp_O3 validate_tiled_ikj_omp
