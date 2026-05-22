@@ -6,6 +6,22 @@
 **Documento maestro:** `docs/PROMPTS_SESION_03.md` (en la copia de trabajo de `main`, fuera de este worktree).
 **Estado:** plan aprobado; sin codigo todavia.
 
+> **Nota (2026-05-21): reorganizacion del arbol `src/`.** Las rutas
+> mencionadas en este documento corresponden al layout plano original
+> de `src/`. Tras el refactor del 2026-05-21 los archivos viven en
+> subdirectorios funcionales. Mapeo:
+>
+> - `src/matrix_utils.{h,c}`, `src/timing.h`, `src/morton.{h,c}` -> `src/core/`
+> - `src/kernel_avx2.{h,c}` -> `src/microkernels/kernel_avx2_morton.{h,c}` (renombrado para distinguirlo del nuevo header-only `src/microkernels/kernel_avx2_tiled.h` del tiled)
+> - `src/matmul_naive.{h,c}` -> `src/algorithms/naive/`
+> - `src/matmul_loops.{h,c}` -> `src/algorithms/loops/`
+> - `src/matmul_morton{,_avx2,_omp}.{h,c}` -> `src/algorithms/morton/`
+> - `src/matmul_tiled_ikj{,_avx2,_omp}.{h,c}` -> `src/algorithms/tiled_ikj/`
+> - `src/bench_*.c` -> `src/drivers/bench/`
+> - `src/validate_*.c` -> `src/drivers/validate/`
+> - `src/test_morton.c`, `src/test_kernel_avx2.c` -> `src/tests/`
+> - `src/hwinfo.c` -> `src/tools/`
+
 ---
 
 ## 1. Objetivo cientifico

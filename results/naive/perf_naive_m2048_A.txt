@@ -1,0 +1,7 @@
+# started on Thu May 21 21:02:11 2026
+
+10629077782,,cycles,2764977325,100.00,,
+11924366737,,instructions,2764977325,100.00,1.12,insn per cycle
+6460276761,,fp_ret_sse_avx_ops.all,2764977325,100.00,,
+3259977396,,ls_dispatch.ld_dispatch,2764977325,100.00,,
+2174951090,,l2_request_g1.all_no_prefetch,2764977325,100.00,,

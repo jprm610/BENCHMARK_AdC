@@ -6,6 +6,12 @@
 
 Este documento sirve para retomar el proyecto **sin** tener que releer toda la conversacion. Contiene contexto, decisiones, estructura, comandos y el plan de continuacion.
 
+> **Nota (2026-05-21): reorganizacion del arbol `src/`.** Las rutas
+> `src/matmul_naive.c`, etc. mencionadas abajo corresponden al layout
+> plano original. Tras el refactor del 2026-05-21 viven en
+> `src/algorithms/naive/`, `src/core/`, `src/drivers/{bench,validate}/`.
+> Mapeo completo en el aviso al inicio de `docs/PLAN_SESION_03.md`.
+
 ---
 
 ## 1. Contexto del proyecto

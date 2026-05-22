@@ -41,40 +41,32 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |   |-- PROMPTS_SESION_03.md           -> Guion completo de los 10 prompts de la Sesion 03
 |   `-- SESION_03_RESUMEN.md           -> Resumen para retomar Sesion 03
 |-- src/
-|   |   # Fase 1 (Sesion 01) - baseline inmutable
-|   |-- matmul_naive.{h,c}             -> Baseline ijk
-|   |-- matrix_utils.{h,c}             -> Helpers (alocacion, init, comparacion)
-|   |-- timing.h                       -> clock_gettime(CLOCK_MONOTONIC) inline
-|   |-- bench_naive.c                  -> Driver bench_naive_O0
-|   |-- validate_naive.c               -> Verificador baseline
-|   |   # Fase 6 (Sesion 02) - Morton (Z-order) cache-oblivious
-|   |-- morton.{h,c}                   -> Encoding Z-order + reorganizacion (Etapa A3)
-|   |-- matmul_morton.{h,c}            -> Kernel recursivo con A en Morton fino (A3)
-|   |-- test_morton.c                  -> Tests unitarios del modulo Morton
-|   |-- bench_morton.c                 -> Driver bench_morton_O0 (potencia de 2)
-|   |-- validate_morton.c              -> Verificador morton (cross-validation contra naive)
-|   |   # Fase 1.2 - tiling explicito sobre ikj
-|   |-- matmul_tiled_ikj.{h,c}             -> Tiling Mc x Kc sobre ikj, apunta a L2 (Mc=Kc=256)
-|   |-- bench_tiled_ikj.c                  -> Driver bench_tiled_ikj_O3
-|   |-- validate_tiled_ikj.c               -> 3 invariantes + cross-validation contra naive
-|   |   # Fase 1.3 / 1.6 - tiled_ikj_avx2: microkernel BLIS-style 6x16 (AVX2+FMA)
-|   |-- matmul_tiled_ikj_avx2.{h,c}        -> Microkernel inline 6x16 (MR=6, NR=16, MC=192), BS=384 default, AVX2+FMA
-|   |-- bench_tiled_ikj_avx2.c             -> Driver bench_tiled_ikj_avx2_O3 (CSV 7 columnas con bs)
-|   |-- validate_tiled_ikj_avx2.c          -> 4 invariantes + cross-validation contra naive
-|   |   # Fase 1.4 / 1.6 - tiled_ikj_omp: microkernel 6x16 + OpenMP parallel for en bucle ic
-|   |-- matmul_tiled_ikj_omp.{h,c}         -> Microkernel 6x16 + #pragma omp parallel for schedule(static) en ic
-|   |-- bench_tiled_ikj_omp.c              -> Driver bench_tiled_ikj_omp_O3 (CSV 7 columnas, OMP_NUM_THREADS=6 close)
-|   |-- validate_tiled_ikj_omp.c           -> 4 invariantes + cross-validation contra naive
-|   |   # Sesion 03 - microkernel AVX2 + OpenMP + perf Zen 2
-|   |-- hwinfo.c                       -> Fingerprint runtime del CPU
-|   |-- kernel_avx2.{h,c}              -> Microkernel AVX2 + FMA 4x16 (Etapa A4)
-|   |-- test_kernel_avx2.c             -> Unit test del microkernel
-|   |-- matmul_morton_avx2.{h,c}       -> Morton-de-bloques + microkernel (Etapa A4)
-|   |-- bench_morton_avx2.c            -> Driver bench_morton_avx2_O3
-|   |-- validate_morton_avx2.c         -> Verificador AVX2 (cross naive + morton)
-|   |-- matmul_morton_omp.{h,c}        -> Variante paralela OpenMP tasks (Etapa A5)
-|   |-- bench_morton_omp.c             -> Driver bench_morton_omp_O3
-|   `-- validate_morton_omp.c          -> Verificador OMP a 1/4/12 threads
+|   |-- core/                              -> Modulos compartidos por todos los algoritmos
+|   |   |-- matrix_utils.{h,c}             -> Helpers (alocacion, init, comparacion)
+|   |   |-- timing.h                       -> clock_gettime(CLOCK_MONOTONIC) inline
+|   |   `-- morton.{h,c}                   -> Encoding Z-order + reorganizacion (Etapa A3)
+|   |-- microkernels/                      -> Tiles AVX2, ambos header-only (static inline)
+|   |   |-- kernel_avx2_morton.h           -> Microkernel 4x16 usado por la familia Morton (Etapa A4)
+|   |   `-- kernel_avx2_tiled.h            -> Microkernel 6x16 usado por tiled_ikj_avx2 y tiled_ikj_omp
+|   |-- algorithms/                        -> Una carpeta por familia de algoritmo
+|   |   |-- naive/matmul_naive.{h,c}       -> Baseline ijk (Sesion 01)
+|   |   |-- loops/matmul_loops.{h,c}       -> 6 ordenes de loop con lookup por nombre (Fase 1.1)
+|   |   |-- morton/                        -> Fase 6 / Sesion 02-03: kernel recursivo + AVX2 + OMP
+|   |   |   |-- matmul_morton.{h,c}            -> Kernel recursivo con A en Morton fino (A3)
+|   |   |   |-- matmul_morton_avx2.{h,c}       -> Morton-de-bloques + microkernel (A4)
+|   |   |   `-- matmul_morton_omp.{h,c}        -> Variante paralela OpenMP tasks (A5)
+|   |   `-- tiled_ikj/                     -> Fase 1.2-1.6: tiling explicito + BLIS 6x16 + OpenMP
+|   |       |-- matmul_tiled_ikj.{h,c}         -> Tiling Mc x Kc sobre ikj, apunta a L2 (Mc=Kc=256)
+|   |       |-- matmul_tiled_ikj_avx2.{h,c}    -> Microkernel inline 6x16 (MR=6, NR=16, MC=192), BS=384, AVX2+FMA
+|   |       `-- matmul_tiled_ikj_omp.{h,c}     -> Microkernel 6x16 + #pragma omp parallel for schedule(static) en ic
+|   |-- drivers/                           -> Programas main: medicion (bench) y verificacion (validate)
+|   |   |-- bench/                         -> bench_naive.c, bench_loops.c, bench_morton{,_avx2,_omp}.c, bench_tiled_ikj{,_avx2,_omp}.c
+|   |   `-- validate/                      -> validate_naive.c, validate_loops.c, validate_morton{,_avx2,_omp}.c, validate_tiled_ikj{,_avx2,_omp}.c
+|   |-- tests/                             -> Tests unitarios standalone
+|   |   |-- test_morton.c                  -> Round-trip encode/decode + contiguidad de cuadrantes
+|   |   `-- test_kernel_avx2.c             -> Unit test del microkernel 4x16
+|   `-- tools/
+|       `-- hwinfo.c                       -> Fingerprint runtime del CPU (cores, cache, AVX2/FMA/BMI2)
 |-- scripts/
 |   |   # Fase 1 (Sesion 01)
 |   |-- run_sweep_naive.sh             -> Sweep baseline + gprof + perf
@@ -713,7 +705,7 @@ Cualquier proceso (Chrome con 80 pestanas, Slack, Zoom, Docker Desktop, OneDrive
 
 ### 7.4 Reporta la mediana
 
-`bench_naive_O0` ya hace cinco corridas y reporta la mediana. Si quieres ser mas estricto, edita `DEFAULT_RUNS` en `src/bench_naive.c` y recompila.
+`bench_naive_O0` ya hace cinco corridas y reporta la mediana. Si quieres ser mas estricto, edita `DEFAULT_RUNS` en `src/drivers/bench/bench_naive.c` y recompila.
 
 ---
 
@@ -783,4 +775,4 @@ A `-O0` es esperable. Reduce el rango con `bash scripts/run_sweep_naive.sh "256 
 Eso es parte de la Fase 4. Aqui no se hace para mantener el baseline limpio y el paso 1 explicito.
 
 **Como cambio de `float` a `double`?**
-Edita `typedef float scalar_t;` en `src/matmul_naive.h` y revisa las constantes `ABS_TOL`, `REL_TOL` en `src/validate_naive.c`. La API queda igual gracias al alias.
+Edita `typedef float scalar_t;` en `src/core/matrix_utils.h` (alias compartido) y revisa las constantes `ABS_TOL`, `REL_TOL` en `src/drivers/validate/validate_naive.c`. La API queda igual gracias al alias.
