@@ -92,11 +92,12 @@ int main(int argc, char **argv)
     size_t I_meas = (I_full < (size_t)MAX_MEAS_ITERS) ? I_full : (size_t)MAX_MEAS_ITERS;
     if (argc >= 3) {
         long long i_in = atoll(argv[2]);
-        if (i_in <= 0) {
-            fprintf(stderr, "Error: num_iters must be positive.\n");
+        if (i_in < 0) {
+            fprintf(stderr, "Error: num_iters must be >= 0.\n");
             return EXIT_FAILURE;
         }
-        I_meas = (size_t)i_in;
+        // Si num_iters = 0, usar I_full (2m/n), else usar arg.
+        I_meas = (i_in == 0) ? I_full : (size_t)i_in;
     }
 
     // 1.4) num_runs (opcional), default DEFAULT_RUNS.
@@ -161,6 +162,7 @@ int main(int argc, char **argv)
 
 //---------------------------------------------------------------------------------------------------
     // 8) Save: Línea CSV.
+    printf("kernel,m,n,num_iters,median_seconds,gflops\n");
     printf("naive,%llu,%llu,%llu,%.6f,%.6f\n",
            (unsigned long long)m,
            (unsigned long long)n,
