@@ -1,12 +1,13 @@
 /*
- * matmul_morton_omp.h - Morton-recursive matmul with the AVX2 + FMA
- * microkernel as leaf, parallelized with OpenMP tasks.
+ * matmul_morton_omp.h - Morton-recursive matmul with the AVX-512 + FMA
+ * microkernel as leaf, parallelized with OpenMP tasks (Zen 5 /
+ * EPYC 9R45 main_server variant).
  *
- * Sesion 03 / Prompt 6 (Stage A5). The recursion shape and the leaf
- * kernel are the same as matmul_morton_avx2 (Prompt 4): same
- * Morton-of-blocks layout for A (tile = MORTON_AVX2_TILE = 4), same
- * 4x16 microkernel, same overwrite / accumulate split. The only
- * additions are:
+ * The recursion shape and the leaf kernel are the same as
+ * matmul_morton_avx2: same Morton-of-blocks layout for A
+ * (tile = MORTON_AVX2_TILE = 4), same 4x32 AVX-512 microkernel
+ * (kernel_avx512_4x32 from kernel_avx512_morton.h), same overwrite /
+ * accumulate split. The only additions are:
  *
  *   - The recursion is wrapped in #pragma omp parallel / #pragma omp
  *     single inside the public wrapper, and each sub-problem above
@@ -26,13 +27,12 @@
  *         Default 524288 (same as the leaf threshold: tasks fire at
  *         every recursive split above the leaf, none below it).
  *
- * Topology note (Renoir / Ryzen 5 4600H): the chip has 2 CCX of 3
- * cores each; L3 (4 MiB) is private per CCX. Threads on different
- * CCXs do not share L3 and pay Infinity Fabric for any coherence
- * traffic. The benchmark script (scripts/run_omp_scaling.sh) compares
- * OMP_PROC_BIND=close (favors same-CCX) and =spread (uses both CCXs);
- * the read-out is that close scales well up to 3 threads then taxes
- * the L3, spread scales further but pays cross-CCX traffic.
+ * Topology note (EPYC 9R45 / Zen 5 on AWS c8a.2xlarge): the VM
+ * exposes 8 vCPUs from a single NUMA node with no SMT. L3 (32 MiB)
+ * is shared by all 8 cores, so OMP_PROC_BIND=close/spread make no
+ * topological difference here (in contrast to the Zen 2 4600H, which
+ * had two CCXs with 4 MiB L3 each). Recommended runtime config:
+ *   OMP_NUM_THREADS=8 OMP_PLACES=cores OMP_PROC_BIND=close
  *
  * Pre-conditions for the public wrapper are identical to
  * matmul_morton_avx2: m == k, m a power of two with m >= MR = 4, A in

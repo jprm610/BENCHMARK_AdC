@@ -1,17 +1,18 @@
 /*
- * test_kernel_avx2.c - Standalone correctness test for the 4x16 AVX2
- * microkernel declared in kernel_avx2_morton.h (header-only static inline).
+ * test_kernel_avx512_morton.c - Standalone correctness test for the
+ * 4x32 AVX-512 microkernel declared in kernel_avx512_morton.h
+ * (header-only static inline).
  *
  * Four tests, all independent of Morton and recursion. They exercise
  * the kernel as a pure tile multiply with growing kc:
  *
- *   Test 1: kc=1, A=[1,1,1,1]^T, B=known row of 16 distinct values.
+ *   Test 1: kc=1, A=[1,1,1,1]^T, B=known row of 32 distinct values.
  *           Expected: every row of C equals B. Smoke test for the
  *           broadcast + FMA in the simplest possible setting.
  *
- *   Test 2: kc=8, random A and B. Compare against a reference ijk
- *           in double precision. Relative tolerance 1e-4 to absorb
- *           the FP32 accumulation error.
+ *   Test 2: kc=8, random A and B. Compare against a reference ijk in
+ *           double precision. Relative tolerance 1e-4 to absorb the
+ *           FP32 accumulation error.
  *
  *   Test 3: kc=128, idem. Representative of the leaf tile size that
  *           matmul_morton_avx2 will dispatch to the kernel.
@@ -22,6 +23,9 @@
  *
  * Each test prints "PASS" or "FAIL" and the program exits with code 0
  * only when all four pass.
+ *
+ * Requires: -march=native (or -mavx512f -mavx512vl) so the ZMM
+ * intrinsics resolve at compile time.
  */
 
 #include <math.h>
@@ -32,17 +36,17 @@
 #include <string.h>
 #include <time.h>
 
-#include "kernel_avx2_morton.h"
+#include "kernel_avx512_morton.h"
 #include "matrix_utils.h"
 
-#define MR KERNEL_AVX2_MR  /* 4  */
-#define NR KERNEL_AVX2_NR  /* 16 */
+#define MR KERNEL_AVX512_MORTON_MR  /* 4  */
+#define NR KERNEL_AVX512_MORTON_NR  /* 32 */
 
 static int g_failed = 0;
 
-/* Reference matmul that accumulates the product in double precision and
- * stores the result back as scalar_t. This is the ground truth the AVX2
- * kernel must match within FP32-accumulation tolerance.
+/* Reference matmul that accumulates the product in double precision
+ * and stores the result back as scalar_t. This is the ground truth
+ * the AVX-512 kernel must match within FP32-accumulation tolerance.
  *
  * Computes C[MR x NR] = A[MR x kc] * B[kc x NR] (overwrite). */
 static void reference_matmul(scalar_t       *C, size_t ldc,
@@ -81,8 +85,8 @@ static void fill_random(scalar_t *M, size_t n)
 }
 
 /* Element-wise comparison with both absolute and relative tolerance.
- * Returns 1 on success, 0 on failure. On failure writes a short report
- * to stderr. */
+ * Returns 1 on success, 0 on failure. On failure writes a short
+ * report to stderr. */
 static int compare_tiles(const scalar_t *expected,
                          const scalar_t *got,
                          size_t ldc_exp,
@@ -154,7 +158,7 @@ static void test_kc_1(void)
         }
     }
 
-    kernel_avx2_4x16(C, ldc, A, lda, B, ldb, kc);
+    kernel_avx512_4x32(C, ldc, A, lda, B, ldb, kc);
 
     run_check("kc=1 ones x known row", compare_tiles(E, C, ldc, ldc,
                                                      1e-6f, 1e-6f));
@@ -162,7 +166,7 @@ static void test_kc_1(void)
     xfree(A); xfree(B); xfree(C); xfree(E);
 }
 
-/* Tests 2 through 4: random A and B, compare AVX2 kernel output
+/* Tests 2 through 4: random A and B, compare AVX-512 kernel output
  * against the double-precision reference. The relative tolerance is
  * set at 1e-4 to absorb FP32 accumulation noise; the absolute
  * tolerance protects values near zero. */
@@ -185,7 +189,7 @@ static void test_random_with_kc(const char *name, size_t kc)
     init_matrix_zero(E, MR, ldc);
 
     reference_matmul(E, ldc, A, lda, B, ldb, kc);
-    kernel_avx2_4x16(C, ldc, A, lda, B, ldb, kc);
+    kernel_avx512_4x32(C, ldc, A, lda, B, ldb, kc);
 
     /* Tolerance scales mildly with kc because the FP32 accumulation
      * error grows like sqrt(kc) * epsilon. At kc=1024 we have about
@@ -201,7 +205,7 @@ static void test_random_with_kc(const char *name, size_t kc)
 
 int main(void)
 {
-    printf("=== kernel_avx2_4x16 unit tests ===\n");
+    printf("=== kernel_avx512_4x32 unit tests ===\n");
     printf("MR = %d, NR = %d\n", MR, NR);
 
     lcg_seed(0xC0FFEEu);
