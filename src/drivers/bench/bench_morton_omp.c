@@ -144,11 +144,11 @@ int main(int argc, char **argv)
     size_t I_meas = (I_full < (size_t)MAX_MEAS_ITERS) ? I_full : (size_t)MAX_MEAS_ITERS;
     if (n_positional >= 2) {
         long long i_in = atoll(positional[1]);
-        if (i_in <= 0) {
-            fprintf(stderr, "Error: num_iters must be positive.\n");
+        if (i_in < 0) {
+            fprintf(stderr, "Error: num_iters must be >= 0.\n");
             return EXIT_FAILURE;
         }
-        I_meas = (size_t)i_in;
+        I_meas = (i_in == 0) ? I_full : (size_t)i_in;
     }
 
     size_t num_runs = (size_t)DEFAULT_RUNS;
