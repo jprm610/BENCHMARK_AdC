@@ -26,6 +26,9 @@
 #include "matrix_utils.h"
 
 #include <immintrin.h>
+#ifdef USE_AVX512
+#include "kernel_avx512.h"
+#endif
 #include <omp.h>
 #include <stdio.h>
 #include <string.h>
@@ -134,7 +137,11 @@ void matmul_tiled_ikj_omp(scalar_t *C,
                       size_t m, size_t k, size_t n)
 {
     const size_t MR = TILED_IKJ_OMP_MR;
+#ifdef USE_AVX512
+    const size_t NR = KERNEL_AVX512_NR;  /* 32: full-width ZMM tile */
+#else
     const size_t NR = TILED_IKJ_OMP_NR;
+#endif
     const size_t MC = TILED_IKJ_OMP_MC;
     const size_t KC = g_tiled_ikj_omp_bs;
 
@@ -155,10 +162,17 @@ void matmul_tiled_ikj_omp(scalar_t *C,
 
                 for (size_t jr = 0; jr < n_aligned; jr += NR) {
                     for (size_t ir = ic; ir + MR <= ic_end; ir += MR) {
+#ifdef USE_AVX512
+                        kernel_avx512_6x32(&C[ir * n + jr], n,
+                                           &A[ir * k + pp], k,
+                                           &B[pp * n + jr], n,
+                                           kc);
+#else
                         kernel_6x16(&C[ir * n + jr], n,
                                     &A[ir * k + pp], k,
                                     &B[pp * n + jr], n,
                                     kc);
+#endif
                     }
                 }
 
