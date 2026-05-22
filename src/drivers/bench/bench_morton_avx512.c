@@ -1,17 +1,17 @@
 /*
- * bench_morton_avx2.c - Driver that runs the iterated Morton matmul
- * benchmark with the AVX2 microkernel.
+ * bench_morton_avx512.c - Driver that runs the iterated Morton matmul
+ * benchmark with the AVX-512 microkernel.
  *
  * Same CLI shape as bench_morton:
- *   bench_morton_avx2_O3 <m> [num_iters] [num_runs] [--threshold N]
+ *   bench_morton_avx512_O3 <m> [num_iters] [num_runs] [--threshold N]
  *
  * Differences:
- *   - m must be a power of two AND m >= MORTON_AVX2_TILE = 4
- *     (matmul_morton_avx2 asserts this on its own).
+ *   - m must be a power of two AND m >= MORTON_AVX512_TILE = 4
+ *     (matmul_morton_avx512 asserts this on its own).
  *   - The Morton reorganization uses reorganize_to_morton_blocks
  *     (tile=4), not reorganize_to_morton.
  *   - The optional --threshold N now overrides
- *     g_recursion_threshold_avx2 via matmul_morton_avx2_set_threshold.
+ *     g_recursion_threshold_avx512 via matmul_morton_avx512_set_threshold.
  *
  * Output: m,n,num_iters,median_seconds,gflops (same columns as the
  * other bench drivers so plot_comparison.py / plot_sweep_session_03
@@ -22,7 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "matmul_morton_avx2.h"
+#include "matmul_morton_avx512.h"
 #include "morton.h"                  /* is_power_of_two */
 #include "matrix_utils.h"
 #include "timing.h"
@@ -46,8 +46,8 @@ static void usage(const char *progname)
             "  num_iters      : iterations per measured run "
             "(default: min(2m/n, %d))\n"
             "  num_runs       : measured runs for median (default: %d)\n"
-            "  --threshold N  : override g_recursion_threshold_avx2 before warm-up\n"
-            "                   (default: matmul_morton_avx2 uses 64*64*128 = 524288)\n",
+            "  --threshold N  : override g_recursion_threshold_avx512 before warm-up\n"
+            "                   (default: matmul_morton_avx512 uses 64*64*128 = 524288)\n",
             progname, MAX_MEAS_ITERS, DEFAULT_RUNS);
 }
 
@@ -110,10 +110,10 @@ int main(int argc, char **argv)
                 (unsigned long long)m);
         return EXIT_FAILURE;
     }
-    if (m < (size_t)MORTON_AVX2_TILE) {
+    if (m < (size_t)MORTON_AVX512_TILE) {
         fprintf(stderr,
-                "Error: m (%llu) must be at least %d for the AVX2 kernel.\n",
-                (unsigned long long)m, MORTON_AVX2_TILE);
+                "Error: m (%llu) must be at least %d for the AVX-512 kernel.\n",
+                (unsigned long long)m, MORTON_AVX512_TILE);
         return EXIT_FAILURE;
     }
 
@@ -141,7 +141,7 @@ int main(int argc, char **argv)
     /* Apply the threshold override BEFORE the warm-up so every timed
      * iteration sees the same recursion budget. */
     if (threshold_override > 0) {
-        matmul_morton_avx2_set_threshold(threshold_override);
+        matmul_morton_avx512_set_threshold(threshold_override);
     }
 
     scalar_t *A        = xalloc_aligned(m * m);
@@ -158,7 +158,7 @@ int main(int argc, char **argv)
     reorganize_to_morton_blocks(A, A_morton, m);
 
     /* Warm-up (unmeasured). */
-    benchmark_iterations_morton_avx2_preorganized(B_out, A_morton, Z, m, n, 1);
+    benchmark_iterations_morton_avx512_preorganized(B_out, A_morton, Z, m, n, 1);
 
     double *times = (double *)malloc(num_runs * sizeof(double));
     if (times == NULL) {
@@ -167,7 +167,7 @@ int main(int argc, char **argv)
     }
     for (size_t r = 0; r < num_runs; ++r) {
         double t0 = now_seconds();
-        benchmark_iterations_morton_avx2_preorganized(B_out, A_morton, Z,
+        benchmark_iterations_morton_avx512_preorganized(B_out, A_morton, Z,
                                                       m, n, I_meas);
         double t1 = now_seconds();
         times[r] = t1 - t0;

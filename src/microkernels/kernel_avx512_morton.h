@@ -1,7 +1,7 @@
 /*
  * kernel_avx512_morton.h - AVX-512 + FMA microkernel for a fixed 4x32
  *                          tile of C, used by the Morton-blocked family
- *                          (matmul_morton_avx2 and matmul_morton_omp).
+ *                          (matmul_morton_avx512 and matmul_morton_omp).
  *
  * Target: AMD EPYC 9R45 (Zen 5) on AWS c8a.2xlarge.
  *   - 8 cores, 1 thread/core (SMT disabled by the hypervisor)

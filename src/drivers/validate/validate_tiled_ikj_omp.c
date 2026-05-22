@@ -1,7 +1,7 @@
 /*
  * validate_tiled_ikj_omp.c - Algebraic sanity checks for matmul_omp.
  *
- * Same four tests as validate_tiled_ikj_avx2.c:
+ * Same four tests as validate_tiled_ikj_avx512.c:
  *   1. A * 0 == 0
  *   2. I * Z == Z  (identity matrix)
  *   3. A * (Z1 + Z2) == A*Z1 + A*Z2  (linearity)

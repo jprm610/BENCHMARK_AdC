@@ -1,8 +1,8 @@
 /*
  * bench_morton_omp.c - Driver that runs the iterated Morton matmul
- * benchmark with the OpenMP-parallelized AVX2 microkernel.
+ * benchmark with the OpenMP-parallelized AVX-512 microkernel.
  *
- * Same CLI shape as bench_morton_avx2 plus a second optional flag
+ * Same CLI shape as bench_morton_avx512 plus a second optional flag
  * for the parallel threshold:
  *
  *   bench_morton_omp_O3 <m> [num_iters] [num_runs] \
@@ -24,7 +24,7 @@
 
 #include <omp.h>
 
-#include "matmul_morton_avx2.h"      /* reorganize_to_morton_blocks */
+#include "matmul_morton_avx512.h"      /* reorganize_to_morton_blocks */
 #include "matmul_morton_omp.h"
 #include "morton.h"                  /* is_power_of_two */
 #include "matrix_utils.h"
@@ -133,10 +133,10 @@ int main(int argc, char **argv)
                 (unsigned long long)m, (unsigned long long)n);
         return EXIT_FAILURE;
     }
-    if (!is_power_of_two(m) || m < (size_t)MORTON_AVX2_TILE) {
+    if (!is_power_of_two(m) || m < (size_t)MORTON_AVX512_TILE) {
         fprintf(stderr,
                 "Error: m (%llu) must be a power of two and >= %d.\n",
-                (unsigned long long)m, MORTON_AVX2_TILE);
+                (unsigned long long)m, MORTON_AVX512_TILE);
         return EXIT_FAILURE;
     }
 

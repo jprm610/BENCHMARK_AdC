@@ -15,14 +15,14 @@
 #   python3 scripts/consolidate_perf_zen5.py --out results/metrics.csv
 #
 # O usar directamente:
-#   make results_zen5
+#   make results
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-VARIANTS=(${VARIANTS:-naive morton morton_avx2 morton_omp loop_ijk loop_ikj loop_jik loop_jki loop_kij loop_kji tiled_ikj tiled_ikj_avx2 tiled_ikj_omp})
+VARIANTS=(${VARIANTS:-naive morton morton_avx512 morton_omp loop_ijk loop_ikj loop_jik loop_jki loop_kij loop_kji tiled_ikj tiled_ikj_avx512 tiled_ikj_omp})
 MS=(${MS:-1024 4096 8192})
 ITERS_PER_RUN=${ITERS_PER_RUN:-1}
 RUNS=${RUNS:-3}

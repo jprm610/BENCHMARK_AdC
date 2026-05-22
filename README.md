@@ -3,7 +3,7 @@
 **Curso:** Arquitectura de Computadores
 **Universidad:** Universidad Nacional de Colombia, Sede Medellin
 **Fecha:** Mayo 2026
-**Estado:** Fase 1 cerrada (baseline + profiling + escalamiento con $m$); Fase 1.1 cerrada (reordenamiento de bucles, 6 variantes); Fase 1.2 cerrada (tiling explicito `ikj` apuntando a L2); Fase 1.3 cerrada (`tiled_ikj_avx2`, integrada en `make results`); Fase 1.4 cerrada (`tiled_ikj_omp`, integrada en `make results` y sweep perf); Fase 1.6 cerrada (microkernel BLIS-style $6 \times 16$ inline para `tiled_ikj_avx2` y `tiled_ikj_omp`, $M_R = 6$, $N_R = 16$, $M_C = 192$, $BS = 384$ por defecto, default OMP a 6 threads `close`); Fase 1.6.1 cerrada (rename `tiled` $\to$ `tiled_ikj` por consistencia); Fase 6 cerrada (Morton Z-order cache-oblivious); Sesion 03 cerrada (microkernel AVX2 + FMA, OpenMP tasks, perf Zen 2, Roofline anclado al $4600$H).
+**Estado:** Fase 1 cerrada (baseline + profiling + escalamiento con $m$); Fase 1.1 cerrada (reordenamiento de bucles, 6 variantes); Fase 1.2 cerrada (tiling explicito `ikj` apuntando a L2); Fase 1.3 cerrada (`tiled_ikj_avx512`, integrada en `make results`); Fase 1.4 cerrada (`tiled_ikj_omp`, integrada en `make results` y sweep perf); Fase 1.6 cerrada (microkernel BLIS-style $6 \times 16$ inline para `tiled_ikj_avx512` y `tiled_ikj_omp`, $M_R = 6$, $N_R = 16$, $M_C = 192$, $BS = 384$ por defecto, default OMP a 6 threads `close`); Fase 1.6.1 cerrada (rename `tiled` $\to$ `tiled_ikj` por consistencia); Fase 6 cerrada (Morton Z-order cache-oblivious); Sesion 03 cerrada (microkernel AVX2 + FMA, OpenMP tasks, perf Zen 2, Roofline anclado al $4600$H).
 
 ---
 
@@ -53,15 +53,15 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |   |   |-- loops/matmul_loops.{h,c}       -> 6 ordenes de loop con lookup por nombre (Fase 1.1)
 |   |   |-- morton/                        -> Fase 6 / Sesion 02-03: kernel recursivo + AVX-512 + OMP
 |   |   |   |-- matmul_morton.{h,c}            -> Kernel recursivo con A en Morton fino (A3)
-|   |   |   |-- matmul_morton_avx2.{h,c}       -> Morton-de-bloques + microkernel 4x32 (Zen 5)
+|   |   |   |-- matmul_morton_avx512.{h,c}       -> Morton-de-bloques + microkernel 4x32 (Zen 5)
 |   |   |   `-- matmul_morton_omp.{h,c}        -> Variante paralela OpenMP tasks (Zen 5)
 |   |   `-- tiled_ikj/                     -> Fase 1.2-1.6: tiling explicito + BLIS 6x32 + OpenMP
 |   |       |-- matmul_tiled_ikj.{h,c}         -> Tiling Mc x Kc sobre ikj, apunta a L2 (escalar)
-|   |       |-- matmul_tiled_ikj_avx2.{h,c}    -> 6x32 AVX-512 (MR=6, NR=32, MC=288), BS=256 default
+|   |       |-- matmul_tiled_ikj_avx512.{h,c}    -> 6x32 AVX-512 (MR=6, NR=32, MC=288), BS=256 default
 |   |       `-- matmul_tiled_ikj_omp.{h,c}     -> 6x32 AVX-512 + #pragma omp parallel for schedule(static) en ic
 |   |-- drivers/                           -> Programas main: medicion (bench) y verificacion (validate)
-|   |   |-- bench/                         -> bench_naive.c, bench_loops.c, bench_morton{,_avx2,_omp}.c, bench_tiled_ikj{,_avx2,_omp}.c
-|   |   `-- validate/                      -> validate_naive.c, validate_loops.c, validate_morton{,_avx2,_omp}.c, validate_tiled_ikj{,_avx2,_omp}.c
+|   |   |-- bench/                         -> bench_naive.c, bench_loops.c, bench_morton{,_avx512,_omp}.c, bench_tiled_ikj{,_avx512,_omp}.c
+|   |   `-- validate/                      -> validate_naive.c, validate_loops.c, validate_morton{,_avx512,_omp}.c, validate_tiled_ikj{,_avx512,_omp}.c
 |   |-- tests/                             -> Tests unitarios standalone
 |   |   |-- test_morton.c                  -> Round-trip encode/decode + contiguidad de cuadrantes
 |   |   `-- test_kernel_avx512_morton.c    -> Unit test del microkernel 4x32 AVX-512
@@ -79,13 +79,13 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |   |-- audit_no_pdep.sh               -> Auditoria de PDEP/PEXT (Zen 2)
 |   |-- run_threshold_sweep.sh         -> Tuning empirico RECURSION_THRESHOLD
 |   |-- plot_threshold_sweep.py        -> Plot del threshold sweep
-|   |-- run_sweep_morton_avx2_xl.sh    -> Extension de morton_avx2 hasta m=32768
-|   |-- plot_morton_avx2_xl.py         -> Plot de la extension
+|   |-- run_sweep_morton_avx512_xl.sh    -> Extension de morton_avx512 hasta m=32768
+|   |-- plot_morton_avx512_xl.py         -> Plot de la extension
 |   |-- run_omp_scaling.sh             -> Escalado threads 1..12 close/spread
 |   |-- plot_omp_scaling.py            -> Plot escalado OMP
-|   |-- profile_perf_zen2.sh           -> Captura perf por celda (variant, m)
-|   |-- run_perf_zen2_sweep.sh         -> Orquesta 39 celdas (13 variantes x 3 m)
-|   |-- consolidate_perf_zen2.py       -> Consolida grupos A+B -> results/metrics.csv
+|   |-- profile_perf_zen5.sh           -> Captura perf por celda (variant, m)
+|   |-- run_perf_zen5_sweep.sh         -> Orquesta 39 celdas (13 variantes x 3 m)
+|   |-- consolidate_perf_zen5.py       -> Consolida grupos A+B -> results/metrics.csv
 |   |-- plot_perf_zen2.py              -> 4 paneles: IPC, FMA, L3 miss, TLB walks
 |   |-- measure_stream.sh              -> Descarga, compila y corre STREAM (Triad 1T y 6T)
 |   `-- plot_roofline.py               -> Roofline anclado a STREAM medido
@@ -231,7 +231,7 @@ make clean               # borra bin/ y build/
 make distclean           # clean + borra results/*.csv y plots/*
 ```
 
-Targets de Fase 1.1 (loop reorder), Fase 1.2 (tiling) y Fase 1.3 (tiled_ikj_avx2):
+Targets de Fase 1.1 (loop reorder), Fase 1.2 (tiling) y Fase 1.3 (tiled_ikj_avx512):
 
 ```bash
 # Fase 1.1 - loop reorder
@@ -242,11 +242,11 @@ make validate_loops           # bin/validate_loops_O0
 make bench_tiled_ikj              # bin/bench_tiled_ikj_O3
 make validate_tiled_ikj           # bin/validate_tiled_ikj_O0
 
-# Fase 1.3 - tiled_ikj_avx2 (6-loop tiling con AVX2+FMA, compilado con -O3 -march=znver2)
-make bench_tiled_ikj_avx2         # bin/bench_tiled_ikj_avx2_O3
-make validate_tiled_ikj_avx2      # bin/validate_tiled_ikj_avx2_O3
+# Fase 1.3 - tiled_ikj_avx512 (6-loop tiling con AVX-512+FMA, compilado con -O3 -march=native)
+make bench_tiled_ikj_avx512_ZEN5    # bin/bench_tiled_ikj_avx512_ZEN5
+make validate_tiled_ikj_avx512_ZEN5 # bin/validate_tiled_ikj_avx512_ZEN5
 
-# Fase 1.4 - tiled_ikj_omp (tiled_ikj_avx2 + OpenMP parallel for, compilado con -O3 -march=znver2 -fopenmp)
+# Fase 1.4 - tiled_ikj_omp (tiled_ikj_avx512 + OpenMP parallel for, compilado con -O3 -march=native -fopenmp)
 make bench_tiled_ikj_omp          # bin/bench_tiled_ikj_omp_O3
 make validate_tiled_ikj_omp       # bin/validate_tiled_ikj_omp_O3
 ```
@@ -437,7 +437,7 @@ bash scripts/run_sweep_morton.sh    "1024 2048 4096 8192"
 
 #### 5.5.4 Comparacion entre kernels
 
-Para comparar Morton contra el resto del pipeline (naive, loops, tiled_ikj*, morton_avx2, morton_omp) se usa el pipeline unificado de la Sesion 03 (seccion 5.6):
+Para comparar Morton contra el resto del pipeline (naive, loops, tiled_ikj*, morton_avx512, morton_omp) se usa el pipeline unificado de la Sesion 03 (seccion 5.6):
 
 ```bash
 sudo sh -c 'echo 1 > /proc/sys/kernel/perf_event_paranoid'   # una vez por boot
@@ -470,64 +470,64 @@ Para incluir `tiled_ikj` en el sweep de perf completo y regenerar `results/metri
 make results
 ```
 
-El target `results` ya incluye `bench_tiled_ikj_O3` como dependencia y `run_perf_zen2_sweep.sh`
+El target `results` ya incluye `bench_tiled_ikj_O3` como dependencia y `run_perf_zen5_sweep.sh`
 incluye `tiled_ikj` en su lista de variantes por defecto.
 
 Para correr solo la celda de tiling sin relanzar todo el sweep:
 
 ```bash
-VARIANTS="tiled_ikj" MS="1024 2048" bash scripts/run_perf_zen2_sweep.sh
-python3 scripts/consolidate_perf_zen2.py
+VARIANTS="tiled_ikj" MS="1024 2048" bash scripts/run_perf_zen5_sweep.sh
+python3 scripts/consolidate_perf_zen5.py
 ```
 
 **Tamanos de tile:** `Mc = Kc = 256`, elegidos para que los tres panels activos (A: 256 KB, B: 128 KB, C: 128 KB) llenen exactamente el L2 de 512 KB del Ryzen 5 4600H. El beneficio sobre `loop_ikj` es visible a partir de $m \geq 4096$, cuando $A$ supera el L3 y el tiling evita los cache misses masivos que sufre el orden sin bloques.
 
 ---
 
-### 5.8 Flujo de Fase 1.3 / 1.6: tiled_ikj_avx2 (microkernel BLIS-style 6x16 con AVX2+FMA)
+### 5.8 Flujo de Fase 1.3 / 1.6: tiled_ikj_avx512 (microkernel BLIS-style 6x32 con AVX-512+FMA)
 
 ```bash
-# Compilar (requiere -O3 -march=znver2 -mavx2 -mfma)
-make bench_tiled_ikj_avx2
-make validate_tiled_ikj_avx2
+# Compilar (requiere -O3 -march=native)
+make bench_tiled_ikj_avx512
+make validate_tiled_ikj_avx512
 
 # Validar correctitud
-./bin/validate_tiled_ikj_avx2_O3 256        # m=256, BS=384 (default)
-./bin/validate_tiled_ikj_avx2_O3 256 128    # m=256, BS=128 custom
+./bin/validate_tiled_ikj_avx512_ZEN5 256        # m=256, BS=384 (default)
+./bin/validate_tiled_ikj_avx512_ZEN5 256 128    # m=256, BS=128 custom
 
 # Bench individual
-./bin/bench_tiled_ikj_avx2_O3 1024          # m=1024, defaults (iters auto, runs=5, BS=384)
-./bin/bench_tiled_ikj_avx2_O3 1024 4 1 256  # m=1024, 4 iters, 1 corrida, BS=256
+./bin/bench_tiled_ikj_avx512_ZEN5 1024          # m=1024, defaults (iters auto, runs=5, BS=384)
+./bin/bench_tiled_ikj_avx512_ZEN5 1024 4 1 256  # m=1024, 4 iters, 1 corrida, BS=256
 ```
 
 Salida CSV (7 columnas, incluye `bs`):
 ```
-tiled_ikj_avx2,1024,128,4,384,X.XXXXXX,X.XXXXXX
+tiled_ikj_avx512,1024,128,4,384,X.XXXXXX,X.XXXXXX
 ```
 
-Para incluir `tiled_ikj_avx2` en el sweep de perf completo y regenerar `results/metrics.csv`:
+Para incluir `tiled_ikj_avx512` en el sweep de perf completo y regenerar `results/metrics.csv`:
 
 ```bash
 make results
 ```
 
-El target `results` incluye `bench_tiled_ikj_avx2_O3` como dependencia y `run_perf_zen2_sweep.sh` incluye `tiled_ikj_avx2` en su lista de variantes por defecto.
+El target `results` incluye `bench_tiled_ikj_avx512_ZEN5` como dependencia y `run_perf_zen5_sweep.sh` incluye `tiled_ikj_avx512` en su lista de variantes por defecto.
 
-Para correr solo la celda de `tiled_ikj_avx2` sin relanzar todo el sweep:
+Para correr solo la celda de `tiled_ikj_avx512` sin relanzar todo el sweep:
 
 ```bash
-VARIANTS="tiled_ikj_avx2" MS="1024 2048" bash scripts/run_perf_zen2_sweep.sh
-python3 scripts/consolidate_perf_zen2.py
+VARIANTS="tiled_ikj_avx512" MS="1024 2048" bash scripts/run_perf_zen5_sweep.sh
+python3 scripts/consolidate_perf_zen5.py
 ```
 
-**Geometria del microkernel BLIS-style (Fase 1.6):** $M_R = 6$, $N_R = 16$, $M_C = 192$ fijos en source; $BS$ (= $k_c$) configurable runtime, default $384$. Los $12$ acumuladores YMM del tile $6 \times 16$ de $C$ se mantienen vivos durante toda la pasada $k_c$ (verificado con `objdump` que GCC no spillea ningun YMM). El panel $A$ activo $M_C \times k_c = 192 \times 384$ ocupa $288$ KiB y cabe en el L2 de $512$ KB del Ryzen 5 4600H; el panel $B$ activo $k_c \times N_R = 384 \times 16$ ocupa $24$ KiB y cabe en el L1d de $32$ KB. Cambiar $BS$ via 4.o argumento del bench o `matmul_tiled_ikj_avx2_set_bs(bs)` en runtime (cualquier valor positivo es valido; el microkernel itera $p$ uno a la vez).
+**Geometria del microkernel BLIS-style (Fase 1.6):** $M_R = 6$, $N_R = 16$, $M_C = 192$ fijos en source; $BS$ (= $k_c$) configurable runtime, default $384$. Los $12$ acumuladores YMM del tile $6 \times 16$ de $C$ se mantienen vivos durante toda la pasada $k_c$ (verificado con `objdump` que GCC no spillea ningun YMM). El panel $A$ activo $M_C \times k_c = 192 \times 384$ ocupa $288$ KiB y cabe en el L2 de $512$ KB del Ryzen 5 4600H; el panel $B$ activo $k_c \times N_R = 384 \times 16$ ocupa $24$ KiB y cabe en el L1d de $32$ KB. Cambiar $BS$ via 4.o argumento del bench o `matmul_tiled_ikj_avx512_set_bs(bs)` en runtime (cualquier valor positivo es valido; el microkernel itera $p$ uno a la vez).
 
 ---
 
 ### 5.9 Flujo de Fase 1.4 / 1.6: tiled_ikj_omp (microkernel 6x16 + OpenMP)
 
 ```bash
-# Compilar (requiere -O3 -march=znver2 -mavx2 -mfma -fopenmp)
+# Compilar (requiere -O3 -march=native -fopenmp)
 make bench_tiled_ikj_omp
 make validate_tiled_ikj_omp
 
@@ -540,7 +540,7 @@ OMP_NUM_THREADS=6 OMP_PROC_BIND=close ./bin/bench_tiled_ikj_omp_O3 4096         
 OMP_NUM_THREADS=6 OMP_PROC_BIND=close ./bin/bench_tiled_ikj_omp_O3 4096 4 5 256  # m, iters, runs, bs
 ```
 
-Salida CSV (7 columnas, mismo formato que `tiled_ikj_avx2`):
+Salida CSV (7 columnas, mismo formato que `tiled_ikj_avx512`):
 ```
 tiled_ikj_omp,4096,128,4,384,X.XXXXXX,X.XXXXXX
 ```
@@ -551,13 +551,13 @@ Para incluir `tiled_ikj_omp` en el sweep de perf completo con 6 threads fijos y 
 make results
 ```
 
-El target `results` incluye `bench_tiled_ikj_omp_O3` como dependencia. `run_perf_zen2_sweep.sh` incluye `tiled_ikj_omp` en su lista de variantes y `profile_perf_zen2.sh` fija `OMP_NUM_THREADS=6 OMP_PLACES=cores OMP_PROC_BIND=close` automaticamente para esa variante (cambiado en Fase 1.6 desde $8$/close, que era suboptimo para el microkernel FMA-bound del $6 \times 16$).
+El target `results` incluye `bench_tiled_ikj_omp_O3` como dependencia. `run_perf_zen5_sweep.sh` incluye `tiled_ikj_omp` en su lista de variantes y `profile_perf_zen5.sh` fija `OMP_NUM_THREADS=6 OMP_PLACES=cores OMP_PROC_BIND=close` automaticamente para esa variante (cambiado en Fase 1.6 desde $8$/close, que era suboptimo para el microkernel FMA-bound del $6 \times 16$).
 
 Para correr solo la celda de `tiled_ikj_omp` sin relanzar todo el sweep:
 
 ```bash
-bash scripts/profile_perf_zen2.sh tiled_ikj_omp 4096
-python3 scripts/consolidate_perf_zen2.py --out results/metrics.csv
+bash scripts/profile_perf_zen5.sh tiled_ikj_omp 4096
+python3 scripts/consolidate_perf_zen5.py --out results/metrics.csv
 ```
 
 **Paralelizacion:** un unico `#pragma omp parallel for schedule(static)` sobre el bucle externo $i_c$ (tiles de filas de altura $M_C = 192$). Cada tile escribe exclusivamente las filas $[i_c, i_c + M_C)$ de $C$; no hay conflictos de escritura entre threads. $A$ y $B$ son `const` y compartidas. El `memset` inicial de $C$ corre fuera de la region paralela. SMT a $12$ threads degrada $\sim 60\%$ porque los dos hilos comparten las pipas FMA del core fisico, por eso el default empirico es $6$ threads.
@@ -574,13 +574,13 @@ La Sesion 03 lleva el proyecto al hardware del Ryzen $5$ $4600$H (Zen $2$): micr
 make audit                            # auditoria PDEP/PEXT (imprime PASS / FAIL)
 make hwinfo                           # bin/hwinfo: caracteristicas del CPU en runtime
 make sweep_threshold                  # mide el RECURSION_THRESHOLD optimo de Morton
-make validate_morton_avx2             # cross-valida la variante AVX2 contra naive y morton
-make bench_morton_avx2                # bench single-core del microkernel AVX2
+make validate_morton_avx512             # cross-valida la variante AVX-512 contra naive y morton
+make bench_morton_avx512                # bench single-core del microkernel AVX-512
 OMP_NUM_THREADS=6 make bench_morton_omp   # version paralela (OpenMP tasks)
-make results                          # sweep perf Zen 2 sobre 13 variantes -> results/metrics.csv
-make stream                           # mide DRAM bandwidth con STREAM (Triad 1T y 6T)
-make profile_zen2                     # captura eventos perf Zen 2 (group A + group B por celda)
-make plot_roofline                    # genera plots/roofline_4600h.png anclado al STREAM medido
+make results                          # sweep perf Zen 5 sobre 13 variantes -> results/metrics.csv
+make stream                           # mide DRAM bandwidth con STREAM (Triad 1T y 8T)
+make profile_zen5                     # captura eventos perf Zen 5 (group A + group B por celda)
+make plot_roofline                    # genera plots/roofline_9R45.png anclado al STREAM medido
 ```
 
 `make audit` debe ejecutarse antes de cualquier bench: BMI2 en Zen $2$ esta microcodeado ($\sim 18$ ciclos para `PDEP`/`PEXT`) y un uso incidental degradaria el throughput sin notarlo. El script verifica que ningun modulo Morton emite `pdep` ni `pext` en el ensamblador.
@@ -615,7 +615,7 @@ make profile_zen2_omp                  # ~3  min, perf de morton_omp para el Roo
 make plot_roofline                     # < 1 min, plots/roofline_4600h.png
 ```
 
-Mejor resultado esperado al cierre: `morton_avx2` a $\sim 40$ GFLOPS bench-wide a $m = 8192$ ($\sim 64 \%$ del techo FMA single-core medido con perf), y `morton_omp` a $\sim 260$ GFLOPS con $12$ threads `close` segun `omp_scaling.csv`. El reporte completo de hallazgos esta en [`docs/SESION_03_RESUMEN.md`](docs/SESION_03_RESUMEN.md).
+Mejor resultado esperado al cierre: `morton_avx512` a $\sim 40$ GFLOPS bench-wide a $m = 8192$ ($\sim 64 \%$ del techo FMA single-core medido con perf), y `morton_omp` a $\sim 260$ GFLOPS con $12$ threads `close` segun `omp_scaling.csv`. El reporte completo de hallazgos esta en [`docs/SESION_03_RESUMEN.md`](docs/SESION_03_RESUMEN.md).
 
 ---
 
@@ -750,7 +750,7 @@ Las fases siguientes mantendran la misma API descrita en `docs/API.md` y se suma
 |------|-----------------|--------|
 | 1.1 | Reordenamiento de bucles (6 ordenes seleccionables por nombre) | **COMPLETADO** (`matmul_loops`, integrado en `make results` y sweep perf Zen 2) |
 | 1.2 | Tiling explicito de un nivel para L2 | **COMPLETADO** (`matmul_tiled_ikj`, $M_c = K_c = 256$ apuntando al L2 del $4600$H) |
-| 1.3 / 1.6 | Tiling con AVX2+FMA y microkernel BLIS-style | **COMPLETADO** (`tiled_ikj_avx2`: microkernel inline $6 \times 16$, $M_C = 192$, $BS = 384$ default; integrado en `make results`) |
+| 1.3 / 1.6 | Tiling con AVX2+FMA y microkernel BLIS-style | **COMPLETADO** (`tiled_ikj_avx512`: microkernel inline $6 \times 16$, $M_C = 192$, $BS = 384$ default; integrado en `make results`) |
 | 1.4 / 1.6 | OpenMP sobre microkernel $6 \times 16$ | **COMPLETADO** (`tiled_ikj_omp`: `#pragma omp parallel for` en bucle $i_c$, $6$ threads `close` default) |
 | 4 | Flags de compilador y auto-vectorizacion (`-O3 -march=native`) | **COMPLETADO** como parte de la Sesion 03 (microkernel AVX2 + FMA explicito sobre Zen $2$) |
 | 5 | OpenMP + comparacion con OpenBLAS | OpenMP **COMPLETADO** (Sesion 03 `matmul_morton_omp`; Fase 1.4/1.6 `tiled_ikj_omp`); comparacion contra OpenBLAS pendiente para Sesion 04 |

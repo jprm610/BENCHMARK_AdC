@@ -21,8 +21,8 @@
 #   src/algorithms/
 #     naive/           matmul_naive.{c,h}
 #     loops/           matmul_loops.{c,h}
-#     morton/          matmul_morton{,_avx2,_omp}.{c,h}
-#     tiled_ikj/       matmul_tiled_ikj{,_avx2,_omp}.{c,h}
+#     morton/          matmul_morton{,_avx512,_omp}.{c,h}
+#     tiled_ikj/       matmul_tiled_ikj{,_avx512,_omp}.{c,h}
 #   src/drivers/
 #     bench/           bench_*.c        (one per algorithm)
 #     validate/        validate_*.c     (one per algorithm)
@@ -40,8 +40,10 @@
 #   make test_morton        -> Morton unit tests
 #   make test_kernel_avx512_morton -> AVX-512 microkernel unit test
 #
-#   make results_zen5 [M=...] -> full perf sweep on Zen 5 + metrics.csv
-#   make profile_zen5 [M=...] -> perf sweep only (binaries cached)
+#   make results [M=...]      -> build everything + run perf sweep (Zen 5)
+#                                + write results/metrics.csv
+#                                e.g. `make results M=2048` runs just m=2048.
+#   make profile_zen5 [M=...] -> same sweep but assuming bins are cached
 #   make profile_zen5_one VARIANT=... M=...
 #                             -> single (variant, m) cell
 #   make consolidate_zen5     -> re-parse existing perf files
@@ -251,7 +253,7 @@ plot_loop_vs_naive:
 # =====================================================================
 # Baseline tiled_ikj bench and validate (-O0, no vectorization)
 #
-# The intrinsic-using siblings (matmul_tiled_ikj_avx2 / _omp) include
+# The intrinsic-using siblings (matmul_tiled_ikj_avx512 / _omp) include
 # kernel_avx512_tiled.h, which requires AVX-512 ISA. They are built
 # under the Zen 5 block further below; at -O0 / baseline we only build
 # matmul_tiled_ikj (scalar tiling).
@@ -309,14 +311,14 @@ $(HWINFO_BIN): $(TOOLS_DIR)/hwinfo.c | $(BIN_DIR)
 #
 # Compile-time tunables (override on the make command line):
 #
-#   -DMORTON_AVX2_THRESHOLD_DEFAULT     leaf size for matmul_morton_avx2
+#   -DMORTON_AVX512_THRESHOLD_DEFAULT     leaf size for matmul_morton_avx512
 #   -DMORTON_OMP_RECURSION_THRESHOLD_DEFAULT  leaf size for matmul_morton_omp
 #   -DMORTON_OMP_PARALLEL_THRESHOLD_DEFAULT   task-spawn cutoff
 #   -DTILED_IKJ_MC_DEFAULT  outer mc tile for the scalar tiled_ikj
 #   -DTILED_IKJ_KC_DEFAULT  outer kc tile for the scalar tiled_ikj
-#   -DTILED_IKJ_AVX2_BS_DEFAULT  inner kc panel depth for tiled_avx2
+#   -DTILED_IKJ_AVX512_BS_DEFAULT  inner kc panel depth for tiled_avx512
 #                                (B panel = kc * NR * 4 B; want <= L1d=48 KiB)
-#   -DTILED_IKJ_AVX2_MC          outer mc tile for tiled_avx2
+#   -DTILED_IKJ_AVX512_MC          outer mc tile for tiled_avx512
 #                                (A panel = mc * kc * 4 B; want <= L2=1 MiB)
 #   -DTILED_IKJ_OMP_BS_DEFAULT   inner kc panel depth for tiled_omp
 #   -DTILED_IKJ_OMP_MC           outer mc tile for tiled_omp
@@ -329,7 +331,7 @@ $(HWINFO_BIN): $(TOOLS_DIR)/hwinfo.c | $(BIN_DIR)
 # multiplexing required (see scripts/profile_perf_zen5.sh).
 #
 # Main targets:
-#   make results_zen5  -> build everything + run sweep + write metrics.csv
+#   make results  -> build everything + run sweep + write metrics.csv
 #   make profile_zen5  -> sweep only (binaries already built)
 #   make profile_zen5_one VARIANT=... M=...
 #   make consolidate_zen5
@@ -337,13 +339,13 @@ $(HWINFO_BIN): $(TOOLS_DIR)/hwinfo.c | $(BIN_DIR)
 
 CFLAGS_O3_ZEN5  := $(CSTD) $(WARN) $(INCS) -O3 -march=native              \
                     -D_POSIX_C_SOURCE=200809L                              \
-                    -DMORTON_AVX2_THRESHOLD_DEFAULT=1048576UL              \
+                    -DMORTON_AVX512_THRESHOLD_DEFAULT=1048576UL              \
                     -DMORTON_OMP_RECURSION_THRESHOLD_DEFAULT=1048576UL     \
                     -DMORTON_OMP_PARALLEL_THRESHOLD_DEFAULT=1048576UL      \
                     -DTILED_IKJ_MC_DEFAULT=384u                            \
                     -DTILED_IKJ_KC_DEFAULT=384u                            \
-                    -DTILED_IKJ_AVX2_BS_DEFAULT=256u                       \
-                    -DTILED_IKJ_AVX2_MC=288u                               \
+                    -DTILED_IKJ_AVX512_BS_DEFAULT=256u                       \
+                    -DTILED_IKJ_AVX512_MC=288u                               \
                     -DTILED_IKJ_OMP_BS_DEFAULT=256u                        \
                     -DTILED_IKJ_OMP_MC=288u
 CFLAGS_OMP_ZEN5 := $(CFLAGS_O3_ZEN5) -fopenmp
@@ -368,20 +370,20 @@ $(TEST_KERNEL_AVX512_MORTON): $(TESTS_DIR)/test_kernel_avx512_morton.c \
 
 # ---- Source sets shared with the bench / validate targets below ----
 
-MORTON_AVX2_SHARED_SRCS  := $(MORTON_DIR)/matmul_morton_avx2.c \
+MORTON_AVX512_SHARED_SRCS  := $(MORTON_DIR)/matmul_morton_avx512.c \
                             $(CORE_DIR)/morton.c \
                             $(CORE_DIR)/matrix_utils.c \
                             $(NAIVE_DIR)/matmul_naive.c
 
-BENCH_MORTON_AVX2_SRCS    := $(MORTON_AVX2_SHARED_SRCS) \
-                             $(BENCH_DIR)/bench_morton_avx2.c
+BENCH_MORTON_AVX512_SRCS    := $(MORTON_AVX512_SHARED_SRCS) \
+                             $(BENCH_DIR)/bench_morton_avx512.c
 
-VALIDATE_MORTON_AVX2_SRCS := $(MORTON_AVX2_SHARED_SRCS) \
+VALIDATE_MORTON_AVX512_SRCS := $(MORTON_AVX512_SHARED_SRCS) \
                              $(MORTON_DIR)/matmul_morton.c \
-                             $(VALIDATE_DIR)/validate_morton_avx2.c
+                             $(VALIDATE_DIR)/validate_morton_avx512.c
 
 MORTON_OMP_SHARED_SRCS    := $(MORTON_DIR)/matmul_morton_omp.c \
-                             $(MORTON_DIR)/matmul_morton_avx2.c \
+                             $(MORTON_DIR)/matmul_morton_avx512.c \
                              $(CORE_DIR)/morton.c \
                              $(CORE_DIR)/matrix_utils.c \
                              $(NAIVE_DIR)/matmul_naive.c
@@ -393,12 +395,12 @@ VALIDATE_MORTON_OMP_SRCS  := $(MORTON_OMP_SHARED_SRCS) \
                              $(MORTON_DIR)/matmul_morton.c \
                              $(VALIDATE_DIR)/validate_morton_omp.c
 
-TILED_IKJ_AVX2_COMMON_SRCS   := $(COMMON_SRCS) \
-                                $(TILED_DIR)/matmul_tiled_ikj_avx2.c
-BENCH_TILED_IKJ_AVX2_SRCS    := $(TILED_IKJ_AVX2_COMMON_SRCS) \
-                                $(BENCH_DIR)/bench_tiled_ikj_avx2.c
-VALIDATE_TILED_IKJ_AVX2_SRCS := $(TILED_IKJ_AVX2_COMMON_SRCS) \
-                                $(VALIDATE_DIR)/validate_tiled_ikj_avx2.c
+TILED_IKJ_AVX512_COMMON_SRCS   := $(COMMON_SRCS) \
+                                $(TILED_DIR)/matmul_tiled_ikj_avx512.c
+BENCH_TILED_IKJ_AVX512_SRCS    := $(TILED_IKJ_AVX512_COMMON_SRCS) \
+                                $(BENCH_DIR)/bench_tiled_ikj_avx512.c
+VALIDATE_TILED_IKJ_AVX512_SRCS := $(TILED_IKJ_AVX512_COMMON_SRCS) \
+                                $(VALIDATE_DIR)/validate_tiled_ikj_avx512.c
 
 TILED_IKJ_OMP_COMMON_SRCS    := $(COMMON_SRCS) \
                                 $(TILED_DIR)/matmul_tiled_ikj_omp.c
@@ -411,50 +413,50 @@ VALIDATE_TILED_IKJ_OMP_SRCS  := $(TILED_IKJ_OMP_COMMON_SRCS) \
 
 BENCH_NAIVE_ZEN5           := $(BIN_DIR)/bench_naive_ZEN5
 BENCH_MORTON_ZEN5          := $(BIN_DIR)/bench_morton_ZEN5
-BENCH_MORTON_AVX2_ZEN5     := $(BIN_DIR)/bench_morton_avx2_ZEN5
+BENCH_MORTON_AVX512_ZEN5     := $(BIN_DIR)/bench_morton_avx512_ZEN5
 BENCH_MORTON_OMP_ZEN5      := $(BIN_DIR)/bench_morton_omp_ZEN5
 BENCH_LOOPS_ZEN5           := $(BIN_DIR)/bench_loops_ZEN5
 BENCH_TILED_IKJ_ZEN5       := $(BIN_DIR)/bench_tiled_ikj_ZEN5
-BENCH_TILED_IKJ_AVX2_ZEN5  := $(BIN_DIR)/bench_tiled_ikj_avx2_ZEN5
+BENCH_TILED_IKJ_AVX512_ZEN5  := $(BIN_DIR)/bench_tiled_ikj_avx512_ZEN5
 BENCH_TILED_IKJ_OMP_ZEN5   := $(BIN_DIR)/bench_tiled_ikj_omp_ZEN5
 
 # Zen 5 validate binaries (cross-validation against matmul_naive).
-VALIDATE_MORTON_AVX2_ZEN5     := $(BIN_DIR)/validate_morton_avx2_ZEN5
+VALIDATE_MORTON_AVX512_ZEN5     := $(BIN_DIR)/validate_morton_avx512_ZEN5
 VALIDATE_MORTON_OMP_ZEN5      := $(BIN_DIR)/validate_morton_omp_ZEN5
-VALIDATE_TILED_IKJ_AVX2_ZEN5  := $(BIN_DIR)/validate_tiled_ikj_avx2_ZEN5
+VALIDATE_TILED_IKJ_AVX512_ZEN5  := $(BIN_DIR)/validate_tiled_ikj_avx512_ZEN5
 VALIDATE_TILED_IKJ_OMP_ZEN5   := $(BIN_DIR)/validate_tiled_ikj_omp_ZEN5
 
 ALL_ZEN5_BINS := $(BENCH_NAIVE_ZEN5) \
-                 $(BENCH_MORTON_ZEN5) $(BENCH_MORTON_AVX2_ZEN5) \
+                 $(BENCH_MORTON_ZEN5) $(BENCH_MORTON_AVX512_ZEN5) \
                  $(BENCH_MORTON_OMP_ZEN5) \
                  $(BENCH_LOOPS_ZEN5) \
-                 $(BENCH_TILED_IKJ_ZEN5) $(BENCH_TILED_IKJ_AVX2_ZEN5) \
+                 $(BENCH_TILED_IKJ_ZEN5) $(BENCH_TILED_IKJ_AVX512_ZEN5) \
                  $(BENCH_TILED_IKJ_OMP_ZEN5)
 
-ALL_ZEN5_VALIDATE := $(VALIDATE_MORTON_AVX2_ZEN5) $(VALIDATE_MORTON_OMP_ZEN5) \
-                     $(VALIDATE_TILED_IKJ_AVX2_ZEN5) \
+ALL_ZEN5_VALIDATE := $(VALIDATE_MORTON_AVX512_ZEN5) $(VALIDATE_MORTON_OMP_ZEN5) \
+                     $(VALIDATE_TILED_IKJ_AVX512_ZEN5) \
                      $(VALIDATE_TILED_IKJ_OMP_ZEN5)
 
-.PHONY: results_zen5 profile_zen5 profile_zen5_one consolidate_zen5 \
-        bench_naive_ZEN5 bench_morton_ZEN5 bench_morton_avx2_ZEN5 \
+.PHONY: results profile_zen5 profile_zen5_one consolidate_zen5 \
+        bench_naive_ZEN5 bench_morton_ZEN5 bench_morton_avx512_ZEN5 \
         bench_morton_omp_ZEN5 bench_loops_ZEN5 bench_tiled_ikj_ZEN5 \
-        bench_tiled_ikj_avx2_ZEN5 bench_tiled_ikj_omp_ZEN5 \
-        validate_morton_avx2_ZEN5 validate_morton_omp_ZEN5 \
-        validate_tiled_ikj_avx2_ZEN5 validate_tiled_ikj_omp_ZEN5 \
+        bench_tiled_ikj_avx512_ZEN5 bench_tiled_ikj_omp_ZEN5 \
+        validate_morton_avx512_ZEN5 validate_morton_omp_ZEN5 \
+        validate_tiled_ikj_avx512_ZEN5 validate_tiled_ikj_omp_ZEN5 \
         validate_all_zen5
 
 bench_naive_ZEN5:          $(BENCH_NAIVE_ZEN5)
 bench_morton_ZEN5:         $(BENCH_MORTON_ZEN5)
-bench_morton_avx2_ZEN5:    $(BENCH_MORTON_AVX2_ZEN5)
+bench_morton_avx512_ZEN5:    $(BENCH_MORTON_AVX512_ZEN5)
 bench_morton_omp_ZEN5:     $(BENCH_MORTON_OMP_ZEN5)
 bench_loops_ZEN5:          $(BENCH_LOOPS_ZEN5)
 bench_tiled_ikj_ZEN5:      $(BENCH_TILED_IKJ_ZEN5)
-bench_tiled_ikj_avx2_ZEN5: $(BENCH_TILED_IKJ_AVX2_ZEN5)
+bench_tiled_ikj_avx512_ZEN5: $(BENCH_TILED_IKJ_AVX512_ZEN5)
 bench_tiled_ikj_omp_ZEN5:  $(BENCH_TILED_IKJ_OMP_ZEN5)
 
-validate_morton_avx2_ZEN5:    $(VALIDATE_MORTON_AVX2_ZEN5)
+validate_morton_avx512_ZEN5:    $(VALIDATE_MORTON_AVX512_ZEN5)
 validate_morton_omp_ZEN5:     $(VALIDATE_MORTON_OMP_ZEN5)
-validate_tiled_ikj_avx2_ZEN5: $(VALIDATE_TILED_IKJ_AVX2_ZEN5)
+validate_tiled_ikj_avx512_ZEN5: $(VALIDATE_TILED_IKJ_AVX512_ZEN5)
 validate_tiled_ikj_omp_ZEN5:  $(VALIDATE_TILED_IKJ_OMP_ZEN5)
 validate_all_zen5: $(ALL_ZEN5_VALIDATE)
 
@@ -470,9 +472,9 @@ $(BENCH_NAIVE_ZEN5): $(BENCH_SRCS) | $(BIN_DIR)
 $(BENCH_MORTON_ZEN5): $(BENCH_MORTON_SRCS) | $(BIN_DIR)
 	$(CC) $(CFLAGS_O3_ZEN5) $(BENCH_MORTON_SRCS) -o $@ $(LIBS)
 
-$(BENCH_MORTON_AVX2_ZEN5): $(BENCH_MORTON_AVX2_SRCS) \
+$(BENCH_MORTON_AVX512_ZEN5): $(BENCH_MORTON_AVX512_SRCS) \
                            $(MK_DIR)/kernel_avx512_morton.h | $(BIN_DIR)
-	$(CC) $(CFLAGS_O3_ZEN5) $(BENCH_MORTON_AVX2_SRCS) -o $@ $(LIBS)
+	$(CC) $(CFLAGS_O3_ZEN5) $(BENCH_MORTON_AVX512_SRCS) -o $@ $(LIBS)
 
 $(BENCH_MORTON_OMP_ZEN5): $(BENCH_MORTON_OMP_SRCS) \
                           $(MK_DIR)/kernel_avx512_morton.h | $(BIN_DIR)
@@ -484,9 +486,9 @@ $(BENCH_LOOPS_ZEN5): $(BENCH_LOOPS_SRCS) | $(BIN_DIR)
 $(BENCH_TILED_IKJ_ZEN5): $(BENCH_TILED_IKJ_SRCS) | $(BIN_DIR)
 	$(CC) $(CFLAGS_O3_ZEN5) $(BENCH_TILED_IKJ_SRCS) -o $@ $(LIBS)
 
-$(BENCH_TILED_IKJ_AVX2_ZEN5): $(BENCH_TILED_IKJ_AVX2_SRCS) \
+$(BENCH_TILED_IKJ_AVX512_ZEN5): $(BENCH_TILED_IKJ_AVX512_SRCS) \
                               $(MK_DIR)/kernel_avx512_tiled.h | $(BIN_DIR)
-	$(CC) $(CFLAGS_O3_ZEN5) $(BENCH_TILED_IKJ_AVX2_SRCS) -o $@ $(LIBS)
+	$(CC) $(CFLAGS_O3_ZEN5) $(BENCH_TILED_IKJ_AVX512_SRCS) -o $@ $(LIBS)
 
 $(BENCH_TILED_IKJ_OMP_ZEN5): $(BENCH_TILED_IKJ_OMP_SRCS) \
                              $(MK_DIR)/kernel_avx512_tiled.h | $(BIN_DIR)
@@ -494,17 +496,17 @@ $(BENCH_TILED_IKJ_OMP_ZEN5): $(BENCH_TILED_IKJ_OMP_SRCS) \
 
 # ---- Zen 5 validate compile recipes ----
 
-$(VALIDATE_MORTON_AVX2_ZEN5): $(VALIDATE_MORTON_AVX2_SRCS) \
+$(VALIDATE_MORTON_AVX512_ZEN5): $(VALIDATE_MORTON_AVX512_SRCS) \
                               $(MK_DIR)/kernel_avx512_morton.h | $(BIN_DIR)
-	$(CC) $(CFLAGS_O3_ZEN5) $(VALIDATE_MORTON_AVX2_SRCS) -o $@ $(LIBS)
+	$(CC) $(CFLAGS_O3_ZEN5) $(VALIDATE_MORTON_AVX512_SRCS) -o $@ $(LIBS)
 
 $(VALIDATE_MORTON_OMP_ZEN5): $(VALIDATE_MORTON_OMP_SRCS) \
                              $(MK_DIR)/kernel_avx512_morton.h | $(BIN_DIR)
 	$(CC) $(CFLAGS_OMP_ZEN5) $(VALIDATE_MORTON_OMP_SRCS) -o $@ $(LIBS)
 
-$(VALIDATE_TILED_IKJ_AVX2_ZEN5): $(VALIDATE_TILED_IKJ_AVX2_SRCS) \
+$(VALIDATE_TILED_IKJ_AVX512_ZEN5): $(VALIDATE_TILED_IKJ_AVX512_SRCS) \
                                  $(MK_DIR)/kernel_avx512_tiled.h | $(BIN_DIR)
-	$(CC) $(CFLAGS_O3_ZEN5) $(VALIDATE_TILED_IKJ_AVX2_SRCS) -o $@ $(LIBS)
+	$(CC) $(CFLAGS_O3_ZEN5) $(VALIDATE_TILED_IKJ_AVX512_SRCS) -o $@ $(LIBS)
 
 $(VALIDATE_TILED_IKJ_OMP_ZEN5): $(VALIDATE_TILED_IKJ_OMP_SRCS) \
                                 $(MK_DIR)/kernel_avx512_tiled.h | $(BIN_DIR)
@@ -513,11 +515,11 @@ $(VALIDATE_TILED_IKJ_OMP_ZEN5): $(VALIDATE_TILED_IKJ_OMP_SRCS) \
 # ---- Zen 5 perf-counter sweep ----
 
 # Variables used by profile_zen5_one. Override via:
-#   make profile_zen5_one VARIANT=morton_avx2 M=4096
-VARIANT ?= morton_avx2
+#   make profile_zen5_one VARIANT=morton_avx512 M=4096
+VARIANT ?= morton_avx512
 M       ?= 4096
 
-results_zen5: $(ALL_ZEN5_BINS)
+results: $(ALL_ZEN5_BINS)
 	$(if $(M),MS="$(M)" )bash scripts/run_perf_zen5_sweep.sh
 	python3 scripts/consolidate_perf_zen5.py --out results/metrics.csv
 

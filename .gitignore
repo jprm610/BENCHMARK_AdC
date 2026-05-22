@@ -42,8 +42,8 @@ plots/*.pdf
 !results/perf_recursive_m*_B.txt
 !results/perf_morton_m*_A.txt
 !results/perf_morton_m*_B.txt
-!results/perf_morton_avx2_m*_A.txt
-!results/perf_morton_avx2_m*_B.txt
+!results/perf_morton_avx512_m*_A.txt
+!results/perf_morton_avx512_m*_B.txt
 !results/perf_zen2_summary.csv
 !plots/perf_zen2_breakdown.png
 

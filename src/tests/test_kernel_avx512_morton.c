@@ -15,7 +15,7 @@
  *           FP32 accumulation error.
  *
  *   Test 3: kc=128, idem. Representative of the leaf tile size that
- *           matmul_morton_avx2 will dispatch to the kernel.
+ *           matmul_morton_avx512 will dispatch to the kernel.
  *
  *   Test 4: kc=1024, idem. Stress test: 1024 FMA chains per output
  *           lane; confirms the error does not blow up beyond what

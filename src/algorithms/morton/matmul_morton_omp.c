@@ -3,7 +3,7 @@
  * wired to the AVX-512 microkernel kernel_avx512_4x32 (Zen 5 /
  * EPYC 9R45 main_server variant).
  *
- * Same recursion and same leaf kernel as matmul_morton_avx2.c. The
+ * Same recursion and same leaf kernel as matmul_morton_avx512.c. The
  * leaf helpers (materialize_a_panel, kernel_base_morton_omp,
  * kernel_base_morton_omp_add, kernel_base_morton_omp_ijk_fallback)
  * are duplicated here rather than #include'd from the sibling
@@ -56,7 +56,7 @@
 
 #include <omp.h>
 
-#define MR KERNEL_AVX512_MORTON_MR   /* 4 — tied to MORTON_AVX2_TILE */
+#define MR KERNEL_AVX512_MORTON_MR   /* 4 — tied to MORTON_AVX512_TILE */
 #define NR KERNEL_AVX512_MORTON_NR   /* 32 */
 #define LEAF_KERNEL kernel_avx512_4x32
 
@@ -99,13 +99,13 @@ void matmul_morton_omp_set_parallel_threshold(size_t threshold)
 }
 
 /* ------------------------------------------------------------------ */
-/* Leaf helpers (duplicated from matmul_morton_avx2.c on purpose)      */
+/* Leaf helpers (duplicated from matmul_morton_avx512.c on purpose)      */
 /* ------------------------------------------------------------------ */
 
 /* Materialize the m_block x k_block panel of A from the
  * Morton-of-blocks layout into a row-major scratch buffer with row
  * stride k_block. Caller guarantees m_block and k_block are multiples
- * of MORTON_AVX2_TILE = 4. */
+ * of MORTON_AVX512_TILE = 4. */
 static void materialize_a_panel(const scalar_t *A_morton,
                                 size_t a_morton_offset,
                                 size_t a_block_dim,
@@ -114,9 +114,9 @@ static void materialize_a_panel(const scalar_t *A_morton,
 {
     (void)a_block_dim;
 
-    const size_t blocks_m = m_block / MORTON_AVX2_TILE;
-    const size_t blocks_k = k_block / MORTON_AVX2_TILE;
-    const size_t tile_sq  = (size_t)MORTON_AVX2_TILE * MORTON_AVX2_TILE;
+    const size_t blocks_m = m_block / MORTON_AVX512_TILE;
+    const size_t blocks_k = k_block / MORTON_AVX512_TILE;
+    const size_t tile_sq  = (size_t)MORTON_AVX512_TILE * MORTON_AVX512_TILE;
 
     for (size_t bi = 0; bi < blocks_m; ++bi) {
         for (size_t bj = 0; bj < blocks_k; ++bj) {
@@ -124,13 +124,13 @@ static void materialize_a_panel(const scalar_t *A_morton,
             size_t block_offset = a_morton_offset
                                 + (size_t)bcode * tile_sq;
 
-            for (size_t ii = 0; ii < MORTON_AVX2_TILE; ++ii) {
-                size_t row_local = bi * MORTON_AVX2_TILE + ii;
+            for (size_t ii = 0; ii < MORTON_AVX512_TILE; ++ii) {
+                size_t row_local = bi * MORTON_AVX512_TILE + ii;
                 const scalar_t *src = &A_morton[block_offset
-                                              + ii * MORTON_AVX2_TILE];
+                                              + ii * MORTON_AVX512_TILE];
                 scalar_t *dst = &A_local[row_local * k_block
-                                       + bj * MORTON_AVX2_TILE];
-                for (size_t jj = 0; jj < MORTON_AVX2_TILE; ++jj) {
+                                       + bj * MORTON_AVX512_TILE];
+                for (size_t jj = 0; jj < MORTON_AVX512_TILE; ++jj) {
                     dst[jj] = src[jj];
                 }
             }
@@ -533,7 +533,7 @@ static void matmul_morton_omp_inner_add(scalar_t *C,
 /* Round up to the next power of two that is at least 64, so scratch
  * sized at side^2 is large enough for any leaf produced by the
  * recursion under the current threshold. Mirror of the helper in
- * matmul_morton_avx2.c. */
+ * matmul_morton_avx512.c. */
 static size_t scratch_side_for_threshold(size_t threshold)
 {
     size_t target = threshold / (size_t)NR;

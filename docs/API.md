@@ -579,7 +579,7 @@ Misma CLI que `run_sweep_naive.sh`: el listado de $m$ se puede pasar como primer
 
 ### 10.3 Profiling con perf
 
-Para comparaciones entre kernels usar el pipeline unificado de la Sesion 03: `make profile_zen2` (o `make results`) corre `scripts/run_perf_zen2_sweep.sh` sobre las 13 variantes activas en $m \in \{1024, 4096, 8192\}$ y el consolidador `scripts/consolidate_perf_zen2.py` produce `results/metrics.csv`. Ese pipeline reemplaza el comparador ad-hoc (`profile_perf_compare.sh` / `plot_perf_compare.py`) que se uso en Sesion 02.
+Para comparaciones entre kernels usar el pipeline unificado de la Sesion 03: `make profile_zen2` (o `make results`) corre `scripts/run_perf_zen5_sweep.sh` sobre las 13 variantes activas en $m \in \{1024, 4096, 8192\}$ y el consolidador `scripts/consolidate_perf_zen5.py` produce `results/metrics.csv`. Ese pipeline reemplaza el comparador ad-hoc (`profile_perf_compare.sh` / `plot_perf_compare.py`) que se uso en Sesion 02.
 
 Si `perf_event_paranoid` esta demasiado restrictivo, el script aborta con mensaje claro indicando el comando exacto para arreglarlo y la referencia a la seccion 3.3 del `README.md`.
 
@@ -609,14 +609,14 @@ make plot_loop                  -> plots/loop_orders.png  (6 ordenes desde loop_
 make plot_loop_vs_naive         -> plots/loop_vs_naive.png  (naive + 6 ordenes)
 ```
 
-Targets de Fase 1.3 (tiled_ikj_avx2):
+Targets de Fase 1.3 (tiled_ikj_avx512):
 
 ```
-make bench_tiled_ikj_avx2_ZEN5      -> bin/bench_tiled_ikj_avx2_ZEN5
-make validate_tiled_ikj_avx2_ZEN5   -> bin/validate_tiled_ikj_avx2_ZEN5
+make bench_tiled_ikj_avx512_ZEN5      -> bin/bench_tiled_ikj_avx512_ZEN5
+make validate_tiled_ikj_avx512_ZEN5   -> bin/validate_tiled_ikj_avx512_ZEN5
 ```
 
-Ambos se compilan con `CFLAGS_O3_ZEN5` (`-O3 -march=native` mas los `-D...` de los thresholds del Makefile), que es obligatorio para que `_mm512_fmadd_ps` emita la instruccion FMA-512 real. El target `make results_zen5` incluye `bench_tiled_ikj_avx2_ZEN5` como dependencia y `scripts/run_perf_zen5_sweep.sh` incluye `tiled_ikj_avx2` en su lista de variantes por defecto.
+Ambos se compilan con `CFLAGS_O3_ZEN5` (`-O3 -march=native` mas los `-D...` de los thresholds del Makefile), que es obligatorio para que `_mm512_fmadd_ps` emita la instruccion FMA-512 real. El target `make results` incluye `bench_tiled_ikj_avx512_ZEN5` como dependencia y `scripts/run_perf_zen5_sweep.sh` incluye `tiled_ikj_avx512` en su lista de variantes por defecto.
 
 Todos extienden el Makefile **al final**, sin modificar las recetas del baseline (`bench_naive_O0`, `bench_naive_pg`, `validate_naive`, `sweep_naive`, `profile_*_naive`, `clean`, `distclean`).
 
@@ -628,7 +628,7 @@ La rama `main_server` retira por completo los microkernels AVX2 (4x16 y 6x16) qu
 
 | Header | Tile | Familia | Acumuladores | Broadcasts | Comentario |
 |---|---|---|---|---|---|
-| `src/microkernels/kernel_avx512_morton.h` | $4 \times 32$ | Morton | 8 ZMM | 4 ZMM | `MR = MORTON_AVX2_TILE = 4` |
+| `src/microkernels/kernel_avx512_morton.h` | $4 \times 32$ | Morton | 8 ZMM | 4 ZMM | `MR = MORTON_AVX512_TILE = 4` |
 | `src/microkernels/kernel_avx512_tiled.h`  | $6 \times 32$ | tiled_ikj | 12 ZMM | 1 ZMM (reusado) | + `residual_rows` AVX-512 |
 
 Ambos son **header-only** con `static inline`: cada TU que los incluye obtiene una copia inlineada bajo `-O3`. No hay `.o` separado, y por lo tanto no hay riesgo de spill de ZMMs a traves del ABI en una llamada de funcion. Ese era el modelo bajo el que estaba el 6x16 en Zen 2 (`kernel_avx2_tiled.h`), y es el patron unificado que tambien usa Juan Pablo en la rama `opt_zen5`.
@@ -701,7 +701,7 @@ Fallback AVX-512 para las colas $m \bmod \text{MR}$ y $n \bmod \text{NR}$. Vecto
 #define KERNEL_AVX512_TILED_NR 32u
 ```
 
-Expuestas para que `matmul_morton_avx2`, `matmul_tiled_ikj_avx2` y los tests calcen sus bloques al tile sin redeclarar las magic numbers.
+Expuestas para que `matmul_morton_avx512`, `matmul_tiled_ikj_avx512` y los tests calcen sus bloques al tile sin redeclarar las magic numbers.
 
 ### 11.5 Compilacion
 
@@ -709,8 +709,8 @@ No hay `.o` separado. Cada TU que incluye los headers se compila con los flags Z
 
 ```
 -O3 -march=native -D_POSIX_C_SOURCE=200809L \
-   -DMORTON_AVX2_THRESHOLD_DEFAULT=1048576UL \
-   -DTILED_IKJ_AVX2_BS_DEFAULT=256u -DTILED_IKJ_AVX2_MC=288u  ...
+   -DMORTON_AVX512_THRESHOLD_DEFAULT=1048576UL \
+   -DTILED_IKJ_AVX512_BS_DEFAULT=256u -DTILED_IKJ_AVX512_MC=288u  ...
 ```
 
 `-march=native` activa AVX-512F / VL / BW / DQ / IFMA, BMI2, AVX2, FMA, y todo lo demas que el EPYC 9R45 expone vista CPUID. GCC 11 puede no reconocer `-march=znver4/5` por nombre; `-march=native` es la forma portable y conservadora.
@@ -721,11 +721,11 @@ Zen 5 retira 2 FMA de 512 bits por ciclo = $2 \times 16 \times 2 = 64$ flops por
 
 ---
 
-## 12. Modulo `matmul_morton_avx2` (Sesion 03, Etapa A4 integracion)
+## 12. Modulo `matmul_morton_avx512` (Sesion 03, Etapa A4 integracion)
 
-**Archivo:** [`src/algorithms/morton/matmul_morton_avx2.h`](../src/algorithms/morton/matmul_morton_avx2.h), [`src/algorithms/morton/matmul_morton_avx2.c`](../src/algorithms/morton/matmul_morton_avx2.c).
+**Archivo:** [`src/algorithms/morton/matmul_morton_avx512.h`](../src/algorithms/morton/matmul_morton_avx512.h), [`src/algorithms/morton/matmul_morton_avx512.c`](../src/algorithms/morton/matmul_morton_avx512.c).
 
-Variante de `matmul_morton` cuyo leaf invoca el microkernel AVX2 de la Seccion 11. La recursion sigue la misma estructura cache-oblivious (Caso N independiente, Caso MK acoplado en cuatro cuadrantes) pero el layout de $A$ cambia.
+Variante de `matmul_morton` cuyo leaf invoca el microkernel AVX-512 (`kernel_avx512_4x32`) de la Seccion 11. La recursion sigue la misma estructura cache-oblivious (Caso N independiente, Caso MK acoplado en cuatro cuadrantes) pero el layout de $A$ cambia.
 
 ### 12.1 Layout Morton-de-bloques (tile = 4)
 
@@ -737,10 +737,10 @@ $$
 
 La **propiedad de contiguidad** (Seccion 8.1) se preserva: cuatro cuadrantes de lado $h$ siguen ocupando offsets $\{0, 1, 2, 3\} \cdot h^2$ desde el padre. Solo cambia el significado del nivel hoja: bloque $4 \times 4$ de floats en lugar de un solo float. El layout fino y el de bloques **coexisten**; `matmul_morton.{c,h}` queda intacto.
 
-### 12.2 `matmul_morton_avx2`
+### 12.2 `matmul_morton_avx512`
 
 ```c
-void matmul_morton_avx2(scalar_t *C,
+void matmul_morton_avx512(scalar_t *C,
                         const scalar_t *A_morton,
                         const scalar_t *B,
                         size_t m, size_t k, size_t n);
@@ -763,11 +763,11 @@ Cualquier violacion de los chequeos sobre $m$ y $k$ aborta con `fprintf(stderr, 
 ### 12.3 Threshold de hoja y ajuste empirico
 
 ```c
-extern size_t g_recursion_threshold_avx2;
-void matmul_morton_avx2_set_threshold(size_t threshold);
+extern size_t g_recursion_threshold_avx512;
+void matmul_morton_avx512_set_threshold(size_t threshold);
 ```
 
-Variable global con default $64 \cdot 64 \cdot 128 = 524288$ flops elementales, equivalente a una hoja de $64 \times 64$ floats por panel de $A$ (working set $\sim 16$ KiB, mitad de L1d en el $4600$H). El setter acepta cualquier valor positivo; pasar $0$ imprime un warning y deja el default. La constante esta separada de `g_recursion_threshold` (Sesion 02) porque los regimenes son distintos: el microkernel AVX2 amortiza una hoja mucho mas grande que el `ijk + morton_encode` ingenuo, asi que el threshold optimo es mayor.
+Variable global con default $64 \cdot 64 \cdot 128 = 524288$ flops elementales, equivalente a una hoja de $64 \times 64$ floats por panel de $A$ (working set $\sim 16$ KiB, mitad de L1d en el $4600$H). El setter acepta cualquier valor positivo; pasar $0$ imprime un warning y deja el default. La constante esta separada de `g_recursion_threshold` (Sesion 02) porque los regimenes son distintos: el microkernel AVX-512 amortiza una hoja mucho mas grande que el `ijk + morton_encode` ingenuo, asi que el threshold optimo es mayor.
 
 ### 12.4 `reorganize_to_morton_blocks`
 
@@ -777,27 +777,27 @@ void reorganize_to_morton_blocks(const scalar_t *A_row,
                                  size_t m);
 ```
 
-Reorganiza una matriz row-major $m \times m$ al layout Morton-de-bloques consumido por `matmul_morton_avx2`. Aborta si $m$ no es multiplo de $\text{MR}$ o si $m / \text{MR}$ no es potencia de $2$. El caller aloja `A_morton` con capacidad para $m^2$ elementos (tipicamente `xalloc_aligned`).
+Reorganiza una matriz row-major $m \times m$ al layout Morton-de-bloques consumido por `matmul_morton_avx512`. Aborta si $m$ no es multiplo de $\text{MR}$ o si $m / \text{MR}$ no es potencia de $2$. El caller aloja `A_morton` con capacidad para $m^2$ elementos (tipicamente `xalloc_aligned`).
 
 Complejidad: $O(m^2)$. Se ejecuta una sola vez antes de la recurrencia $B_{i+1} = A \cdot B_i$, igual que en Sesion 02.
 
 ### 12.5 Orquestadores
 
 ```c
-void benchmark_iterations_morton_avx2(scalar_t *B_out,
+void benchmark_iterations_morton_avx512(scalar_t *B_out,
                                       const scalar_t *A,
                                       const scalar_t *Z,
                                       size_t m, size_t n,
                                       size_t num_iters);
 
-void benchmark_iterations_morton_avx2_preorganized(scalar_t *B_out,
+void benchmark_iterations_morton_avx512_preorganized(scalar_t *B_out,
                                                    const scalar_t *A_morton,
                                                    const scalar_t *Z,
                                                    size_t m, size_t n,
                                                    size_t num_iters);
 ```
 
-Misma semantica que sus contrapartes en `matmul_morton`. El primero reorganiza $A$ internamente (la conversion entra en el tiempo medido); el segundo recibe $A$ ya reorganizado y es el que usa `bench_morton_avx2_O3`.
+Misma semantica que sus contrapartes en `matmul_morton`. El primero reorganiza $A$ internamente (la conversion entra en el tiempo medido); el segundo recibe $A$ ya reorganizado y es el que usa `bench_morton_avx512_ZEN5`.
 
 ---
 
@@ -805,7 +805,7 @@ Misma semantica que sus contrapartes en `matmul_morton`. El primero reorganiza $
 
 **Archivo:** [`src/algorithms/morton/matmul_morton_omp.h`](../src/algorithms/morton/matmul_morton_omp.h), [`src/algorithms/morton/matmul_morton_omp.c`](../src/algorithms/morton/matmul_morton_omp.c).
 
-Variante paralela de `matmul_morton_avx2`. Reusa el microkernel AVX2 y el layout Morton-de-bloques; agrega `#pragma omp parallel single` en el wrapper publico y emite OpenMP tasks en cada subdivision recursiva por encima del threshold de paralelizacion. El scratch buffer del leaf pasa a ser un pool por-thread indexado por `omp_get_thread_num()` para que las hojas paralelas no compartan memoria intermedia.
+Variante paralela de `matmul_morton_avx512`. Reusa el microkernel AVX-512 y el layout Morton-de-bloques; agrega `#pragma omp parallel single` en el wrapper publico y emite OpenMP tasks en cada subdivision recursiva por encima del threshold de paralelizacion. El scratch buffer del leaf pasa a ser un pool por-thread indexado por `omp_get_thread_num()` para que las hojas paralelas no compartan memoria intermedia.
 
 ### 13.1 `matmul_morton_omp`
 
@@ -816,7 +816,7 @@ void matmul_morton_omp(scalar_t *C,
                        size_t m, size_t k, size_t n);
 ```
 
-**Contrato de forma** identico a `matmul_morton_avx2`: $C$ es $m \times n$ (out), `A_morton` es $m \times k$ en Morton-de-bloques, $B$ es $k \times n$ row-major, mismas precondiciones ($m = k$ potencia de $2$, $m \geq \text{MR}$).
+**Contrato de forma** identico a `matmul_morton_avx512`: $C$ es $m \times n$ (out), `A_morton` es $m \times k$ en Morton-de-bloques, $B$ es $k \times n$ row-major, mismas precondiciones ($m = k$ potencia de $2$, $m \geq \text{MR}$).
 
 ### 13.2 Thresholds (dos knobs independientes)
 
@@ -827,10 +827,10 @@ void matmul_morton_omp_set_threshold         (size_t threshold);
 void matmul_morton_omp_set_parallel_threshold(size_t threshold);
 ```
 
-- `g_recursion_threshold_omp` (default $524288$): tamano del sub-problema en que la recursion cae al leaf kernel. Mismo rol que `g_recursion_threshold_avx2`.
+- `g_recursion_threshold_omp` (default $524288$): tamano del sub-problema en que la recursion cae al leaf kernel. Mismo rol que `g_recursion_threshold_avx512`.
 - `g_parallel_threshold_omp` (default $524288$): tamano por debajo del cual la recursion deja de emitir `omp task` y corre inline. Con el default igual al leaf threshold, las tasks disparan en cada nivel sobre la hoja y nunca dentro de ella.
 
-Las globals se mantienen separadas de las de `matmul_morton_avx2` para poder tunear la variante paralela sin alterar las mediciones del modulo serial.
+Las globals se mantienen separadas de las de `matmul_morton_avx512` para poder tunear la variante paralela sin alterar las mediciones del modulo serial.
 
 ### 13.3 Variables de entorno relevantes
 
@@ -869,38 +869,38 @@ Misma estructura que en los modulos anteriores: el primero reorganiza $A$ intern
 
 ---
 
-## 14. Modulo `matmul_tiled_ikj_avx2` (BLIS-style 6x32 register-blocked, Zen 5)
+## 14. Modulo `matmul_tiled_ikj_avx512` (BLIS-style 6x32 register-blocked, Zen 5)
 
-**Archivo:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.h`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.h), [`src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.c`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.c). El microkernel 6x32 AVX-512 vive en [`src/microkernels/kernel_avx512_tiled.h`](../src/microkernels/kernel_avx512_tiled.h) (header-only `static inline`, compartido con `matmul_tiled_ikj_omp`). El sufijo `_avx2` en el nombre del archivo es legacy de la version Zen 2; el codigo actual usa AVX-512.
+**Archivo:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_avx512.h`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_avx512.h), [`src/algorithms/tiled_ikj/matmul_tiled_ikj_avx512.c`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_avx512.c). El microkernel 6x32 AVX-512 vive en [`src/microkernels/kernel_avx512_tiled.h`](../src/microkernels/kernel_avx512_tiled.h) (header-only `static inline`, compartido con `matmul_tiled_ikj_omp`).
 
 Kernel BLIS-style con micropanel registrado $6 \times 32$, sintonizado al EPYC 9R45 (Zen 5). Reemplaza la version Zen 2 (microkernel $6 \times 16$ con YMM) por un microkernel inline que mantiene un sub-tile $6 \times 32$ de $C$ en $12$ registros ZMM durante toda la pasada $k_c$; $C$ toca memoria solo dos veces por micro-tile (load al entrar, store al salir).
 
 ### 14.1 Geometria del microkernel (compile-time)
 
 ```c
-#define TILED_IKJ_AVX2_MR 6u
-#define TILED_IKJ_AVX2_NR 32u
-#define TILED_IKJ_AVX2_MC 288u
-#define TILED_IKJ_AVX2_BS_DEFAULT 256u
-extern size_t g_tiled_ikj_avx2_bs;
+#define TILED_IKJ_AVX512_MR 6u
+#define TILED_IKJ_AVX512_NR 32u
+#define TILED_IKJ_AVX512_MC 288u
+#define TILED_IKJ_AVX512_BS_DEFAULT 256u
+extern size_t g_tiled_ikj_avx512_bs;
 ```
 
 - $\text{MR} = 6$, $\text{NR} = 32$: filas y columnas del tile registrado. Activan $15$ de los $32$ registros ZMM arquitecturales ($12$ acumuladores $C$ + $2$ vectores $B$ + $1$ broadcast $A$ reusado entre filas). El renombrador fisico del Zen 5 resuelve la dependencia WAW sobre el broadcast sin stall.
 - $\text{MC} = 288 = 48 \times \text{MR}$: tamano del bloque sobre $m$ (multiplo de $\text{MR}$). El panel $A$ activo $\text{MC} \times k_c$ a $k_c = 256$ ocupa $288$ KiB y cabe holgado en el L2 de $1$ MiB por core.
-- $\text{BS}$ (sinonimo `kc`): tamano del bloque sobre $k$. Default $256$, configurable runtime via `matmul_tiled_ikj_avx2_set_bs(bs)`. El panel $B$ activo $k_c \times \text{NR}$ a $k_c = 256$ ocupa $32$ KiB, que cabe en el L1d de $48$ KiB con margen para los acumuladores activos de $C$.
+- $\text{BS}$ (sinonimo `kc`): tamano del bloque sobre $k$. Default $256$, configurable runtime via `matmul_tiled_ikj_avx512_set_bs(bs)`. El panel $B$ activo $k_c \times \text{NR}$ a $k_c = 256$ ocupa $32$ KiB, que cabe en el L1d de $48$ KiB con margen para los acumuladores activos de $C$.
 
-### 14.2 `matmul_tiled_ikj_avx2_set_bs`
+### 14.2 `matmul_tiled_ikj_avx512_set_bs`
 
 ```c
-void matmul_tiled_ikj_avx2_set_bs(size_t bs);
+void matmul_tiled_ikj_avx512_set_bs(size_t bs);
 ```
 
 Cambia $k_c$ en runtime. Solo se rechaza `bs == 0` (cualquier valor positivo es valido; no se requiere multiplo de $8$ porque el microkernel itera $p$ uno a la vez). Util para el `sweep_threshold` y para el barrido manual del bs.
 
-### 14.3 `matmul_tiled_ikj_avx2`
+### 14.3 `matmul_tiled_ikj_avx512`
 
 ```c
-void matmul_tiled_ikj_avx2(scalar_t *C,
+void matmul_tiled_ikj_avx512(scalar_t *C,
                        const scalar_t *A,
                        const scalar_t *B,
                        size_t m, size_t k, size_t n);
@@ -909,10 +909,10 @@ void matmul_tiled_ikj_avx2(scalar_t *C,
 **Computa** $C = A \cdot B$ usando el loop nest BLIS Goto-style:
 
 ```
-pc  loop  step kc  (= g_tiled_ikj_avx2_bs, default 256)
-  ic loop step mc  (= TILED_IKJ_AVX2_MC, default 288)
-    jr loop step nr (= TILED_IKJ_AVX2_NR, fixed 32)
-      ir loop step mr (= TILED_IKJ_AVX2_MR, fixed 6)
+pc  loop  step kc  (= g_tiled_ikj_avx512_bs, default 256)
+  ic loop step mc  (= TILED_IKJ_AVX512_MC, default 288)
+    jr loop step nr (= TILED_IKJ_AVX512_NR, fixed 32)
+      ir loop step mr (= TILED_IKJ_AVX512_MR, fixed 6)
         kernel_avx512_tiled_6x32: kc FMAs accumulating in 12 ZMM registers
 ```
 
@@ -942,26 +942,26 @@ for (size_t p = 0; p < kc; ++p) {
 
 **Complejidad.** $2 \cdot m \cdot k \cdot n$ flops (identica al baseline). La ganancia frente a la version $6$-loop simple es de **densidad aritmetica**: por iteracion del bucle interno $p$ se hacen $12$ FMAs ZMM (retire $6$ ciclos en los dos pipes FMA-512 del Zen 5) contra $2$ loads + $6$ broadcasts (no en el camino critico). El techo single-core teorico del EPYC 9R45 es $\sim 224$ GFLOPS FP32 a $3.5$ GHz turbo bajo AVX-512 sostenido.
 
-### 14.4 `benchmark_iterations_tiled_ikj_avx2`
+### 14.4 `benchmark_iterations_tiled_ikj_avx512`
 
 ```c
-void benchmark_iterations_tiled_ikj_avx2(scalar_t *B_out,
+void benchmark_iterations_tiled_ikj_avx512(scalar_t *B_out,
                                           const scalar_t *A,
                                           const scalar_t *Z,
                                           size_t m, size_t n,
                                           size_t num_iters);
 ```
 
-Mismo patron que `benchmark_iterations` (Seccion 2.2): doble buffer + swap de punteros, aloja y libera internamente. Invoca `matmul_tiled_ikj_avx2` en cada iteracion de la recurrencia.
+Mismo patron que `benchmark_iterations` (Seccion 2.2): doble buffer + swap de punteros, aloja y libera internamente. Invoca `matmul_tiled_ikj_avx512` en cada iteracion de la recurrencia.
 
 ### 14.5 Binarios
 
 | Binario | CLI | Salida CSV |
 |---------|-----|------------|
-| `bin/bench_tiled_ikj_avx2_ZEN5` | `<m> [num_iters] [num_runs] [bs]` | `tiled_ikj_avx2,m,n,num_iters,bs,median_seconds,gflops` (7 columnas) |
-| `bin/validate_tiled_ikj_avx2_ZEN5` | `[m] [bs]` (defaults: m=256, bs=256) | 4 tests: `A*0==0`, `I*Z==Z`, linealidad, cross contra naive |
+| `bin/bench_tiled_ikj_avx512_ZEN5` | `<m> [num_iters] [num_runs] [bs]` | `tiled_ikj_avx512,m,n,num_iters,bs,median_seconds,gflops` (7 columnas) |
+| `bin/validate_tiled_ikj_avx512_ZEN5` | `[m] [bs]` (defaults: m=256, bs=256) | 4 tests: `A*0==0`, `I*Z==Z`, linealidad, cross contra naive |
 
-El cuarto argumento opcional `[bs]` llama a `matmul_tiled_ikj_avx2_set_bs(bs)` antes de las corridas. La columna `bs` del CSV preserva el formato de 7 columnas que ya manejaba el consolidador `consolidate_perf_zen5.py` (rama `len(parts) >= 7`).
+El cuarto argumento opcional `[bs]` llama a `matmul_tiled_ikj_avx512_set_bs(bs)` antes de las corridas. La columna `bs` del CSV preserva el formato de 7 columnas que ya manejaba el consolidador `consolidate_perf_zen5.py` (rama `len(parts) >= 7`).
 
 **Tolerancias de validacion:** `ABS_TOL = 1e-4f`, `REL_TOL = 1e-3f`.
 
@@ -973,7 +973,7 @@ El cuarto argumento opcional `[bs]` llama a `matmul_tiled_ikj_avx2_set_bs(bs)` a
 **Implementacion:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.c`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.c) (microkernel compartido en [`src/microkernels/kernel_avx512_tiled.h`](../src/microkernels/kernel_avx512_tiled.h))
 **Compilacion requerida:** `-O3 -march=native -fopenmp`
 
-Hermano paralelo de `matmul_tiled_ikj_avx2` (Modulo 14). Mismo microkernel registrado $6 \times 32$ AVX-512, mismo loop nest, **pero el bucle externo $i_c$ esta distribuido entre threads** con `#pragma omp for schedule(static)`. La region `omp parallel` se abre una sola vez por invocacion y abarca el bucle $p_c$ entero; el barrier implicito al final de cada `omp for` sincroniza las pasadas $p_c$ (necesario porque $C$ se acumula entre pasadas).
+Hermano paralelo de `matmul_tiled_ikj_avx512` (Modulo 14). Mismo microkernel registrado $6 \times 32$ AVX-512, mismo loop nest, **pero el bucle externo $i_c$ esta distribuido entre threads** con `#pragma omp for schedule(static)`. La region `omp parallel` se abre una sola vez por invocacion y abarca el bucle $p_c$ entero; el barrier implicito al final de cada `omp for` sincroniza las pasadas $p_c$ (necesario porque $C$ se acumula entre pasadas).
 
 ### 15.1 Constantes y global
 
@@ -985,7 +985,7 @@ Hermano paralelo de `matmul_tiled_ikj_avx2` (Modulo 14). Mismo microkernel regis
 extern size_t g_tiled_ikj_omp_bs;
 ```
 
-Misma geometria que `matmul_tiled_ikj_avx2`. El microkernel vive en el header `kernel_avx512_tiled.h` como `static inline`; cada TU que lo incluye obtiene su copia inlineada bajo `-O3`, evitando el spilling de los $12$ acumuladores ZMM a traves del ABI.
+Misma geometria que `matmul_tiled_ikj_avx512`. El microkernel vive en el header `kernel_avx512_tiled.h` como `static inline`; cada TU que lo incluye obtiene su copia inlineada bajo `-O3`, evitando el spilling de los $12$ acumuladores ZMM a traves del ABI.
 
 ### 15.2 Funciones publicas
 
@@ -1024,7 +1024,7 @@ Configuracion recomendada: **`OMP_NUM_THREADS=8 OMP_PLACES=cores OMP_PROC_BIND=c
 
 **CLI bench:** `bench_tiled_ikj_omp_ZEN5 <m> [num_iters] [num_runs] [bs]`
 
-**Salida CSV** (7 columnas, identica a `tiled_ikj_avx2`):
+**Salida CSV** (7 columnas, identica a `tiled_ikj_avx512`):
 ```
 tiled_ikj_omp,m,n,num_iters,bs,median_seconds,gflops
 ```

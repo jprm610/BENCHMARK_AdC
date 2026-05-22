@@ -2,7 +2,7 @@
  * matmul_tiled_ikj_omp.h - OpenMP-parallel BLIS-style 6x32
  *                      register-blocked matmul (Zen 5 / EPYC 9R45
  *                      main_server variant). Sibling of
- *                      matmul_tiled_ikj_avx2 with the same AVX-512
+ *                      matmul_tiled_ikj_avx512 with the same AVX-512
  *                      microkernel (kernel_avx512_tiled_6x32);
  *                      parallelizes the outermost mc loop (ic) so
  *                      each thread owns a contiguous range of C rows.

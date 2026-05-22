@@ -33,7 +33,7 @@ from pathlib import Path
 CANONICAL_VARIANTS = (
     "naive",
     "morton",
-    "morton_avx2",
+    "morton_avx512",
     "morton_omp",
     "loop_ijk",
     "loop_ikj",
@@ -42,7 +42,7 @@ CANONICAL_VARIANTS = (
     "loop_kij",
     "loop_kji",
     "tiled_ikj",
-    "tiled_ikj_avx2",
+    "tiled_ikj_avx512",
     "tiled_ikj_omp",
 )
 
@@ -104,7 +104,7 @@ def parse_bench_file(path: Path) -> tuple[float, float]:
                 continue
             parts = line.split(",")
             try:
-                # tiled_ikj_avx2: variant,m,n,num_iters,bs,median_seconds,gflops (7 cols)
+                # tiled_ikj_avx512: variant,m,n,num_iters,bs,median_seconds,gflops (7 cols)
                 # loop/tiled_ikj: variant,m,n,num_iters,median_seconds,gflops    (6 cols)
                 # naive/morton:   m,n,num_iters,median_seconds,gflops            (5 cols)
                 if len(parts) >= 7:

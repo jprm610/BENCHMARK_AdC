@@ -1,13 +1,13 @@
 /*
  * validate_morton_omp.c - Sanity checks for matmul_morton_omp.
  *
- * Mirror of validate_morton_avx2 (same tolerances, same Morton-of-
+ * Mirror of validate_morton_avx512 (same tolerances, same Morton-of-
  * blocks layout, same five-test pattern) with one extra layer: every
  * cross-validation test is executed with OMP_NUM_THREADS in
  * {1, 4, 12} so we exercise the parallel recursion in three distinct
  * regimes:
  *
- *   - 1 thread:  serial path; should match matmul_morton_avx2 exactly
+ *   - 1 thread:  serial path; should match matmul_morton_avx512 exactly
  *                (modulo -ffast-math reassociation, which the loose
  *                tolerances absorb).
  *   - 4 threads: real parallelism; would expose any race in the
@@ -23,7 +23,7 @@
  * Usage:
  *   validate_morton_omp_O3 [m]
  *
- * m must be a power of two and >= MORTON_AVX2_TILE = 4. Default: 256.
+ * m must be a power of two and >= MORTON_AVX512_TILE = 4. Default: 256.
  *
  * Note: OMP_NUM_THREADS from the environment still applies to the
  * "current-env" round (the first time through the tests). The sweep
@@ -39,7 +39,7 @@
 
 #include "matmul_naive.h"
 #include "matmul_morton.h"
-#include "matmul_morton_avx2.h"
+#include "matmul_morton_avx512.h"
 #include "matmul_morton_omp.h"
 #include "morton.h"
 #include "matrix_utils.h"
@@ -47,10 +47,10 @@
 #define DEFAULT_M 256u
 #define BLOCK_N   128u
 
-/* Same tolerances as validate_morton_avx2: -ffast-math in the
+/* Same tolerances as validate_morton_avx512: -ffast-math in the
  * microkernel allows reassociation of FP additions. The OMP layer
  * does not add new floating-point ops, but tasks may execute the
- * sub-products in a slightly different order than the serial AVX2
+ * sub-products in a slightly different order than the serial AVX-512
  * version (e.g. top before bottom vs. bottom before top), which can
  * change the order of the final accumulation steps inside the leaf.
  * In practice the difference is tiny but we keep the same loose
@@ -190,35 +190,35 @@ static int test_cross_naive_one(size_t m, size_t k, size_t n,
     return rc;
 }
 
-static int test_cross_avx2_one(size_t m, size_t k, size_t n,
+static int test_cross_avx512_one(size_t m, size_t k, size_t n,
                                int n_threads, const char *tag)
 {
     scalar_t *A_row    = xalloc_aligned(m * k);
     scalar_t *A_morton = xalloc_aligned(m * k);
     scalar_t *B        = xalloc_aligned(k * n);
-    scalar_t *C_avx2   = xalloc_aligned(m * n);
+    scalar_t *C_avx512   = xalloc_aligned(m * n);
     scalar_t *C_omp    = xalloc_aligned(m * n);
 
     init_matrix_random(A_row, m, k, 91u + (unsigned int)m);
     init_matrix_random(B,     k, n, 113u + (unsigned int)m);
     reorganize_to_morton_blocks(A_row, A_morton, m);
 
-    matmul_morton_avx2(C_avx2, A_morton, B, m, k, n);
+    matmul_morton_avx512(C_avx512, A_morton, B, m, k, n);
     matmul_morton_omp (C_omp,  A_morton, B, m, k, n);
 
     char label[120];
     snprintf(label, sizeof(label),
-             "%s morton_omp == morton_avx2 (m=%llu, k=%llu, n=%llu, T=%d)",
+             "%s morton_omp == morton_avx512 (m=%llu, k=%llu, n=%llu, T=%d)",
              tag,
              (unsigned long long)m,
              (unsigned long long)k,
              (unsigned long long)n,
              n_threads);
 
-    int rc = check_or_report(label, C_avx2, C_omp, m * n);
+    int rc = check_or_report(label, C_avx512, C_omp, m * n);
 
     xfree(A_row); xfree(A_morton);
-    xfree(B); xfree(C_omp); xfree(C_avx2);
+    xfree(B); xfree(C_omp); xfree(C_avx512);
     return rc;
 }
 
@@ -235,7 +235,7 @@ static int test_cross_sweep_at_threads(int n_threads, const char *tag)
         size_t k = m;
         size_t n = (size_t)BLOCK_N;
         failures += test_cross_naive_one(m, k, n, n_threads, tag);
-        failures += test_cross_avx2_one (m, k, n, n_threads, tag);
+        failures += test_cross_avx512_one (m, k, n, n_threads, tag);
     }
     return failures;
 }
@@ -251,10 +251,10 @@ int main(int argc, char **argv)
         }
         m = (size_t)m_in;
     }
-    if (!is_power_of_two(m) || m < (size_t)MORTON_AVX2_TILE) {
+    if (!is_power_of_two(m) || m < (size_t)MORTON_AVX512_TILE) {
         fprintf(stderr,
                 "Error: m (%llu) must be a power of two and >= %d.\n",
-                (unsigned long long)m, MORTON_AVX2_TILE);
+                (unsigned long long)m, MORTON_AVX512_TILE);
         return EXIT_FAILURE;
     }
 

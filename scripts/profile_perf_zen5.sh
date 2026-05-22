@@ -31,13 +31,13 @@
 #
 # USAGE:
 #   scripts/profile_perf_zen5.sh [variant] [m]
-#     variant : naive | morton | morton_avx2 | morton_omp | loop_* | tiled_ikj*
-#               (default: morton_avx2)
+#     variant : naive | morton | morton_avx512 | morton_omp | loop_* | tiled_ikj*
+#               (default: morton_avx512)
 #     m       : tamano cuadrado del problema (default: 1024)
 #
 # PREREQUISITOS:
 #   - bin/bench_<variant>_ZEN5 debe existir.
-#     Construir con: make results_zen5   (todos)
+#     Construir con: make results   (todos)
 #                    make bench_<variant>_ZEN5  (uno solo)
 #   - kernel.perf_event_paranoid <= 2.
 #     Fix: sudo sysctl -w kernel.perf_event_paranoid=1
@@ -49,7 +49,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-VARIANT=${1:-morton_avx2}
+VARIANT=${1:-morton_avx512}
 M=${2:-1024}
 ITERS_PER_RUN=${ITERS_PER_RUN:-1}
 RUNS=${RUNS:-3}
@@ -99,7 +99,7 @@ fi
 
 if [ ! -x "$BIN" ]; then
     echo "Error: $BIN does not exist or is not executable." >&2
-    echo "Hint: run 'make bench_${VARIANT}_ZEN5' (or 'make results_zen5') first." >&2
+    echo "Hint: run 'make bench_${VARIANT}_ZEN5' (or 'make results') first." >&2
     exit 1
 fi
 
@@ -117,7 +117,7 @@ fi
 mkdir -p "$RESULTS_DIR"
 
 case "$VARIANT" in
-    morton|morton_avx2|morton_omp)
+    morton|morton_avx512|morton_omp)
         if (( M & (M - 1) )) || [ "$M" -lt 4 ]; then
             echo "Error: variant=$VARIANT requires m to be a power of two >= 4 (got $M)." >&2
             exit 1

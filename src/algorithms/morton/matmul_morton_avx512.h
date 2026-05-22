@@ -1,12 +1,10 @@
 /*
- * matmul_morton_avx2.h - Morton-recursive matmul with an AVX-512 + FMA
+ * matmul_morton_avx512.h - Morton-recursive matmul with an AVX-512 + FMA
  * microkernel as leaf (Zen 5 / EPYC 9R45 main_server variant).
  *
- * The "_avx2" suffix in the file name is retained for API compatibility
- * with the rest of the project (drivers, sweep scripts, CSV column
- * labels), but the leaf now uses kernel_avx512_4x32 from
- * kernel_avx512_morton.h. The AVX2 path has been removed because the
- * server CPU (AMD EPYC 9R45, Zen 5) supports the full AVX-512 ISA
+ * Renamed from matmul_morton_avx2.h: the leaf uses kernel_avx512_4x32
+ * from kernel_avx512_morton.h. The AVX2 path has been removed because
+ * the server CPU (AMD EPYC 9R45, Zen 5) supports the full AVX-512 ISA
  * including AVX-512F / VL / BW / DQ, and the 32-wide ZMM register
  * doubles FMA throughput per cycle vs the 16-wide YMM kernel.
  *
@@ -27,7 +25,7 @@
  *         A_morton[ morton_encode(i/MR, j/MR) * MR*MR
  *                 + (i % MR) * MR
  *                 + (j % MR) ].
- *     This is what matmul_morton_avx2 expects.
+ *     This is what matmul_morton_avx512 expects.
  *
  * The contiguity property that the recursion relies on is preserved:
  * when a square sub-block of side 2h is split into four quadrants of
@@ -48,8 +46,8 @@
  * mirroring matmul_morton.
  */
 
-#ifndef MATMUL_MORTON_AVX2_H
-#define MATMUL_MORTON_AVX2_H
+#ifndef MATMUL_MORTON_AVX512_H
+#define MATMUL_MORTON_AVX512_H
 
 #include <stddef.h>
 
@@ -58,38 +56,37 @@
 
 /* Tile side used by the Morton-of-blocks layout. Same as the row
  * count of the microkernel, so each tile in A maps to one panel
- * column slice the microkernel will consume. The "_AVX2" naming is
- * legacy from the Zen 2 variant; the actual value is the AVX-512
+ * column slice the microkernel will consume. Matches the AVX-512
  * kernel's MR (= 4). */
-#define MORTON_AVX2_TILE KERNEL_AVX512_MORTON_MR    /* 4 */
+#define MORTON_AVX512_TILE KERNEL_AVX512_MORTON_MR    /* 4 */
 
 /*
- * matmul_morton_avx2: compute C = A_morton * B with A in the
+ * matmul_morton_avx512: compute C = A_morton * B with A in the
  * Morton-of-blocks layout described above. Same shape contract as
  * matmul_morton: C is m x n (out), A is m x k (in, Morton-blocks),
  * B is k x n (in, row-major).
  */
-void matmul_morton_avx2(scalar_t *C,
-                        const scalar_t *A_morton,
-                        const scalar_t *B,
-                        size_t m, size_t k, size_t n);
+void matmul_morton_avx512(scalar_t *C,
+                          const scalar_t *A_morton,
+                          const scalar_t *B,
+                          size_t m, size_t k, size_t n);
 
 /*
  * Runtime-configurable recursion threshold, analogous to the Sesion 02
  * knob exposed in matmul_morton.h but tracked separately because the
- * regimes are different (the AVX2 kernel amortizes a much larger leaf
+ * regimes are different (the AVX-512 kernel amortizes a much larger leaf
  * than the ijk + morton_encode baseline). Default: 64 * 64 * 128 =
  * 524288 element products, which gives a 64x64 panel of A per leaf
  * (working set ~16 KiB, half of L1d) on the test machine.
  */
-extern size_t g_recursion_threshold_avx2;
-void matmul_morton_avx2_set_threshold(size_t threshold);
+extern size_t g_recursion_threshold_avx512;
+void matmul_morton_avx512_set_threshold(size_t threshold);
 
 /*
  * Reorganize a row-major m x m matrix into the Morton-of-blocks
- * layout consumed by matmul_morton_avx2. Aborts on stderr +
- * exit(EXIT_FAILURE) if m is not a multiple of MORTON_AVX2_TILE or
- * if (m / MORTON_AVX2_TILE) is not a power of two.
+ * layout consumed by matmul_morton_avx512. Aborts on stderr +
+ * exit(EXIT_FAILURE) if m is not a multiple of MORTON_AVX512_TILE or
+ * if (m / MORTON_AVX512_TILE) is not a power of two.
  *
  * Caller allocates A_morton with capacity for m*m elements (e.g.
  * via xalloc_aligned).
@@ -100,26 +97,26 @@ void reorganize_to_morton_blocks(const scalar_t *A_row,
 
 /*
  * Orchestrators with the same semantics as the matmul_morton ones
- * but routed through the AVX2 kernel.
+ * but routed through the AVX-512 kernel.
  *
- * benchmark_iterations_morton_avx2 takes A in row-major and
+ * benchmark_iterations_morton_avx512 takes A in row-major and
  * reorganizes it internally on each call (the reorganization cost
  * is part of the wall-clock time).
  *
- * benchmark_iterations_morton_avx2_preorganized takes A already in
- * the Morton-of-blocks layout and is the one bench_morton_avx2
+ * benchmark_iterations_morton_avx512_preorganized takes A already in
+ * the Morton-of-blocks layout and is the one bench_morton_avx512
  * times.
  */
-void benchmark_iterations_morton_avx2(scalar_t *B_out,
-                                      const scalar_t *A,
-                                      const scalar_t *Z,
-                                      size_t m, size_t n,
-                                      size_t num_iters);
+void benchmark_iterations_morton_avx512(scalar_t *B_out,
+                                        const scalar_t *A,
+                                        const scalar_t *Z,
+                                        size_t m, size_t n,
+                                        size_t num_iters);
 
-void benchmark_iterations_morton_avx2_preorganized(scalar_t *B_out,
-                                                   const scalar_t *A_morton,
-                                                   const scalar_t *Z,
-                                                   size_t m, size_t n,
-                                                   size_t num_iters);
+void benchmark_iterations_morton_avx512_preorganized(scalar_t *B_out,
+                                                     const scalar_t *A_morton,
+                                                     const scalar_t *Z,
+                                                     size_t m, size_t n,
+                                                     size_t num_iters);
 
-#endif /* MATMUL_MORTON_AVX2_H */
+#endif /* MATMUL_MORTON_AVX512_H */

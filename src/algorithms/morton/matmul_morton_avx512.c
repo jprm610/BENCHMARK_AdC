@@ -1,17 +1,17 @@
 /*
- * matmul_morton_avx2.c - Morton-recursive matmul wired to the AVX-512
+ * matmul_morton_avx512.c - Morton-recursive matmul wired to the AVX-512
  * microkernel kernel_avx512_4x32 (Zen 5 / EPYC 9R45 main_server
  * variant).
  *
- * The "_avx2" suffix in the file name is legacy from the Zen 2
- * version; the leaf now uses the 4x32 AVX-512 microkernel exposed by
- * kernel_avx512_morton.h. The AVX2 dispatch path has been removed
- * because the EPYC 9R45 supports AVX-512 natively and the 32-wide
- * ZMM tile delivers ~2x the FMA throughput per cycle.
+ * Renamed from matmul_morton_avx2.c: the leaf now uses the 4x32
+ * AVX-512 microkernel exposed by kernel_avx512_morton.h. The AVX2
+ * dispatch path has been removed because the EPYC 9R45 supports
+ * AVX-512 natively and the 32-wide ZMM tile delivers ~2x the FMA
+ * throughput per cycle.
  *
  * Differences with respect to matmul_morton (Sesion 02):
- *   - A is stored in Morton-of-BLOCKS layout with tile=MORTON_AVX2_TILE=4
- *     instead of Morton-of-elements. See matmul_morton_avx2.h for the
+ *   - A is stored in Morton-of-BLOCKS layout with tile=MORTON_AVX512_TILE=4
+ *     instead of Morton-of-elements. See matmul_morton_avx512.h for the
  *     formal definition.
  *   - The leaf kernel materializes a row-major A_local panel from the
  *     Morton-of-blocks layout, then iterates kernel_avx512_4x32 over
@@ -19,7 +19,7 @@
  *   - The recursion itself is unchanged: the {0,1,2,3}*(half*half)
  *     quadrant offsets still work because they encode positions in
  *     the Z-order of blocks, not of elements.
- *   - The threshold is separate (g_recursion_threshold_avx2) so the
+ *   - The threshold is separate (g_recursion_threshold_avx512) so the
  *     Sesion 02 default for g_recursion_threshold can stay at 131072
  *     and not affect this module.
  *
@@ -27,7 +27,7 @@
  * and threaded through the recursion to avoid malloc/free per leaf.
  */
 
-#include "matmul_morton_avx2.h"
+#include "matmul_morton_avx512.h"
 
 #include "morton.h"                /* morton_encode, is_power_of_two */
 #include "kernel_avx512_morton.h"  /* kernel_avx512_4x32, geometry */
@@ -39,7 +39,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MR KERNEL_AVX512_MORTON_MR   /* 4 — tied to MORTON_AVX2_TILE */
+#define MR KERNEL_AVX512_MORTON_MR   /* 4 — tied to MORTON_AVX512_TILE */
 #define NR KERNEL_AVX512_MORTON_NR   /* 32 */
 #define LEAF_KERNEL kernel_avx512_4x32
 
@@ -49,23 +49,23 @@
  * 90*32*4 = 11 KiB (fits L1d), so threshold = side*side*NR ~ 1048576
  * is a good starting point. The runtime setter is still available
  * for empirical sweeps. */
-#ifndef MORTON_AVX2_THRESHOLD_DEFAULT
-#define MORTON_AVX2_THRESHOLD_DEFAULT ((size_t)1048576UL)
+#ifndef MORTON_AVX512_THRESHOLD_DEFAULT
+#define MORTON_AVX512_THRESHOLD_DEFAULT ((size_t)1048576UL)
 #endif
-size_t g_recursion_threshold_avx2 = MORTON_AVX2_THRESHOLD_DEFAULT;
+size_t g_recursion_threshold_avx512 = MORTON_AVX512_THRESHOLD_DEFAULT;
 
-void matmul_morton_avx2_set_threshold(size_t threshold)
+void matmul_morton_avx512_set_threshold(size_t threshold)
 {
     /* Same guard as matmul_morton's setter: zero would collapse the
      * whole problem to the leaf and is almost certainly a bug. */
     if (threshold == 0) {
         fprintf(stderr,
-                "Warning: matmul_morton_avx2_set_threshold(0) ignored; "
+                "Warning: matmul_morton_avx512_set_threshold(0) ignored; "
                 "keeping previous threshold (%llu).\n",
-                (unsigned long long)g_recursion_threshold_avx2);
+                (unsigned long long)g_recursion_threshold_avx512);
         return;
     }
-    g_recursion_threshold_avx2 = threshold;
+    g_recursion_threshold_avx512 = threshold;
 }
 
 /* ------------------------------------------------------------------ */
@@ -74,8 +74,8 @@ void matmul_morton_avx2_set_threshold(size_t threshold)
 
 /*
  * reorganize_to_morton_blocks: pack a row-major m x m matrix into the
- * Morton-of-blocks layout with tile = MORTON_AVX2_TILE. The number of
- * blocks per side, m / MORTON_AVX2_TILE, must be a power of two so
+ * Morton-of-blocks layout with tile = MORTON_AVX512_TILE. The number of
+ * blocks per side, m / MORTON_AVX512_TILE, must be a power of two so
  * that morton_encode applied to block coordinates yields a contiguous
  * permutation of [0, (m/MR)^2). m itself need not be a power of two
  * by itself, but in this project we always have m a power of two and
@@ -85,17 +85,17 @@ void reorganize_to_morton_blocks(const scalar_t *A_row,
                                  scalar_t *A_morton,
                                  size_t m)
 {
-    if (m == 0 || (m % MORTON_AVX2_TILE) != 0) {
+    if (m == 0 || (m % MORTON_AVX512_TILE) != 0) {
         fprintf(stderr,
                 "Error in reorganize_to_morton_blocks: m (%llu) must be "
-                "a positive multiple of MORTON_AVX2_TILE (%d).\n",
-                (unsigned long long)m, MORTON_AVX2_TILE);
+                "a positive multiple of MORTON_AVX512_TILE (%d).\n",
+                (unsigned long long)m, MORTON_AVX512_TILE);
         exit(EXIT_FAILURE);
     }
-    size_t n_blocks_per_side = m / MORTON_AVX2_TILE;
+    size_t n_blocks_per_side = m / MORTON_AVX512_TILE;
     if (!is_power_of_two(n_blocks_per_side)) {
         fprintf(stderr,
-                "Error in reorganize_to_morton_blocks: m/MORTON_AVX2_TILE "
+                "Error in reorganize_to_morton_blocks: m/MORTON_AVX512_TILE "
                 "(%llu) must be a power of two.\n",
                 (unsigned long long)n_blocks_per_side);
         exit(EXIT_FAILURE);
@@ -108,14 +108,14 @@ void reorganize_to_morton_blocks(const scalar_t *A_row,
         for (size_t bj = 0; bj < n_blocks_per_side; ++bj) {
             uint64_t bcode = morton_encode((uint32_t)bi, (uint32_t)bj);
             size_t block_offset = (size_t)bcode
-                                * (size_t)MORTON_AVX2_TILE
-                                * (size_t)MORTON_AVX2_TILE;
+                                * (size_t)MORTON_AVX512_TILE
+                                * (size_t)MORTON_AVX512_TILE;
 
-            for (size_t ii = 0; ii < MORTON_AVX2_TILE; ++ii) {
-                size_t row_global = bi * MORTON_AVX2_TILE + ii;
-                for (size_t jj = 0; jj < MORTON_AVX2_TILE; ++jj) {
-                    size_t col_global = bj * MORTON_AVX2_TILE + jj;
-                    A_morton[block_offset + ii * MORTON_AVX2_TILE + jj]
+            for (size_t ii = 0; ii < MORTON_AVX512_TILE; ++ii) {
+                size_t row_global = bi * MORTON_AVX512_TILE + ii;
+                for (size_t jj = 0; jj < MORTON_AVX512_TILE; ++jj) {
+                    size_t col_global = bj * MORTON_AVX512_TILE + jj;
+                    A_morton[block_offset + ii * MORTON_AVX512_TILE + jj]
                         = A_row[row_global * m + col_global];
                 }
             }
@@ -140,9 +140,9 @@ static void materialize_a_panel(const scalar_t *A_morton,
 {
     (void)a_block_dim;  /* invariant: m_block == k_block == a_block_dim */
 
-    const size_t blocks_m = m_block / MORTON_AVX2_TILE;
-    const size_t blocks_k = k_block / MORTON_AVX2_TILE;
-    const size_t tile_sq  = (size_t)MORTON_AVX2_TILE * MORTON_AVX2_TILE;
+    const size_t blocks_m = m_block / MORTON_AVX512_TILE;
+    const size_t blocks_k = k_block / MORTON_AVX512_TILE;
+    const size_t tile_sq  = (size_t)MORTON_AVX512_TILE * MORTON_AVX512_TILE;
 
     for (size_t bi = 0; bi < blocks_m; ++bi) {
         for (size_t bj = 0; bj < blocks_k; ++bj) {
@@ -150,15 +150,15 @@ static void materialize_a_panel(const scalar_t *A_morton,
             size_t block_offset = a_morton_offset
                                 + (size_t)bcode * tile_sq;
 
-            for (size_t ii = 0; ii < MORTON_AVX2_TILE; ++ii) {
-                size_t row_local = bi * MORTON_AVX2_TILE + ii;
+            for (size_t ii = 0; ii < MORTON_AVX512_TILE; ++ii) {
+                size_t row_local = bi * MORTON_AVX512_TILE + ii;
                 const scalar_t *src = &A_morton[block_offset
-                                              + ii * MORTON_AVX2_TILE];
+                                              + ii * MORTON_AVX512_TILE];
                 scalar_t *dst = &A_local[row_local * k_block
-                                       + bj * MORTON_AVX2_TILE];
-                /* Copy MORTON_AVX2_TILE = 4 floats; small enough for
+                                       + bj * MORTON_AVX512_TILE];
+                /* Copy MORTON_AVX512_TILE = 4 floats; small enough for
                  * the compiler to emit straight-line moves. */
-                for (size_t jj = 0; jj < MORTON_AVX2_TILE; ++jj) {
+                for (size_t jj = 0; jj < MORTON_AVX512_TILE; ++jj) {
                     dst[jj] = src[jj];
                 }
             }
@@ -172,7 +172,7 @@ static void materialize_a_panel(const scalar_t *A_morton,
  * (m and n are powers of two with m >= 4, n >= 16) but we keep it
  * for safety. Indexing through A_local lets us reuse the
  * materialization for the slow path too. */
-static void kernel_base_morton_avx2_ijk_fallback(
+static void kernel_base_morton_avx512_ijk_fallback(
     scalar_t *C, size_t ldc,
     const scalar_t *A_local, size_t lda,
     const scalar_t *B, size_t ldb,
@@ -194,7 +194,7 @@ static void kernel_base_morton_avx2_ijk_fallback(
 /* Overwrite-variant leaf: materializes A_local, zeros the C tile,
  * then runs the microkernel which accumulates into the (zeroed)
  * tile. The combination is equivalent to "C = A * B" on the leaf. */
-static void kernel_base_morton_avx2(
+static void kernel_base_morton_avx512(
     scalar_t *C, const scalar_t *A_morton, const scalar_t *B,
     size_t m_block, size_t k_block, size_t n_block,
     size_t a_morton_offset, size_t a_block_dim,
@@ -210,7 +210,7 @@ static void kernel_base_morton_avx2(
             scalar_t *crow = &C[i * ldc];
             for (size_t j = 0; j < n_block; ++j) crow[j] = (scalar_t)0;
         }
-        kernel_base_morton_avx2_ijk_fallback(C, ldc,
+        kernel_base_morton_avx512_ijk_fallback(C, ldc,
                                              A_local_scratch, k_block,
                                              B, ldb,
                                              m_block, k_block, n_block,
@@ -242,7 +242,7 @@ static void kernel_base_morton_avx2(
 /* Accumulate-variant leaf: like the overwrite version but skips the
  * zeroing of C, so the microkernel accumulates on top of the previous
  * value. Used when the recursion split on k. */
-static void kernel_base_morton_avx2_add(
+static void kernel_base_morton_avx512_add(
     scalar_t *C, const scalar_t *A_morton, const scalar_t *B,
     size_t m_block, size_t k_block, size_t n_block,
     size_t a_morton_offset, size_t a_block_dim,
@@ -253,7 +253,7 @@ static void kernel_base_morton_avx2_add(
                         A_local_scratch, m_block, k_block);
 
     if ((m_block % MR) != 0 || (n_block % NR) != 0) {
-        kernel_base_morton_avx2_ijk_fallback(C, ldc,
+        kernel_base_morton_avx512_ijk_fallback(C, ldc,
                                              A_local_scratch, k_block,
                                              B, ldb,
                                              m_block, k_block, n_block,
@@ -280,7 +280,7 @@ static void kernel_base_morton_avx2_add(
 /* threaded through every call so the leaves do not malloc.            */
 /* ------------------------------------------------------------------ */
 
-static void matmul_morton_avx2_inner(scalar_t *C,
+static void matmul_morton_avx512_inner(scalar_t *C,
                                      const scalar_t *A_morton,
                                      const scalar_t *B,
                                      size_t m_block, size_t k_block,
@@ -290,7 +290,7 @@ static void matmul_morton_avx2_inner(scalar_t *C,
                                      size_t ldc, size_t ldb,
                                      scalar_t *A_local_scratch);
 
-static void matmul_morton_avx2_inner_add(scalar_t *C,
+static void matmul_morton_avx512_inner_add(scalar_t *C,
                                          const scalar_t *A_morton,
                                          const scalar_t *B,
                                          size_t m_block, size_t k_block,
@@ -300,7 +300,7 @@ static void matmul_morton_avx2_inner_add(scalar_t *C,
                                          size_t ldc, size_t ldb,
                                          scalar_t *A_local_scratch);
 
-static void matmul_morton_avx2_inner(scalar_t *C,
+static void matmul_morton_avx512_inner(scalar_t *C,
                                      const scalar_t *A_morton,
                                      const scalar_t *B,
                                      size_t m_block, size_t k_block,
@@ -310,8 +310,8 @@ static void matmul_morton_avx2_inner(scalar_t *C,
                                      size_t ldc, size_t ldb,
                                      scalar_t *A_local_scratch)
 {
-    if (m_block * k_block * n_block <= g_recursion_threshold_avx2) {
-        kernel_base_morton_avx2(C, A_morton, B,
+    if (m_block * k_block * n_block <= g_recursion_threshold_avx512) {
+        kernel_base_morton_avx512(C, A_morton, B,
                                 m_block, k_block, n_block,
                                 a_morton_offset, a_block_dim,
                                 ldc, ldb,
@@ -322,11 +322,11 @@ static void matmul_morton_avx2_inner(scalar_t *C,
     /* Case N: split n. A is shared between the two recursive calls. */
     if (n_block > a_block_dim && n_block >= 2) {
         size_t n_half = n_block / 2;
-        matmul_morton_avx2_inner(C,          A_morton, B,
+        matmul_morton_avx512_inner(C,          A_morton, B,
                                  m_block, k_block, n_half,
                                  a_morton_offset, a_block_dim,
                                  ldc, ldb, A_local_scratch);
-        matmul_morton_avx2_inner(C + n_half, A_morton, B + n_half,
+        matmul_morton_avx512_inner(C + n_half, A_morton, B + n_half,
                                  m_block, k_block, n_block - n_half,
                                  a_morton_offset, a_block_dim,
                                  ldc, ldb, A_local_scratch);
@@ -337,7 +337,7 @@ static void matmul_morton_avx2_inner(scalar_t *C,
      * of A. With the Morton-of-blocks layout the quadrants still
      * occupy four consecutive (half*half)-sized segments of A_morton:
      * the Z-order key is computed on block coordinates, but the size
-     * of each block is constant (MORTON_AVX2_TILE^2 floats), so the
+     * of each block is constant (MORTON_AVX512_TILE^2 floats), so the
      * offsets scale exactly like the Morton-of-elements case. */
     if (a_block_dim >= 2) {
         assert(m_block == k_block);
@@ -347,25 +347,25 @@ static void matmul_morton_avx2_inner(scalar_t *C,
         size_t quadrant_size = half * half;
 
         /* C_top = A_TL * B_top  (overwrite) */
-        matmul_morton_avx2_inner(C, A_morton, B,
+        matmul_morton_avx512_inner(C, A_morton, B,
                                  half, half, n_block,
                                  a_morton_offset + (size_t)0 * quadrant_size,
                                  half, ldc, ldb, A_local_scratch);
 
         /* C_top += A_TR * B_bot (accumulate) */
-        matmul_morton_avx2_inner_add(C, A_morton, B + half * ldb,
+        matmul_morton_avx512_inner_add(C, A_morton, B + half * ldb,
                                      half, half, n_block,
                                      a_morton_offset + (size_t)1 * quadrant_size,
                                      half, ldc, ldb, A_local_scratch);
 
         /* C_bot = A_BL * B_top  (overwrite) */
-        matmul_morton_avx2_inner(C + half * ldc, A_morton, B,
+        matmul_morton_avx512_inner(C + half * ldc, A_morton, B,
                                  half, half, n_block,
                                  a_morton_offset + (size_t)2 * quadrant_size,
                                  half, ldc, ldb, A_local_scratch);
 
         /* C_bot += A_BR * B_bot (accumulate) */
-        matmul_morton_avx2_inner_add(C + half * ldc, A_morton, B + half * ldb,
+        matmul_morton_avx512_inner_add(C + half * ldc, A_morton, B + half * ldb,
                                      half, half, n_block,
                                      a_morton_offset + (size_t)3 * quadrant_size,
                                      half, ldc, ldb, A_local_scratch);
@@ -373,13 +373,13 @@ static void matmul_morton_avx2_inner(scalar_t *C,
     }
 
     /* Degenerate fallback. */
-    kernel_base_morton_avx2(C, A_morton, B,
+    kernel_base_morton_avx512(C, A_morton, B,
                             m_block, k_block, n_block,
                             a_morton_offset, a_block_dim,
                             ldc, ldb, A_local_scratch);
 }
 
-static void matmul_morton_avx2_inner_add(scalar_t *C,
+static void matmul_morton_avx512_inner_add(scalar_t *C,
                                          const scalar_t *A_morton,
                                          const scalar_t *B,
                                          size_t m_block, size_t k_block,
@@ -389,8 +389,8 @@ static void matmul_morton_avx2_inner_add(scalar_t *C,
                                          size_t ldc, size_t ldb,
                                          scalar_t *A_local_scratch)
 {
-    if (m_block * k_block * n_block <= g_recursion_threshold_avx2) {
-        kernel_base_morton_avx2_add(C, A_morton, B,
+    if (m_block * k_block * n_block <= g_recursion_threshold_avx512) {
+        kernel_base_morton_avx512_add(C, A_morton, B,
                                     m_block, k_block, n_block,
                                     a_morton_offset, a_block_dim,
                                     ldc, ldb,
@@ -400,11 +400,11 @@ static void matmul_morton_avx2_inner_add(scalar_t *C,
 
     if (n_block > a_block_dim && n_block >= 2) {
         size_t n_half = n_block / 2;
-        matmul_morton_avx2_inner_add(C,          A_morton, B,
+        matmul_morton_avx512_inner_add(C,          A_morton, B,
                                      m_block, k_block, n_half,
                                      a_morton_offset, a_block_dim,
                                      ldc, ldb, A_local_scratch);
-        matmul_morton_avx2_inner_add(C + n_half, A_morton, B + n_half,
+        matmul_morton_avx512_inner_add(C + n_half, A_morton, B + n_half,
                                      m_block, k_block, n_block - n_half,
                                      a_morton_offset, a_block_dim,
                                      ldc, ldb, A_local_scratch);
@@ -421,26 +421,26 @@ static void matmul_morton_avx2_inner_add(scalar_t *C,
         /* All four products accumulate: we are already inside the
          * _add branch, so C carries a previous value that every
          * product must add onto. */
-        matmul_morton_avx2_inner_add(C, A_morton, B,
+        matmul_morton_avx512_inner_add(C, A_morton, B,
                                      half, half, n_block,
                                      a_morton_offset + (size_t)0 * quadrant_size,
                                      half, ldc, ldb, A_local_scratch);
-        matmul_morton_avx2_inner_add(C, A_morton, B + half * ldb,
+        matmul_morton_avx512_inner_add(C, A_morton, B + half * ldb,
                                      half, half, n_block,
                                      a_morton_offset + (size_t)1 * quadrant_size,
                                      half, ldc, ldb, A_local_scratch);
-        matmul_morton_avx2_inner_add(C + half * ldc, A_morton, B,
+        matmul_morton_avx512_inner_add(C + half * ldc, A_morton, B,
                                      half, half, n_block,
                                      a_morton_offset + (size_t)2 * quadrant_size,
                                      half, ldc, ldb, A_local_scratch);
-        matmul_morton_avx2_inner_add(C + half * ldc, A_morton, B + half * ldb,
+        matmul_morton_avx512_inner_add(C + half * ldc, A_morton, B + half * ldb,
                                      half, half, n_block,
                                      a_morton_offset + (size_t)3 * quadrant_size,
                                      half, ldc, ldb, A_local_scratch);
         return;
     }
 
-    kernel_base_morton_avx2_add(C, A_morton, B,
+    kernel_base_morton_avx512_add(C, A_morton, B,
                                 m_block, k_block, n_block,
                                 a_morton_offset, a_block_dim,
                                 ldc, ldb, A_local_scratch);
@@ -466,32 +466,32 @@ static size_t scratch_side_for_threshold(size_t threshold)
     return side;
 }
 
-void matmul_morton_avx2(scalar_t *C,
+void matmul_morton_avx512(scalar_t *C,
                         const scalar_t *A_morton,
                         const scalar_t *B,
                         size_t m, size_t k, size_t n)
 {
     if (m != k) {
         fprintf(stderr,
-                "Error in matmul_morton_avx2: A must be square "
+                "Error in matmul_morton_avx512: A must be square "
                 "(got m=%llu, k=%llu).\n",
                 (unsigned long long)m, (unsigned long long)k);
         exit(EXIT_FAILURE);
     }
     if (!is_power_of_two(m) || m < (size_t)MR) {
         fprintf(stderr,
-                "Error in matmul_morton_avx2: m (%llu) must be a power "
+                "Error in matmul_morton_avx512: m (%llu) must be a power "
                 "of two and at least MR = %d.\n",
                 (unsigned long long)m, MR);
         exit(EXIT_FAILURE);
     }
 
-    size_t side = scratch_side_for_threshold(g_recursion_threshold_avx2);
+    size_t side = scratch_side_for_threshold(g_recursion_threshold_avx512);
     /* Clamp to the actual problem so we never allocate more than m*m. */
     if (side > m) side = m;
     scalar_t *A_local = xalloc_aligned(side * side);
 
-    matmul_morton_avx2_inner(C, A_morton, B,
+    matmul_morton_avx512_inner(C, A_morton, B,
                              m, k, n,
                              /* a_morton_offset = */ 0,
                              /* a_block_dim     = */ m,
@@ -506,7 +506,7 @@ void matmul_morton_avx2(scalar_t *C,
 /* Benchmark orchestrators                                             */
 /* ------------------------------------------------------------------ */
 
-void benchmark_iterations_morton_avx2(scalar_t *B_out,
+void benchmark_iterations_morton_avx512(scalar_t *B_out,
                                       const scalar_t *A,
                                       const scalar_t *Z,
                                       size_t m, size_t n,
@@ -515,13 +515,13 @@ void benchmark_iterations_morton_avx2(scalar_t *B_out,
     scalar_t *A_morton = xalloc_aligned(m * m);
     reorganize_to_morton_blocks(A, A_morton, m);
 
-    benchmark_iterations_morton_avx2_preorganized(B_out, A_morton, Z,
+    benchmark_iterations_morton_avx512_preorganized(B_out, A_morton, Z,
                                                   m, n, num_iters);
 
     xfree(A_morton);
 }
 
-void benchmark_iterations_morton_avx2_preorganized(scalar_t *B_out,
+void benchmark_iterations_morton_avx512_preorganized(scalar_t *B_out,
                                                    const scalar_t *A_morton,
                                                    const scalar_t *Z,
                                                    size_t m, size_t n,
@@ -533,7 +533,7 @@ void benchmark_iterations_morton_avx2_preorganized(scalar_t *B_out,
     memcpy(B_curr, Z, m * n * sizeof(scalar_t));
 
     for (size_t iter = 0; iter < num_iters; ++iter) {
-        matmul_morton_avx2(B_next, A_morton, B_curr, m, m, n);
+        matmul_morton_avx512(B_next, A_morton, B_curr, m, m, n);
 
         /* Store the first n rows of B_next into the output buffer. */
         scalar_t *out_block = B_out + iter * n * n;

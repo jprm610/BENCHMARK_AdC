@@ -1,22 +1,21 @@
 /*
- * matmul_tiled_ikj_avx2.c - BLIS-style 6x32 register-blocked matmul
+ * matmul_tiled_ikj_avx512.c - BLIS-style 6x32 register-blocked matmul
  *                           (Zen 5 / EPYC 9R45 main_server variant).
  *
- * The "_avx2" suffix in the file name is legacy from the Zen 2
- * version. The leaf now uses the 6x32 AVX-512 microkernel exposed
- * by kernel_avx512_tiled.h. The AVX2 dispatch path (16-wide YMM
- * 6x16 kernel) has been removed because the EPYC 9R45 supports
- * AVX-512 natively and the wider tile doubles FMA throughput per
- * cycle.
+ * Renamed from matmul_tiled_ikj_avx2.c: the leaf now uses the 6x32
+ * AVX-512 microkernel exposed by kernel_avx512_tiled.h. The AVX2
+ * dispatch path (16-wide YMM 6x16 kernel) has been removed because
+ * the EPYC 9R45 supports AVX-512 natively and the wider tile doubles
+ * FMA throughput per cycle.
  *
- * See matmul_tiled_ikj_avx2.h for the loop nest design and the
+ * See matmul_tiled_ikj_avx512.h for the loop nest design and the
  * rationale behind the block sizes. This file contains:
- *   - the public matmul_tiled_ikj_avx2 function that orchestrates the
+ *   - the public matmul_tiled_ikj_avx512 function that orchestrates the
  *     three-level tile loop pc / ic / jr-ir, calling into the 6x32
  *     microkernel from kernel_avx512_tiled.h for the aligned interior
  *     and into kernel_avx512_tiled_residual_rows for the m % MR /
  *     n % NR tails;
- *   - the public benchmark_iterations_tiled_ikj_avx2 wrapper that
+ *   - the public benchmark_iterations_tiled_ikj_avx512 wrapper that
  *     handles the iterated B_{k+1} = A * B_k recurrence with the
  *     standard double-buffer + swap pattern.
  *
@@ -33,35 +32,35 @@
  * copy under -O3.
  */
 
-#include "matmul_tiled_ikj_avx2.h"
+#include "matmul_tiled_ikj_avx512.h"
 #include "matrix_utils.h"
 #include "kernel_avx512_tiled.h"   /* kernel_avx512_tiled_6x32, residual */
 
 #include <stdio.h>
 #include <string.h>
 
-size_t g_tiled_ikj_avx2_bs = TILED_IKJ_AVX2_BS_DEFAULT;
+size_t g_tiled_ikj_avx512_bs = TILED_IKJ_AVX512_BS_DEFAULT;
 
-void matmul_tiled_ikj_avx2_set_bs(size_t bs)
+void matmul_tiled_ikj_avx512_set_bs(size_t bs)
 {
     if (bs == 0) {
         fprintf(stderr,
-                "Warning: matmul_tiled_ikj_avx2_set_bs(0) ignored; "
+                "Warning: matmul_tiled_ikj_avx512_set_bs(0) ignored; "
                 "bs must be positive.\n");
         return;
     }
-    g_tiled_ikj_avx2_bs = bs;
+    g_tiled_ikj_avx512_bs = bs;
 }
 
-void matmul_tiled_ikj_avx2(scalar_t *C,
+void matmul_tiled_ikj_avx512(scalar_t *C,
                        const scalar_t *A,
                        const scalar_t *B,
                        size_t m, size_t k, size_t n)
 {
-    const size_t MR = TILED_IKJ_AVX2_MR;
-    const size_t NR = TILED_IKJ_AVX2_NR;
-    const size_t MC = TILED_IKJ_AVX2_MC;
-    const size_t KC = g_tiled_ikj_avx2_bs;
+    const size_t MR = TILED_IKJ_AVX512_MR;
+    const size_t NR = TILED_IKJ_AVX512_NR;
+    const size_t MC = TILED_IKJ_AVX512_MC;
+    const size_t KC = g_tiled_ikj_avx512_bs;
 
     memset(C, 0, m * n * sizeof(scalar_t));
 
@@ -118,7 +117,7 @@ void matmul_tiled_ikj_avx2(scalar_t *C,
     }
 }
 
-void benchmark_iterations_tiled_ikj_avx2(scalar_t *B_out,
+void benchmark_iterations_tiled_ikj_avx512(scalar_t *B_out,
                                      const scalar_t *A,
                                      const scalar_t *Z,
                                      size_t m, size_t n,
@@ -130,7 +129,7 @@ void benchmark_iterations_tiled_ikj_avx2(scalar_t *B_out,
     memcpy(B_curr, Z, m * n * sizeof(scalar_t));
 
     for (size_t iter = 0; iter < num_iters; ++iter) {
-        matmul_tiled_ikj_avx2(B_next, A, B_curr, m, m, n);
+        matmul_tiled_ikj_avx512(B_next, A, B_curr, m, m, n);
 
         scalar_t *out_block = B_out + iter * n * n;
         for (size_t i = 0; i < n; ++i)

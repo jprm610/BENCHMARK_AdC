@@ -1,11 +1,11 @@
 /*
- * validate_morton_avx2.c - Sanity checks for matmul_morton_avx2.
+ * validate_morton_avx512.c - Sanity checks for matmul_morton_avx512.
  *
  * Same pattern as validate_morton.c (Sesion 02) but with three
  * differences:
  *
  *   1. The Morton layout used here is Morton-of-blocks with tile=4
- *      (see matmul_morton_avx2.h). A is produced with
+ *      (see matmul_morton_avx512.h). A is produced with
  *      reorganize_to_morton_blocks, not reorganize_to_morton.
  *
  *   2. The cross-validation reference is matmul_naive (ground truth)
@@ -25,13 +25,13 @@
  *   1. A * 0 = 0.
  *   2. I * Z = Z.
  *   3. A * (Z1 + Z2) = A*Z1 + A*Z2 (linearity).
- *   4. matmul_morton_avx2 == matmul_naive  on m in {4, 16, 64, 256}.
- *   5. matmul_morton_avx2 == matmul_morton on m in {4, 16, 64, 256}.
+ *   4. matmul_morton_avx512 == matmul_naive  on m in {4, 16, 64, 256}.
+ *   5. matmul_morton_avx512 == matmul_morton on m in {4, 16, 64, 256}.
  *
  * Usage:
- *   validate_morton_avx2_O3 [m]
+ *   validate_morton_avx512_O3 [m]
  *
- * m must be a power of two and >= MORTON_AVX2_TILE = 4. Default: 256.
+ * m must be a power of two and >= MORTON_AVX512_TILE = 4. Default: 256.
  */
 
 #include <stdio.h>
@@ -40,14 +40,14 @@
 
 #include "matmul_naive.h"
 #include "matmul_morton.h"
-#include "matmul_morton_avx2.h"
+#include "matmul_morton_avx512.h"
 #include "morton.h"
 #include "matrix_utils.h"
 
 #define DEFAULT_M 256u
 #define BLOCK_N   128u
 
-/* Looser tolerances than validate_morton: -ffast-math in the AVX2
+/* Looser tolerances than validate_morton: -ffast-math in the AVX-512
  * microkernel allows reassociation of FP additions, so the
  * acculumated rounding can diverge from a strict ijk reference. */
 static const scalar_t ABS_TOL = (scalar_t)1.0e-4;
@@ -87,7 +87,7 @@ static int test_zero(size_t m, size_t n)
     init_matrix_zero(Z, m, n);
     init_matrix_zero(expected, m, n);
 
-    matmul_morton_avx2(C, A_morton, Z, m, m, n);
+    matmul_morton_avx512(C, A_morton, Z, m, m, n);
     int rc = check_or_report("A * 0 == 0", expected, C, m * n);
 
     xfree(A_row); xfree(A_morton); xfree(Z); xfree(C); xfree(expected);
@@ -105,7 +105,7 @@ static int test_identity(size_t m, size_t n)
     reorganize_to_morton_blocks(I_row, I_morton, m);
     init_matrix_random(Z, m, n, 22u);
 
-    matmul_morton_avx2(C, I_morton, Z, m, m, n);
+    matmul_morton_avx512(C, I_morton, Z, m, m, n);
     int rc = check_or_report("I * Z == Z", Z, C, m * n);
 
     xfree(I_row); xfree(I_morton); xfree(Z); xfree(C);
@@ -131,9 +131,9 @@ static int test_linearity(size_t m, size_t n)
 
     for (size_t i = 0; i < m * n; ++i) Zs[i] = Z1[i] + Z2[i];
 
-    matmul_morton_avx2(C1, A_morton, Z1, m, m, n);
-    matmul_morton_avx2(C2, A_morton, Z2, m, m, n);
-    matmul_morton_avx2(Cs, A_morton, Zs, m, m, n);
+    matmul_morton_avx512(C1, A_morton, Z1, m, m, n);
+    matmul_morton_avx512(C2, A_morton, Z2, m, m, n);
+    matmul_morton_avx512(Cs, A_morton, Zs, m, m, n);
 
     for (size_t i = 0; i < m * n; ++i) sum[i] = C1[i] + C2[i];
 
@@ -145,37 +145,37 @@ static int test_linearity(size_t m, size_t n)
     return rc;
 }
 
-/* Test 4: AVX2 result must match the naive ground truth. */
+/* Test 4: AVX-512 result must match the naive ground truth. */
 static int test_cross_naive_one(size_t m, size_t k, size_t n)
 {
     scalar_t *A_row    = xalloc_aligned(m * k);
     scalar_t *A_morton = xalloc_aligned(m * k);
     scalar_t *B        = xalloc_aligned(k * n);
     scalar_t *C_naive  = xalloc_aligned(m * n);
-    scalar_t *C_avx2   = xalloc_aligned(m * n);
+    scalar_t *C_avx512   = xalloc_aligned(m * n);
 
     init_matrix_random(A_row, m, k, 51u + (unsigned int)m);
     init_matrix_random(B,     k, n, 71u + (unsigned int)m);
     reorganize_to_morton_blocks(A_row, A_morton, m);
 
     matmul_naive       (C_naive, A_row,    B, m, k, n);
-    matmul_morton_avx2 (C_avx2,  A_morton, B, m, k, n);
+    matmul_morton_avx512 (C_avx512,  A_morton, B, m, k, n);
 
     char label[96];
     snprintf(label, sizeof(label),
-             "morton_avx2 == naive (m=%llu, k=%llu, n=%llu)",
+             "morton_avx512 == naive (m=%llu, k=%llu, n=%llu)",
              (unsigned long long)m,
              (unsigned long long)k,
              (unsigned long long)n);
 
-    int rc = check_or_report(label, C_naive, C_avx2, m * n);
+    int rc = check_or_report(label, C_naive, C_avx512, m * n);
 
     xfree(A_row); xfree(A_morton);
-    xfree(B); xfree(C_naive); xfree(C_avx2);
+    xfree(B); xfree(C_naive); xfree(C_avx512);
     return rc;
 }
 
-/* Test 5: AVX2 result must match the Sesion 02 Morton kernel. Both
+/* Test 5: AVX-512 result must match the Sesion 02 Morton kernel. Both
  * are recursive, but they consume DIFFERENT physical layouts of A
  * (Morton-of-elements vs Morton-of-blocks). Any bug in the offset
  * arithmetic of either side, or in either reorganization function,
@@ -187,7 +187,7 @@ static int test_cross_morton_one(size_t m, size_t k, size_t n)
     scalar_t *A_morton_blocks = xalloc_aligned(m * k);
     scalar_t *B               = xalloc_aligned(k * n);
     scalar_t *C_morton        = xalloc_aligned(m * n);
-    scalar_t *C_avx2          = xalloc_aligned(m * n);
+    scalar_t *C_avx512          = xalloc_aligned(m * n);
 
     init_matrix_random(A_row, m, k, 91u + (unsigned int)m);
     init_matrix_random(B,     k, n, 113u + (unsigned int)m);
@@ -195,20 +195,20 @@ static int test_cross_morton_one(size_t m, size_t k, size_t n)
     reorganize_to_morton_blocks(A_row, A_morton_blocks, m);
 
     matmul_morton      (C_morton, A_morton_elem,   B, m, k, n);
-    matmul_morton_avx2 (C_avx2,   A_morton_blocks, B, m, k, n);
+    matmul_morton_avx512 (C_avx512,   A_morton_blocks, B, m, k, n);
 
     char label[96];
     snprintf(label, sizeof(label),
-             "morton_avx2 == morton (m=%llu, k=%llu, n=%llu)",
+             "morton_avx512 == morton (m=%llu, k=%llu, n=%llu)",
              (unsigned long long)m,
              (unsigned long long)k,
              (unsigned long long)n);
 
-    int rc = check_or_report(label, C_morton, C_avx2, m * n);
+    int rc = check_or_report(label, C_morton, C_avx512, m * n);
 
     xfree(A_row);
     xfree(A_morton_elem); xfree(A_morton_blocks);
-    xfree(B); xfree(C_morton); xfree(C_avx2);
+    xfree(B); xfree(C_morton); xfree(C_avx512);
     return rc;
 }
 
@@ -238,16 +238,16 @@ int main(int argc, char **argv)
         }
         m = (size_t)m_in;
     }
-    if (!is_power_of_two(m) || m < (size_t)MORTON_AVX2_TILE) {
+    if (!is_power_of_two(m) || m < (size_t)MORTON_AVX512_TILE) {
         fprintf(stderr,
                 "Error: m (%llu) must be a power of two and >= %d.\n",
-                (unsigned long long)m, MORTON_AVX2_TILE);
+                (unsigned long long)m, MORTON_AVX512_TILE);
         return EXIT_FAILURE;
     }
 
     size_t n = (m < BLOCK_N) ? m : BLOCK_N;
 
-    printf("Validating matmul_morton_avx2 at m=%llu, n=%llu\n",
+    printf("Validating matmul_morton_avx512 at m=%llu, n=%llu\n",
            (unsigned long long)m, (unsigned long long)n);
     printf("Tolerances: abs=%.1e, rel=%.1e\n",
            (double)ABS_TOL, (double)REL_TOL);

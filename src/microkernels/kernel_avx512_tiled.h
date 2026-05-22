@@ -1,7 +1,7 @@
 /*
  * kernel_avx512_tiled.h - AVX-512 + FMA 6x32 register-blocked
  *                          microkernel for the BLIS-style tiled_ikj
- *                          family (matmul_tiled_ikj_avx2 and
+ *                          family (matmul_tiled_ikj_avx512 and
  *                          matmul_tiled_ikj_omp).
  *
  * Target: AMD EPYC 9R45 (Zen 5) on AWS c8a.2xlarge.

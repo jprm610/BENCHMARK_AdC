@@ -2,18 +2,18 @@
  * matmul_tiled_ikj_omp.c - OpenMP-parallel BLIS-style 6x32 matmul
  *                          (Zen 5 / EPYC 9R45 main_server variant).
  *
- * Sibling of matmul_tiled_ikj_avx2.c: same microkernel, same tile
+ * Sibling of matmul_tiled_ikj_avx512.c: same microkernel, same tile
  * geometry, but the public function opens an `omp parallel` region
  * around the pc loop and distributes the ic loop with
  * `omp for schedule(static)`.
  *
  * The 6x32 microkernel and the AVX-512 residual-rows fallback live
  * in kernel_avx512_tiled.h and are exposed as `static inline` so
- * each translation unit (this file and matmul_tiled_ikj_avx2.c)
+ * each translation unit (this file and matmul_tiled_ikj_avx512.c)
  * gets its own inlined copy under -O3 without crossing a
- * function-call boundary. The AVX2 dispatch path that the Zen 2
- * version carried in #ifdef branches has been removed because the
- * server CPU supports AVX-512 natively.
+ * function-call boundary. The legacy AVX2 dispatch path that the
+ * Zen 2 version carried in #ifdef branches has been removed because
+ * the server CPU supports AVX-512 natively.
  *
  * Correctness: each thread writes a disjoint range of C rows (the
  * outer `omp for` partitions the ic loop and within an ic block one

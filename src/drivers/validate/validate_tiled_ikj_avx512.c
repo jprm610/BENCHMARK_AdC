@@ -1,21 +1,21 @@
 /*
- * validate_tiled_ikj_avx2.c - Algebraic sanity checks for matmul_tiled_ikj_avx2.
+ * validate_tiled_ikj_avx512.c - Algebraic sanity checks for matmul_tiled_ikj_avx512.
  *
  * Same four tests as validate_tiled_ikj.c:
  *   1. A * 0 == 0
  *   2. I * Z == Z  (identity matrix)
  *   3. A * (Z1 + Z2) == A*Z1 + A*Z2  (linearity)
- *   4. matmul_tiled_ikj_avx2 matches matmul_naive for a random (A, B) pair.
+ *   4. matmul_tiled_ikj_avx512 matches matmul_naive for a random (A, B) pair.
  *
- * Compiled with CFLAGS_O3_ZEN2 (requires -mavx2 -mfma for the intrinsics
- * in matmul_tiled_ikj_avx2.c). Tolerances match validate_tiled_ikj because
- * CFLAGS_O3_ZEN2 does not include -ffast-math and the FMA rounding is
+ * Compiled with CFLAGS_O3_ZEN5 (requires -mavx512f -mavx512vl for the intrinsics
+ * in matmul_tiled_ikj_avx512.c). Tolerances match validate_tiled_ikj because
+ * CFLAGS_O3_ZEN5 does not include -ffast-math and the FMA rounding is
  * deterministic for a fixed instruction sequence.
  *
  * Usage:
- *   validate_tiled_ikj_avx2_O3 [m] [bs]
+ *   validate_tiled_ikj_avx512_O3 [m] [bs]
  *     m  : problem size, default 256
- *     bs : block size passed to matmul_tiled_ikj_avx2_set_bs, default 64
+ *     bs : block size passed to matmul_tiled_ikj_avx512_set_bs, default 64
  *
  * Exits 0 if all tests pass, 1 on first failure.
  */
@@ -24,7 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "matmul_tiled_ikj_avx2.h"
+#include "matmul_tiled_ikj_avx512.h"
 #include "matmul_naive.h"
 #include "matrix_utils.h"
 
@@ -51,7 +51,7 @@ static int check(const char *label,
 int main(int argc, char **argv)
 {
     size_t m  = 256;
-    size_t bs = TILED_IKJ_AVX2_BS_DEFAULT;
+    size_t bs = TILED_IKJ_AVX512_BS_DEFAULT;
 
     if (argc >= 2) {
         long long m_in = atoll(argv[1]);
@@ -70,13 +70,13 @@ int main(int argc, char **argv)
         bs = (size_t)bs_in;
     }
 
-    matmul_tiled_ikj_avx2_set_bs(bs);
+    matmul_tiled_ikj_avx512_set_bs(bs);
 
     size_t n = m;
     size_t k = m;
 
-    printf("Validating matmul_tiled_ikj_avx2 at m=%llu (bs=%llu)\n",
-           (unsigned long long)m, (unsigned long long)g_tiled_ikj_avx2_bs);
+    printf("Validating matmul_tiled_ikj_avx512 at m=%llu (bs=%llu)\n",
+           (unsigned long long)m, (unsigned long long)g_tiled_ikj_avx512_bs);
     printf("Tolerances: abs=%.1e, rel=%.1e\n", (double)ABS_TOL, (double)REL_TOL);
 
     scalar_t *A    = xalloc_aligned(m * k);
@@ -106,26 +106,26 @@ int main(int argc, char **argv)
     scalar_t *expected_zero = xalloc_aligned(m * n);
     init_matrix_zero(zero, k, n);
     init_matrix_zero(expected_zero, m, n);
-    matmul_tiled_ikj_avx2(C, A, zero, m, k, n);
+    matmul_tiled_ikj_avx512(C, A, zero, m, k, n);
     all_ok &= check("A * 0 == 0", expected_zero, C, m * n);
     xfree(zero);
     xfree(expected_zero);
 
     /* Test 2: I * Z == Z */
-    matmul_tiled_ikj_avx2(C, I_m, Z, m, k, n);
+    matmul_tiled_ikj_avx512(C, I_m, Z, m, k, n);
     all_ok &= check("I * Z == Z", Z, C, m * n);
 
     /* Test 3: A * (Z1 + Z2) == A*Z1 + A*Z2 */
-    matmul_tiled_ikj_avx2(C,    A, Zsum, m, k, n);
-    matmul_tiled_ikj_avx2(C2,   A, Z1,   m, k, n);
-    matmul_tiled_ikj_avx2(Ctmp, A, Z2,   m, k, n);
+    matmul_tiled_ikj_avx512(C,    A, Zsum, m, k, n);
+    matmul_tiled_ikj_avx512(C2,   A, Z1,   m, k, n);
+    matmul_tiled_ikj_avx512(Ctmp, A, Z2,   m, k, n);
     for (size_t idx = 0; idx < m * n; ++idx)
         C2[idx] += Ctmp[idx];
     all_ok &= check("A*(Z1+Z2) == A*Z1+A*Z2", C2, C, m * n);
 
     /* Test 4: matches matmul_naive */
     matmul_naive(Cref, A, Z, m, k, n);
-    matmul_tiled_ikj_avx2(C, A, Z, m, k, n);
+    matmul_tiled_ikj_avx512(C, A, Z, m, k, n);
     all_ok &= check("matches matmul_naive", Cref, C, m * n);
 
     xfree(A); xfree(Z); xfree(Z1); xfree(Z2); xfree(Zsum);

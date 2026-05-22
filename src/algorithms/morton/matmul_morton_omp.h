@@ -4,8 +4,8 @@
  * EPYC 9R45 main_server variant).
  *
  * The recursion shape and the leaf kernel are the same as
- * matmul_morton_avx2: same Morton-of-blocks layout for A
- * (tile = MORTON_AVX2_TILE = 4), same 4x32 AVX-512 microkernel
+ * matmul_morton_avx512: same Morton-of-blocks layout for A
+ * (tile = MORTON_AVX512_TILE = 4), same 4x32 AVX-512 microkernel
  * (kernel_avx512_4x32 from kernel_avx512_morton.h), same overwrite /
  * accumulate split. The only additions are:
  *
@@ -21,7 +21,7 @@
  *   - Two thresholds, both runtime-tunable:
  *       * g_recursion_threshold_omp - sub-problem size at which the
  *         recursion falls to the leaf kernel. Default 524288 (same
- *         shape as matmul_morton_avx2's default).
+ *         shape as matmul_morton_avx512's default).
  *       * g_parallel_threshold_omp - sub-problem size at which the
  *         recursion stops spawning new tasks and runs sequentially.
  *         Default 524288 (same as the leaf threshold: tasks fire at
@@ -35,9 +35,9 @@
  *   OMP_NUM_THREADS=8 OMP_PLACES=cores OMP_PROC_BIND=close
  *
  * Pre-conditions for the public wrapper are identical to
- * matmul_morton_avx2: m == k, m a power of two with m >= MR = 4, A in
+ * matmul_morton_avx512: m == k, m a power of two with m >= MR = 4, A in
  * Morton-of-blocks layout (use reorganize_to_morton_blocks from
- * matmul_morton_avx2.h, since the layout is shared).
+ * matmul_morton_avx512.h, since the layout is shared).
  */
 
 #ifndef MATMUL_MORTON_OMP_H
@@ -46,11 +46,11 @@
 #include <stddef.h>
 
 #include "matrix_utils.h"        /* scalar_t */
-#include "matmul_morton_avx2.h"  /* reuse MORTON_AVX2_TILE and
+#include "matmul_morton_avx512.h"  /* reuse MORTON_AVX512_TILE and
                                   * reorganize_to_morton_blocks */
 
 /*
- * matmul_morton_omp: same shape contract as matmul_morton_avx2 (C is
+ * matmul_morton_omp: same shape contract as matmul_morton_avx512 (C is
  * m x n out, A is m x k in Morton-of-blocks, B is k x n row-major)
  * but parallelized with OpenMP tasks across all sub-problems above
  * g_parallel_threshold_omp. The number of threads is whatever the
@@ -63,9 +63,9 @@ void matmul_morton_omp(scalar_t *C,
                        size_t m, size_t k, size_t n);
 
 /*
- * Leaf threshold (mirror of g_recursion_threshold_avx2 but tracked
+ * Leaf threshold (mirror of g_recursion_threshold_avx512 but tracked
  * separately so the parallel module can be tuned without disturbing
- * the serial AVX2 module's measurements).
+ * the serial AVX-512 module's measurements).
  */
 extern size_t g_recursion_threshold_omp;
 void matmul_morton_omp_set_threshold(size_t threshold);
@@ -83,7 +83,7 @@ extern size_t g_parallel_threshold_omp;
 void matmul_morton_omp_set_parallel_threshold(size_t threshold);
 
 /*
- * Benchmark orchestrators, same shape as the matmul_morton_avx2
+ * Benchmark orchestrators, same shape as the matmul_morton_avx512
  * counterparts but routed through matmul_morton_omp inside.
  */
 void benchmark_iterations_morton_omp(scalar_t *B_out,
