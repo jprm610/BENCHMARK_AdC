@@ -1,21 +1,14 @@
 /*
- * bench_naive.c - Driver that runs the iterated naive matmul benchmark for
- * one problem size m and prints a CSV line to stdout.
- *
- * Usage:
+ * bench_naive.c 
+    - Driver que ejecuta benchamark iterations (matmul_naive.c) para un m,
+    - reporta una línea CSV con m,n,num_iters,median_seconds,gflops
+ 
+ * Uso:
  *   bench_naive_O0 <m> [num_iters] [num_runs]
  *
  * Output: m,n,num_iters,median_seconds,gflops
  *
- * The driver does one warm-up run (unmeasured) and num_runs measured runs;
- * it reports the median wall-clock time and derived sustained gflops.
- *
- * Why median and not mean: a single outlier (cron job, page fault burst,
- * frequency transient) skews the mean but not the median. Five runs is
- * the default minimum to make the median meaningful. Profiling drivers
- * (gprof, perf) typically pass num_runs=1 because they count absolute
- * events and care about a single deterministic execution, not the
- * statistical distribution of wall-clock times.
+ * NOTA: Un benck de calentamiento (warm-up) y luego num_runs corridas medidas.
  */
 
 #include <stdio.h>
@@ -26,10 +19,20 @@
 #include "matrix_utils.h"
 #include "timing.h"
 
-#define BLOCK_SIZE_N    128u  /* n in the benchmark definition */
-#define DEFAULT_RUNS    5
-#define MAX_MEAS_ITERS  4     /* Cap iterations for development runs */
+#define BLOCK_SIZE_N    128u  /* n (enunciado proyecto) */
+#define DEFAULT_RUNS    5     /* Cap de corridas, es hiperparámetro [num_runs] */
+#define MAX_MEAS_ITERS  4     /* Cap iteraciones, también es hiperparámetro [num_iters] */
 
+
+/*
+compare_double: Comparador de doubles (qsort). (Facilitar cálculo de la mediana).
+INPUTS:
+- a, b: punteros a los doubles a comparar.
+OUTPUT:
+- -1 -> a primero
+-  0 -> iguales
+- +1 -> b primero
+*/
 static int compare_double(const void *a, const void *b)
 {
     double da = *(const double *)a;
@@ -37,8 +40,24 @@ static int compare_double(const void *a, const void *b)
     return (da > db) - (da < db);
 }
 
+
+/*
+main: Implementación benckmark.
+1) Args command line: m, num_iters (opcional), num_runs (opcional).
+2) Buffers: A, Z, B_out.
+3) LCG: A y Z con datos reproducibles (semillas fijas).
+4) Warm-up: una corrida corta para poblar caches y resolver page faults.
+5) Corridas medidas: num_runs veces, medir el tiempo de benchmark_iterations.
+6) Sort: Ordenar los tiempos para extraer la mediana.
+7) Stats: Calcular GFLOPS usando el conteo de operaciones y la mediana de tiempo.
+8) Save: Imprimir línea CSV con los resultados.
+*/
 int main(int argc, char **argv)
-{
+{   
+//---------------------------------------------------------------------------------------------------
+    // 1) Args command line
+
+    // 1.1) Check de argumentos mínimos. (Al menos m).
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <m> [num_iters] [num_runs]\n", argv[0]);
         fprintf(stderr,
@@ -50,7 +69,8 @@ int main(int argc, char **argv)
                 MAX_MEAS_ITERS, DEFAULT_RUNS);
         return EXIT_FAILURE;
     }
-
+    
+    // 1.2) m positivo, n fijo (BLOCK_SIZE_N) con m >= n.
     long long m_in = atoll(argv[1]);
     if (m_in <= 0) {
         fprintf(stderr, "Error: m must be a positive integer.\n");
@@ -65,10 +85,9 @@ int main(int argc, char **argv)
                 (unsigned long long)m, (unsigned long long)n);
         return EXIT_FAILURE;
     }
-
-    /* Default I_meas: bench definition is I = 2m/n; for development we cap
-     * it at MAX_MEAS_ITERS to keep per-run time bounded. The user can
-     * override via the second CLI argument. */
+    
+    // 1.3) I_meas (num_iters) opcional, default min(2m/n, MAX_MEAS_ITERS),
+    //      a menos que se especifique en [num_iters].
     size_t I_full = 2 * m / n;
     size_t I_meas = (I_full < (size_t)MAX_MEAS_ITERS) ? I_full : (size_t)MAX_MEAS_ITERS;
     if (argc >= 3) {
@@ -80,8 +99,8 @@ int main(int argc, char **argv)
         I_meas = (size_t)i_in;
     }
 
-    /* Third optional argument: how many measured runs. Used by profiling
-     * scripts (gprof, perf) that prefer a single deterministic execution. */
+    // 1.4) num_runs (opcional), default DEFAULT_RUNS.
+    //      a menos que se especifique en [num_runs].
     size_t num_runs = (size_t)DEFAULT_RUNS;
     if (argc >= 4) {
         long long r_in = atoll(argv[3]);
@@ -92,26 +111,32 @@ int main(int argc, char **argv)
         num_runs = (size_t)r_in;
     }
 
-    /* Allocate the three big buffers. A and Z are inputs; B_out collects
-     * the first n rows of every B_{i+1}. */
+//---------------------------------------------------------------------------------------------------
+    // 2) Buffers: A, Z, B_out.
     scalar_t *A     = xalloc_aligned(m * m);
     scalar_t *Z     = xalloc_aligned(m * n);
+
+    // 2.1) B_out tendrá cada B_{i} (n*n) generado en cada iteración (contiguos).
     scalar_t *B_out = xalloc_aligned(I_meas * n * n);
 
-    /* Reproducible inputs: fixed seeds so every run sees the same data. */
+//---------------------------------------------------------------------------------------------------
+    // 3) LCG: A y Z con datos reproducibles (semillas f
     init_matrix_random(A, m, m, 42u);
     init_matrix_random(Z, m, n, 43u);
 
-    /* Warm-up: one short run to populate caches and resolve any first-touch
-     * page faults. The result is discarded. */
+//---------------------------------------------------------------------------------------------------
+    // 4) Warm-up
     benchmark_iterations(B_out, A, Z, m, n, 1);
 
-    /* Measured runs. Allocated on the heap because num_runs is dynamic. */
+//---------------------------------------------------------------------------------------------------
+    // 5) Corridas medidas
+    // 5.1) Memoria para guardar mediciones de tiempo (array)
     double *times = (double *)malloc(num_runs * sizeof(double));
     if (times == NULL) {
         fprintf(stderr, "Error: out of memory for times array.\n");
         return EXIT_FAILURE;
     }
+    // 5.2) Loop de corridas medidas
     for (size_t r = 0; r < num_runs; ++r) {
         double t0 = now_seconds();
         benchmark_iterations(B_out, A, Z, m, n, I_meas);
@@ -119,30 +144,38 @@ int main(int argc, char **argv)
         times[r] = t1 - t0;
     }
 
-    /* Sort to extract the median (num_runs / 2 index after sort). With
-     * num_runs == 1 the "median" is trivially the single sample, which
-     * is fine for profiling-driver callers. */
+//---------------------------------------------------------------------------------------------------
+    // 6) Sort
+    // - q_sort (stdlib) con compare_double (array inplace).
     qsort(times, num_runs, sizeof(double), compare_double);
     double median_seconds = times[num_runs / 2];
 
-    /* Flop count for the benchmark: each iteration is 2 * m * m * n flops. */
+//---------------------------------------------------------------------------------------------------
+    // 7) Stats
+    // - FLOP por iteración: 2*m*m*n (producto punto fila x columna).
+    // - Total FLOP: FLOP por iteración * I_meas.
+    // - GFLOPS: Total FLOP / median_seconds / 1e9.
     double flops_per_iter = 2.0 * (double)m * (double)m * (double)n;
     double total_flops    = flops_per_iter * (double)I_meas;
     double gflops         = total_flops / median_seconds / 1.0e9;
 
-    /* CSV line on stdout: header lives in the sweep script. */
+//---------------------------------------------------------------------------------------------------
+    // 8) Save: Línea CSV.
     printf("naive,%llu,%llu,%llu,%.6f,%.6f\n",
            (unsigned long long)m,
            (unsigned long long)n,
            (unsigned long long)I_meas,
            median_seconds, gflops);
 
-    /* Force the compiler to "use" some output bytes so it cannot drop
-     * the benchmark loop under aggressive optimization. Harmless at -O0
-     * but matters when the same source compiles at higher levels later. */
+    /* 
+    - Evitar optimizaciones agresivas de memoria.
+    - Como B_out no se usa, el compilador podría eliminarlo.
+    - Compilador no elimina volatile.
+    */
     volatile scalar_t sink = B_out[0];
     (void)sink;
-
+    
+    // Liberar memoria y salir.
     free(times);
     xfree(A);
     xfree(Z);
