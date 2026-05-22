@@ -1,14 +1,21 @@
 /*
- * matmul_morton_avx2.c - Morton-recursive matmul wired to the AVX2
- * microkernel kernel_avx2_4x16.
+ * matmul_morton_avx2.c - Morton-recursive matmul wired to the AVX-512
+ * microkernel kernel_avx512_4x32 (Zen 5 / EPYC 9R45 main_server
+ * variant).
+ *
+ * The "_avx2" suffix in the file name is legacy from the Zen 2
+ * version; the leaf now uses the 4x32 AVX-512 microkernel exposed by
+ * kernel_avx512_morton.h. The AVX2 dispatch path has been removed
+ * because the EPYC 9R45 supports AVX-512 natively and the 32-wide
+ * ZMM tile delivers ~2x the FMA throughput per cycle.
  *
  * Differences with respect to matmul_morton (Sesion 02):
  *   - A is stored in Morton-of-BLOCKS layout with tile=MORTON_AVX2_TILE=4
  *     instead of Morton-of-elements. See matmul_morton_avx2.h for the
  *     formal definition.
  *   - The leaf kernel materializes a row-major A_local panel from the
- *     Morton-of-blocks layout, then iterates kernel_avx2_4x16 over
- *     the 4x16 tiles of (A_local, B, C).
+ *     Morton-of-blocks layout, then iterates kernel_avx512_4x32 over
+ *     the 4x32 tiles of (A_local, B, C).
  *   - The recursion itself is unchanged: the {0,1,2,3}*(half*half)
  *     quadrant offsets still work because they encode positions in
  *     the Z-order of blocks, not of elements.
@@ -22,9 +29,9 @@
 
 #include "matmul_morton_avx2.h"
 
-#include "morton.h"           /* morton_encode, is_power_of_two */
-#include "kernel_avx2_morton.h"  /* kernel_avx2_4x16, KERNEL_AVX2_MR/NR */
-#include "matrix_utils.h"     /* xalloc_aligned, xfree */
+#include "morton.h"                /* morton_encode, is_power_of_two */
+#include "kernel_avx512_morton.h"  /* kernel_avx512_4x32, geometry */
+#include "matrix_utils.h"          /* xalloc_aligned, xfree */
 
 #include <assert.h>
 #include <stdint.h>
@@ -32,18 +39,18 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MR KERNEL_AVX2_MR   /* 4 — unchanged: tied to MORTON_AVX2_TILE */
-#ifdef USE_AVX512
-#include "kernel_avx512.h"
-#define NR 32u
+#define MR KERNEL_AVX512_MORTON_MR   /* 4 — tied to MORTON_AVX2_TILE */
+#define NR KERNEL_AVX512_MORTON_NR   /* 32 */
 #define LEAF_KERNEL kernel_avx512_4x32
-#else
-#define NR KERNEL_AVX2_NR   /* 16 */
-#define LEAF_KERNEL kernel_avx2_4x16
-#endif
 
+/* Default leaf-size threshold for the recursion. On the EPYC 9R45 the
+ * per-core L1d is 48 KiB and L2 is 1 MiB. A leaf with side = 90 has
+ * an A panel of 90*90*4 = 32 KiB (fits L1d) and a B panel of
+ * 90*32*4 = 11 KiB (fits L1d), so threshold = side*side*NR ~ 1048576
+ * is a good starting point. The runtime setter is still available
+ * for empirical sweeps. */
 #ifndef MORTON_AVX2_THRESHOLD_DEFAULT
-#define MORTON_AVX2_THRESHOLD_DEFAULT ((size_t)64 * 64 * 128)  /* 524288 - Zen 2 default */
+#define MORTON_AVX2_THRESHOLD_DEFAULT ((size_t)1048576UL)
 #endif
 size_t g_recursion_threshold_avx2 = MORTON_AVX2_THRESHOLD_DEFAULT;
 
@@ -124,7 +131,7 @@ void reorganize_to_morton_blocks(const scalar_t *A_row,
  * Morton-of-blocks layout into a row-major scratch buffer. Both
  * m_block and k_block must be multiples of MR; the leaf checks
  * before calling. Each output row is contiguous and ready for
- * kernel_avx2_4x16 to consume with leading dimension k_block. */
+ * kernel_avx512_4x32 to consume with leading dimension k_block. */
 static void materialize_a_panel(const scalar_t *A_morton,
                                 size_t a_morton_offset,
                                 size_t a_block_dim,
@@ -218,7 +225,7 @@ static void kernel_base_morton_avx2(
         for (size_t j = 0; j < n_block; ++j) crow[j] = (scalar_t)0;
     }
 
-    /* Dispatch the microkernel over every 4x16 tile of the leaf. The
+    /* Dispatch the microkernel over every 4x32 tile of the leaf. The
      * microkernel's lda is k_block (the row stride of A_local), and
      * its ldb / ldc are the caller-supplied strides (which point
      * into the global B and C). */
@@ -446,7 +453,7 @@ static void matmul_morton_avx2_inner_add(scalar_t *C,
 /* Return the maximum panel side that can land in the leaf for the
  * current threshold and (assumed minimum) leaf n. The scratch buffer
  * sized at side^2 is wide enough for any leaf the recursion produces
- * before the threshold cuts it off. We use n_floor = NR = 16 as the
+ * before the threshold cuts it off. We use n_floor = NR = 32 as the
  * smallest n a leaf can have without falling into the fallback path. */
 static size_t scratch_side_for_threshold(size_t threshold)
 {

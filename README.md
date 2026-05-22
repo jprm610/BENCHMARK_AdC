@@ -45,28 +45,28 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |   |   |-- matrix_utils.{h,c}             -> Helpers (alocacion, init, comparacion)
 |   |   |-- timing.h                       -> clock_gettime(CLOCK_MONOTONIC) inline
 |   |   `-- morton.{h,c}                   -> Encoding Z-order + reorganizacion (Etapa A3)
-|   |-- microkernels/                      -> Tiles AVX2, ambos header-only (static inline)
-|   |   |-- kernel_avx2_morton.h           -> Microkernel 4x16 usado por la familia Morton (Etapa A4)
-|   |   `-- kernel_avx2_tiled.h            -> Microkernel 6x16 usado por tiled_ikj_avx2 y tiled_ikj_omp
+|   |-- microkernels/                      -> Tiles AVX-512 header-only (static inline)
+|   |   |-- kernel_avx512_morton.h         -> Microkernel 4x32 AVX-512 (Morton family, Zen 5)
+|   |   `-- kernel_avx512_tiled.h          -> Microkernel 6x32 AVX-512 + residual (tiled_ikj family, Zen 5)
 |   |-- algorithms/                        -> Una carpeta por familia de algoritmo
 |   |   |-- naive/matmul_naive.{h,c}       -> Baseline ijk (Sesion 01)
 |   |   |-- loops/matmul_loops.{h,c}       -> 6 ordenes de loop con lookup por nombre (Fase 1.1)
-|   |   |-- morton/                        -> Fase 6 / Sesion 02-03: kernel recursivo + AVX2 + OMP
+|   |   |-- morton/                        -> Fase 6 / Sesion 02-03: kernel recursivo + AVX-512 + OMP
 |   |   |   |-- matmul_morton.{h,c}            -> Kernel recursivo con A en Morton fino (A3)
-|   |   |   |-- matmul_morton_avx2.{h,c}       -> Morton-de-bloques + microkernel (A4)
-|   |   |   `-- matmul_morton_omp.{h,c}        -> Variante paralela OpenMP tasks (A5)
-|   |   `-- tiled_ikj/                     -> Fase 1.2-1.6: tiling explicito + BLIS 6x16 + OpenMP
-|   |       |-- matmul_tiled_ikj.{h,c}         -> Tiling Mc x Kc sobre ikj, apunta a L2 (Mc=Kc=256)
-|   |       |-- matmul_tiled_ikj_avx2.{h,c}    -> Microkernel inline 6x16 (MR=6, NR=16, MC=192), BS=384, AVX2+FMA
-|   |       `-- matmul_tiled_ikj_omp.{h,c}     -> Microkernel 6x16 + #pragma omp parallel for schedule(static) en ic
+|   |   |   |-- matmul_morton_avx2.{h,c}       -> Morton-de-bloques + microkernel 4x32 (Zen 5)
+|   |   |   `-- matmul_morton_omp.{h,c}        -> Variante paralela OpenMP tasks (Zen 5)
+|   |   `-- tiled_ikj/                     -> Fase 1.2-1.6: tiling explicito + BLIS 6x32 + OpenMP
+|   |       |-- matmul_tiled_ikj.{h,c}         -> Tiling Mc x Kc sobre ikj, apunta a L2 (escalar)
+|   |       |-- matmul_tiled_ikj_avx2.{h,c}    -> 6x32 AVX-512 (MR=6, NR=32, MC=288), BS=256 default
+|   |       `-- matmul_tiled_ikj_omp.{h,c}     -> 6x32 AVX-512 + #pragma omp parallel for schedule(static) en ic
 |   |-- drivers/                           -> Programas main: medicion (bench) y verificacion (validate)
 |   |   |-- bench/                         -> bench_naive.c, bench_loops.c, bench_morton{,_avx2,_omp}.c, bench_tiled_ikj{,_avx2,_omp}.c
 |   |   `-- validate/                      -> validate_naive.c, validate_loops.c, validate_morton{,_avx2,_omp}.c, validate_tiled_ikj{,_avx2,_omp}.c
 |   |-- tests/                             -> Tests unitarios standalone
 |   |   |-- test_morton.c                  -> Round-trip encode/decode + contiguidad de cuadrantes
-|   |   `-- test_kernel_avx2.c             -> Unit test del microkernel 4x16
+|   |   `-- test_kernel_avx512_morton.c    -> Unit test del microkernel 4x32 AVX-512
 |   `-- tools/
-|       `-- hwinfo.c                       -> Fingerprint runtime del CPU (cores, cache, AVX2/FMA/BMI2)
+|       `-- hwinfo.c                       -> Fingerprint runtime del CPU (cores, cache, AVX2/FMA/AVX-512)
 |-- scripts/
 |   |   # Fase 1 (Sesion 01)
 |   |-- run_sweep_naive.sh             -> Sweep baseline + gprof + perf

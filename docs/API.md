@@ -612,69 +612,112 @@ make plot_loop_vs_naive         -> plots/loop_vs_naive.png  (naive + 6 ordenes)
 Targets de Fase 1.3 (tiled_ikj_avx2):
 
 ```
-make bench_tiled_ikj_avx2           -> bin/bench_tiled_ikj_avx2_O3
-make validate_tiled_ikj_avx2        -> bin/validate_tiled_ikj_avx2_O3
+make bench_tiled_ikj_avx2_ZEN5      -> bin/bench_tiled_ikj_avx2_ZEN5
+make validate_tiled_ikj_avx2_ZEN5   -> bin/validate_tiled_ikj_avx2_ZEN5
 ```
 
-Ambos se compilan con `CFLAGS_O3_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma`), que es obligatorio para que `_mm256_fmadd_ps` emita la instruccion FMA real. El `make results` incluye `bench_tiled_ikj_avx2_O3` como dependencia y `run_perf_zen2_sweep.sh` incluye `tiled_ikj_avx2` en su lista de variantes por defecto.
+Ambos se compilan con `CFLAGS_O3_ZEN5` (`-O3 -march=native` mas los `-D...` de los thresholds del Makefile), que es obligatorio para que `_mm512_fmadd_ps` emita la instruccion FMA-512 real. El target `make results_zen5` incluye `bench_tiled_ikj_avx2_ZEN5` como dependencia y `scripts/run_perf_zen5_sweep.sh` incluye `tiled_ikj_avx2` en su lista de variantes por defecto.
 
 Todos extienden el Makefile **al final**, sin modificar las recetas del baseline (`bench_naive_O0`, `bench_naive_pg`, `validate_naive`, `sweep_naive`, `profile_*_naive`, `clean`, `distclean`).
 
 ---
 
-## 11. Modulo `kernel_avx2` (Sesion 03, Etapa A4)
+## 11. Microkernels AVX-512 (rama `main_server`, Zen 5)
 
-**Archivo:** [`src/microkernels/kernel_avx2_morton.h`](../src/microkernels/kernel_avx2_morton.h) (header-only, `static inline`). Renombrado desde `kernel_avx2.{h,c}` y consolidado en un unico header cuando se introdujo el microkernel 6x16 `kernel_avx2_tiled.h` para la familia tiled. La conversion a header-only sigue el patron de `kernel_avx512.h` de `opt_zen5` (un solo header con todos los microkernels como `static inline`).
+La rama `main_server` retira por completo los microkernels AVX2 (4x16 y 6x16) que servian para el Ryzen 5 4600H (Zen 2) y los reemplaza por dos microkernels AVX-512 sintonizados al servidor AWS c8a.2xlarge (AMD EPYC 9R45, Zen 5):
 
-Microkernel AVX2 + FMA que acumula un tile fijo de $4 \times 16$ de $C$. Los $4 \times 16 = 64$ elementos del tile viven en $8$ registros YMM (4 filas $\times$ 2 vectores de 8 lanes FP32). Queda mitad del banco de YMM libre para los broadcasts de $A$ y los loads de $B$, condicion necesaria para mantener los dos pipes FMA del Zen 2 saturados sin spill.
+| Header | Tile | Familia | Acumuladores | Broadcasts | Comentario |
+|---|---|---|---|---|---|
+| `src/microkernels/kernel_avx512_morton.h` | $4 \times 32$ | Morton | 8 ZMM | 4 ZMM | `MR = MORTON_AVX2_TILE = 4` |
+| `src/microkernels/kernel_avx512_tiled.h`  | $6 \times 32$ | tiled_ikj | 12 ZMM | 1 ZMM (reusado) | + `residual_rows` AVX-512 |
 
-### 11.1 `kernel_avx2_4x16`
+Ambos son **header-only** con `static inline`: cada TU que los incluye obtiene una copia inlineada bajo `-O3`. No hay `.o` separado, y por lo tanto no hay riesgo de spill de ZMMs a traves del ABI en una llamada de funcion. Ese era el modelo bajo el que estaba el 6x16 en Zen 2 (`kernel_avx2_tiled.h`), y es el patron unificado que tambien usa Juan Pablo en la rama `opt_zen5`.
 
-```c
-void kernel_avx2_4x16(scalar_t       *restrict C, size_t ldc,
-                      const scalar_t *restrict A, size_t lda,
-                      const scalar_t *restrict B, size_t ldb,
-                      size_t kc);
-```
-
-**Computa** $C \mathrel{+}= A \cdot B$ sobre el tile fijo $4 \times 16$. La semantica es de **acumulacion**: el caller que necesite un $C$ limpio debe inicializarlo en cero antes de la invocacion.
-
-**Parametros:**
-
-- `C` *(in / out)*: matriz destino, $4$ filas $\times \geq 16$ columnas, row-major. Acumulado en sitio.
-- `lda`, `ldb`, `ldc`: leading dimensions de $A$, $B$, $C$ en sus buffers originales (numero de columnas por fila).
-- `A` *(in)*: panel de $4 \times kc$. Acceso interno solo a `A[r * lda + p]` con $r \in [0, 4)$ y $p \in [0, kc)$.
-- `B` *(in)*: panel de $kc \times 16$.
-- `kc`: longitud de la dimension contraida ($kc \geq 1$).
-
-**Precondiciones:**
-
-- `kc >= 1`, `lda >= kc`, `ldb >= 16`, `ldc >= 16`.
-- `C`, `A`, `B` no aliasan (`restrict`).
-- Alineacion a $32$ bytes es preferida pero **no obligatoria**: la implementacion usa `_mm256_loadu_ps` / `_mm256_storeu_ps`. El caller que pueda garantizar alineacion paga menos en el front-end.
-
-**Postcondiciones:**
-
-- $C[r, c] \mathrel{+}= \sum_{p=0}^{kc-1} A[r, p] \cdot B[p, c]$ para todo $(r, c)$ con $r \in [0, 4)$ y $c \in [0, 16)$. $A$ y $B$ no se modifican.
-
-**Compilacion.** No hay `.o` separado: el header se incluye en cada `.c` que lo necesita (`matmul_morton_avx2.c`, `matmul_morton_omp.c`, `tests/test_kernel_avx2.c`) y se inline bajo `-O3`. Las TU que lo incluyen son compiladas con los flags Zen 2 estandar del proyecto:
-
-```
--O3 -march=znver2 -mavx2 -mfma -D_POSIX_C_SOURCE=200809L
-```
-
-`-Wpedantic` se admite porque las TU ya pasaban con el bench/validate; los tipos `__m256` no disparan warnings al estar marcados como GCC extensions. `-ffast-math` no se aplica globalmente al bench (rompia validaciones del kernel naive), pero no es necesario para emitir FMAs cuando el codigo ya esta escrito con intrinsics explicitos (`_mm256_fmadd_ps`).
-
-**Performance esperada.** El techo single-core del Zen 2 es $2$ FMA $\times$ $8$ lanes $\times$ $2$ flops/op $\times$ $4.0$ GHz $= 128$ GFLOPS en FP32. En hojas cuyo working set cabe en L1d ($\leq 32$ KiB) el microkernel toca $\sim 8$–$10$ FMA-ops por ciclo (medido `fp_ret_sse_avx_ops.all`/cycle en Prompt 7), lo que se traduce en $\sim 80$ a $90$ GFLOPS sostenidos a la frecuencia turbo bajo carga AVX2. Es el techo computacional real para una sola hoja; el throughput de `matmul_morton_avx2` sobre la matriz completa es menor por el costo de materializacion de paneles y el trafico de $B$ desde L2/L3.
-
-### 11.2 Constantes de geometria
+### 11.1 `kernel_avx512_4x32` (familia Morton)
 
 ```c
-#define KERNEL_AVX2_MR 4    /* filas por tile */
-#define KERNEL_AVX2_NR 16   /* columnas por tile */
+static inline void
+kernel_avx512_4x32(scalar_t       *restrict C, size_t ldc,
+                   const scalar_t *restrict A, size_t lda,
+                   const scalar_t *restrict B, size_t ldb,
+                   size_t kc);
 ```
 
-Expuestas para que `matmul_morton_avx2` y el test de unidad calcen sus bloques al tile sin redeclarar las magic numbers.
+Acumula $C \mathrel{+}= A \cdot B$ sobre un tile fijo $4 \times 32$. Layout de los 8 ZMM acumuladores:
+
+$$
+\begin{array}{c|cc}
+ & \text{cols } 0..15 & \text{cols } 16..31 \\\hline
+\text{row 0} & c_{00} & c_{01} \\
+\text{row 1} & c_{10} & c_{11} \\
+\text{row 2} & c_{20} & c_{21} \\
+\text{row 3} & c_{30} & c_{31}
+\end{array}
+$$
+
+Cada paso de $kc$ emite 8 vfmadd231ps independientes. El EPYC 9R45 tiene dos pipes FMA de $512$ bits, asi que 8 FMAs son 4 ciclos de computo por paso (igual al kernel 4x16 de Zen 2, pero con el doble de ancho por instruccion: $32$ lanes vs $16$).
+
+**Precondiciones:** `kc >= 1`, `lda >= kc`, `ldb >= 32`, `ldc >= 32`, no aliasing. Alineacion a $64$ bytes preferida pero no obligatoria (usa `_mm512_loadu_ps`).
+
+### 11.2 `kernel_avx512_tiled_6x32` (familia tiled_ikj)
+
+```c
+static inline void
+kernel_avx512_tiled_6x32(scalar_t       *restrict C, size_t ldc,
+                         const scalar_t *restrict A, size_t lda,
+                         const scalar_t *restrict B, size_t ldb,
+                         size_t kc);
+```
+
+Acumula $C \mathrel{+}= A \cdot B$ sobre un tile fijo $6 \times 32$. Layout de los 12 ZMM acumuladores ($15$ ZMM activos de los $32$ totales):
+
+$$
+\begin{array}{c|cc}
+ & \text{cols } 0..15 & \text{cols } 16..31 \\\hline
+\text{row 0} & c_{00} & c_{01} \\
+\text{row 1} & c_{10} & c_{11} \\
+\text{row 2} & c_{20} & c_{21} \\
+\text{row 3} & c_{30} & c_{31} \\
+\text{row 4} & c_{40} & c_{41} \\
+\text{row 5} & c_{50} & c_{51}
+\end{array}
+$$
+
+A diferencia del kernel Morton, el broadcast de $A$ se **reusa** sobre las 6 filas (un solo registro ZMM); el renombrador fisico resuelve el WAW hazard sin penalizacion. Cada paso de $kc$ emite 12 FMAs ($6$ ciclos a 2 FMAs/ciclo).
+
+### 11.3 `kernel_avx512_tiled_residual_rows`
+
+Fallback AVX-512 para las colas $m \bmod \text{MR}$ y $n \bmod \text{NR}$. Vectoriza por filas con `_mm512_*` pero no register-blockea $C$: paga `load/FMA/store` por cada par $(r, p)$. Solo se activa para hasta $\text{MR} - 1 = 5$ filas residuales por invocacion, asi que el costo es despreciable a $m \gg \text{MR}$.
+
+### 11.4 Constantes de geometria
+
+```c
+/* kernel_avx512_morton.h */
+#define KERNEL_AVX512_MORTON_MR  4u
+#define KERNEL_AVX512_MORTON_NR 32u
+
+/* kernel_avx512_tiled.h */
+#define KERNEL_AVX512_TILED_MR  6u
+#define KERNEL_AVX512_TILED_NR 32u
+```
+
+Expuestas para que `matmul_morton_avx2`, `matmul_tiled_ikj_avx2` y los tests calcen sus bloques al tile sin redeclarar las magic numbers.
+
+### 11.5 Compilacion
+
+No hay `.o` separado. Cada TU que incluye los headers se compila con los flags Zen 5 estandar del proyecto:
+
+```
+-O3 -march=native -D_POSIX_C_SOURCE=200809L \
+   -DMORTON_AVX2_THRESHOLD_DEFAULT=1048576UL \
+   -DTILED_IKJ_AVX2_BS_DEFAULT=256u -DTILED_IKJ_AVX2_MC=288u  ...
+```
+
+`-march=native` activa AVX-512F / VL / BW / DQ / IFMA, BMI2, AVX2, FMA, y todo lo demas que el EPYC 9R45 expone vista CPUID. GCC 11 puede no reconocer `-march=znver4/5` por nombre; `-march=native` es la forma portable y conservadora.
+
+### 11.6 Performance esperada (techo single-core)
+
+Zen 5 retira 2 FMA de 512 bits por ciclo = $2 \times 16 \times 2 = 64$ flops por ciclo en FP32. A frecuencia turbo aprox. $3.5$ GHz bajo carga AVX-512 sostenida, el techo es $\sim 224$ GFLOPS por core. Con 8 cores y L3 compartida de 32 MiB el techo agregado en el chip es $\sim 1.8$ TFLOPS. Cuanto de ese techo toca el kernel depende del bandwidth de los paneles de $B$ desde L2/L3 y del costo de materializacion del panel de $A$ en el leaf de Morton.
 
 ---
 
@@ -793,19 +836,18 @@ Las globals se mantienen separadas de las de `matmul_morton_avx2` para poder tun
 
 | Variable | Efecto | Default usado en el bench |
 |----------|--------|---------------------------|
-| `OMP_NUM_THREADS` | Numero de threads. Si se omite, OpenMP usa todos los logicos (12 en el 4600H con SMT). | 6 (un thread por core fisico). |
-| `OMP_PROC_BIND`   | `close` mantiene threads en el mismo CCX (3 cores + L3 4 MiB privada). `spread` los reparte entre los 2 CCXs. | Ver Seccion 13.4. |
-| `OMP_PLACES`      | `cores` une cada thread a un core fisico (evita migracion entre core y SMT sibling). | `cores`. |
+| `OMP_NUM_THREADS` | Numero de threads. Si se omite, OpenMP usa todos los logicos (8 en c8a.2xlarge: el hipervisor desactiva SMT). | 8 (un thread por core). |
+| `OMP_PROC_BIND`   | `close` y `spread` son topologicamente equivalentes en c8a.2xlarge (1 NUMA node, L3 compartido). | `close`. |
+| `OMP_PLACES`      | `cores` une cada thread a un core fisico. | `cores`. |
 
-### 13.4 Recomendacion para el Ryzen 5 4600H
+### 13.4 Recomendacion para el EPYC 9R45 (AWS c8a.2xlarge, Zen 5)
 
-El chip Renoir tiene **2 CCX de 3 cores cada uno**, con L3 de $4$ MiB privada por CCX. Threads que cruzan CCX pierden la coherencia de L3 y pagan trafico por el Infinity Fabric. Esto define dos regimenes:
+La VM expone $8$ vCPUs en un solo NUMA node, sin SMT (1 thread por core). L3 ($32$ MiB) es compartida por todos los cores, asi que la topologia "CCX private L3" del Zen 2 no aplica aqui: cualquier thread puede aprovechar el L3 completo cuando los otros lo dejan libre. Configuracion recomendada:
 
-- **`OMP_NUM_THREADS=3 OMP_PROC_BIND=close`**: la opcion mas limpia para validaciones single-CCX y para diagnostico de scaling intra-cluster. Speedup cercano a lineal hasta $3$ threads; mas alla mete trafico cross-CCX y no escala.
-- **`OMP_NUM_THREADS=6 OMP_PROC_BIND=close`**: usa los $6$ cores fisicos repartidos entre los dos CCXs respetando la afinidad de cada thread a su core. Es el **default recomendado** y el usado en el sweep de Prompt 6 (`scripts/run_omp_scaling.sh`). En `omp_scaling.csv` se observan picos cercanos a este modo a $m = 8192$.
-- **`OMP_NUM_THREADS=6 OMP_PROC_BIND=spread`**: distribuye los threads para maximizar L3 compartido por thread, util cuando el working set por thread es grande. Comparable a `close` en GFLOPS sostenidos para $m \geq 4096$.
+- **`OMP_NUM_THREADS=8 OMP_PLACES=cores OMP_PROC_BIND=close`**: usa todos los cores, un thread por core. Es el default usado por el sweep `scripts/run_omp_scaling.sh` y por `scripts/profile_perf_zen5.sh` cuando `VARIANT=morton_omp`. Speedup cercano a lineal hasta saturar el ancho de banda a L3 / DRAM.
+- **`OMP_NUM_THREADS=4`**: util para diagnostico de scaling (mitad del chip). Spawn de tasks reducido, menos presion sobre L3.
 
-El SMT a $12$ threads aporta poco en este kernel: AVX2 + FMA ya satura los recursos de retirement; los hilos SMT extra se traducen en `cycles` mayores con la misma `fp_ops_per_cycle`.
+No hay regimen `OMP_NUM_THREADS=16` aqui: SMT esta desactivado a nivel hipervisor y `8` es el limite duro del VM.
 
 ### 13.5 Orquestadores
 
@@ -827,25 +869,25 @@ Misma estructura que en los modulos anteriores: el primero reorganiza $A$ intern
 
 ---
 
-## 14. Modulo `matmul_tiled_ikj_avx2` (Fase 1.6 — BLIS-style 6x16 register-blocked)
+## 14. Modulo `matmul_tiled_ikj_avx2` (BLIS-style 6x32 register-blocked, Zen 5)
 
-**Archivo:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.h`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.h), [`src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.c`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.c). El microkernel inline 6x16 vive en [`src/microkernels/kernel_avx2_tiled.h`](../src/microkernels/kernel_avx2_tiled.h) (header-only `static inline`, compartido con `matmul_tiled_ikj_omp`).
+**Archivo:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.h`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.h), [`src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.c`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.c). El microkernel 6x32 AVX-512 vive en [`src/microkernels/kernel_avx512_tiled.h`](../src/microkernels/kernel_avx512_tiled.h) (header-only `static inline`, compartido con `matmul_tiled_ikj_omp`). El sufijo `_avx2` en el nombre del archivo es legacy de la version Zen 2; el codigo actual usa AVX-512.
 
-Kernel BLIS-style con micropanel registrado $6 \times 16$, especificamente afinado para el Ryzen $5$ $4600$H. Reemplaza la version anterior (`load`/`FMA`/`store` por $(i, p)$) por un microkernel inline que mantiene un sub-tile $6 \times 16$ de $C$ en $12$ registros YMM durante toda la pasada $k_c$; $C$ toca memoria solo dos veces por micro-tile (load al entrar, store al salir).
+Kernel BLIS-style con micropanel registrado $6 \times 32$, sintonizado al EPYC 9R45 (Zen 5). Reemplaza la version Zen 2 (microkernel $6 \times 16$ con YMM) por un microkernel inline que mantiene un sub-tile $6 \times 32$ de $C$ en $12$ registros ZMM durante toda la pasada $k_c$; $C$ toca memoria solo dos veces por micro-tile (load al entrar, store al salir).
 
 ### 14.1 Geometria del microkernel (compile-time)
 
 ```c
 #define TILED_IKJ_AVX2_MR 6u
-#define TILED_IKJ_AVX2_NR 16u
-#define TILED_IKJ_AVX2_MC 192u
-#define TILED_IKJ_AVX2_BS_DEFAULT 384u
+#define TILED_IKJ_AVX2_NR 32u
+#define TILED_IKJ_AVX2_MC 288u
+#define TILED_IKJ_AVX2_BS_DEFAULT 256u
 extern size_t g_tiled_ikj_avx2_bs;
 ```
 
-- $\text{MR} = 6$, $\text{NR} = 16$: filas y columnas del tile registrado. Activan $15$ de los $16$ registros YMM arquitecturales ($12$ acumuladores $C$ + $2$ vectores $B$ + $1$ broadcast $A$ reusado entre filas). El renombrador fisico del Zen 2 ($168$ entradas) resuelve la dependencia WAW sobre el broadcast sin stall.
-- $\text{MC} = 192$: tamano del bloque sobre $m$ (multiplo de $\text{MR}$). El panel $A$ activo $\text{MC} \times k_c$ a $k_c = 384$ ocupa $288$ KiB y cabe en el L2 de $512$ KiB.
-- $\text{BS}$ (sinonimo `kc`): tamano del bloque sobre $k$. Default $384$, configurable runtime via `matmul_tiled_ikj_avx2_set_bs(bs)`. La idea es que el panel $B$ activo $k_c \times \text{NR}$ a $k_c = 384$ ocupa $24$ KiB, que cabe en el L1d de $32$ KiB con margen para los $12$ floats de $C$ vivos.
+- $\text{MR} = 6$, $\text{NR} = 32$: filas y columnas del tile registrado. Activan $15$ de los $32$ registros ZMM arquitecturales ($12$ acumuladores $C$ + $2$ vectores $B$ + $1$ broadcast $A$ reusado entre filas). El renombrador fisico del Zen 5 resuelve la dependencia WAW sobre el broadcast sin stall.
+- $\text{MC} = 288 = 48 \times \text{MR}$: tamano del bloque sobre $m$ (multiplo de $\text{MR}$). El panel $A$ activo $\text{MC} \times k_c$ a $k_c = 256$ ocupa $288$ KiB y cabe holgado en el L2 de $1$ MiB por core.
+- $\text{BS}$ (sinonimo `kc`): tamano del bloque sobre $k$. Default $256$, configurable runtime via `matmul_tiled_ikj_avx2_set_bs(bs)`. El panel $B$ activo $k_c \times \text{NR}$ a $k_c = 256$ ocupa $32$ KiB, que cabe en el L1d de $48$ KiB con margen para los acumuladores activos de $C$.
 
 ### 14.2 `matmul_tiled_ikj_avx2_set_bs`
 
@@ -867,28 +909,28 @@ void matmul_tiled_ikj_avx2(scalar_t *C,
 **Computa** $C = A \cdot B$ usando el loop nest BLIS Goto-style:
 
 ```
-pc  loop  step kc  (= g_tiled_ikj_avx2_bs, default 384)
-  ic loop step mc  (= TILED_IKJ_AVX2_MC, fixed 192)
-    jr loop step nr (= TILED_IKJ_AVX2_NR, fixed 16)
+pc  loop  step kc  (= g_tiled_ikj_avx2_bs, default 256)
+  ic loop step mc  (= TILED_IKJ_AVX2_MC, default 288)
+    jr loop step nr (= TILED_IKJ_AVX2_NR, fixed 32)
       ir loop step mr (= TILED_IKJ_AVX2_MR, fixed 6)
-        microkernel_6x16: kc FMAs accumulating in 12 YMM registers
+        kernel_avx512_tiled_6x32: kc FMAs accumulating in 12 ZMM registers
 ```
 
-**Parametros y precondiciones.** Identicos a `matmul_naive` (Seccion 2.1): $C$ es $m \times n$ (out, sobrescrito), $A$ es $m \times k$, $B$ es $k \times n$, todos row-major, sin aliasing. El kernel maneja bordes en $m$ y $n$ con un fallback vectorizado AVX2 que no registra $C$ (descrito en `accumulate_residual_rows` en el .c).
+**Parametros y precondiciones.** Identicos a `matmul_naive` (Seccion 2.1): $C$ es $m \times n$ (out, sobrescrito), $A$ es $m \times k$, $B$ es $k \times n$, todos row-major, sin aliasing. El kernel maneja bordes en $m$ y $n$ con un fallback vectorizado AVX-512 que no registra $C$ (`kernel_avx512_tiled_residual_rows` en [`kernel_avx512_tiled.h`](../src/microkernels/kernel_avx512_tiled.h)).
 
 **Postcondiciones.** $C_{ij} = \sum_{p=0}^{k-1} A_{ip} B_{pj}$ para todo $(i, j)$.
 
-**Microkernel inline** (esquema, $15$ YMM vivos por iteracion del bucle $p$):
+**Microkernel inline** (esquema, $15$ ZMM vivos por iteracion del bucle $p$):
 
 ```c
 // 12 acumuladores de C cargados una sola vez por (ir, jr) micro-tile
-__m256 c00, c01, c10, c11, c20, c21, c30, c31, c40, c41, c50, c51;
+__m512 c00, c01, c10, c11, c20, c21, c30, c31, c40, c41, c50, c51;
 for (size_t p = 0; p < kc; ++p) {
-    __m256 b0 = _mm256_loadu_ps(&B[p*ldb + 0]);
-    __m256 b1 = _mm256_loadu_ps(&B[p*ldb + 8]);
-    __m256 a  = _mm256_broadcast_ss(&A[0*lda + p]);
-    c00 = _mm256_fmadd_ps(a, b0, c00);
-    c01 = _mm256_fmadd_ps(a, b1, c01);
+    __m512 b0 = _mm512_loadu_ps(&B[p*ldb +  0]);
+    __m512 b1 = _mm512_loadu_ps(&B[p*ldb + 16]);
+    __m512 a  = _mm512_set1_ps(A[0*lda + p]);
+    c00 = _mm512_fmadd_ps(a, b0, c00);
+    c01 = _mm512_fmadd_ps(a, b1, c01);
     // ... idem para filas 1..5 ...
 }
 // store de los 12 acumuladores una sola vez
@@ -896,9 +938,9 @@ for (size_t p = 0; p < kc; ++p) {
 
 `memset(C, 0, m*n*sizeof(scalar_t))` al inicio permite que cada iteracion del bucle `pc` cargue $C$, acumule sobre el, y lo escriba de vuelta — agregando consistentemente las contribuciones parciales de cada panel $k_c$.
 
-**Compilacion.** Requiere `-O3 -march=znver2 -mavx2 -mfma`. Verificado con `objdump`: GCC inline-a el microkernel y mantiene los $12$ acumuladores en YMMs sin spilling al stack.
+**Compilacion.** Requiere `-O3 -march=native` (AVX-512F mas vecinos). El microkernel vive en [`kernel_avx512_tiled.h`](../src/microkernels/kernel_avx512_tiled.h) como `static inline`; GCC lo inline en el bucle `ir` y mantiene los $12$ acumuladores en ZMMs sin spilling al stack.
 
-**Complejidad.** $2 \cdot m \cdot k \cdot n$ flops (identica al baseline). La ganancia frente a la version $6$-loop simple es de **densidad aritmetica**: por iteracion del bucle interno $p$ se hacen $12$ FMAs (retire $6$ ciclos en los dos pipes FMA del Zen 2) contra $2$ loads + $6$ broadcasts (no en el camino critico). En el techo single-core medido a $\sim 70$ GFLOPS sobre $m = 4096$ con $k_c = 512$ ($55\%$ del pico Zen 2 de $128$ GFLOPS a $4.0$ GHz turbo), por encima del $\sim 29$ GFLOPS de la version previa.
+**Complejidad.** $2 \cdot m \cdot k \cdot n$ flops (identica al baseline). La ganancia frente a la version $6$-loop simple es de **densidad aritmetica**: por iteracion del bucle interno $p$ se hacen $12$ FMAs ZMM (retire $6$ ciclos en los dos pipes FMA-512 del Zen 5) contra $2$ loads + $6$ broadcasts (no en el camino critico). El techo single-core teorico del EPYC 9R45 es $\sim 224$ GFLOPS FP32 a $3.5$ GHz turbo bajo AVX-512 sostenido.
 
 ### 14.4 `benchmark_iterations_tiled_ikj_avx2`
 
@@ -916,34 +958,34 @@ Mismo patron que `benchmark_iterations` (Seccion 2.2): doble buffer + swap de pu
 
 | Binario | CLI | Salida CSV |
 |---------|-----|------------|
-| `bin/bench_tiled_ikj_avx2_O3` | `<m> [num_iters] [num_runs] [bs]` | `tiled_ikj_avx2,m,n,num_iters,bs,median_seconds,gflops` (7 columnas) |
-| `bin/validate_tiled_ikj_avx2_O3` | `[m] [bs]` (defaults: m=256, bs=384) | 4 tests: `A*0==0`, `I*Z==Z`, linealidad, cross contra naive |
+| `bin/bench_tiled_ikj_avx2_ZEN5` | `<m> [num_iters] [num_runs] [bs]` | `tiled_ikj_avx2,m,n,num_iters,bs,median_seconds,gflops` (7 columnas) |
+| `bin/validate_tiled_ikj_avx2_ZEN5` | `[m] [bs]` (defaults: m=256, bs=256) | 4 tests: `A*0==0`, `I*Z==Z`, linealidad, cross contra naive |
 
-El cuarto argumento opcional `[bs]` llama a `matmul_tiled_ikj_avx2_set_bs(bs)` antes de las corridas. La columna `bs` del CSV preserva el formato de 7 columnas que ya manejaba el consolidador `consolidate_perf_zen2.py` (rama `len(parts) >= 7`).
+El cuarto argumento opcional `[bs]` llama a `matmul_tiled_ikj_avx2_set_bs(bs)` antes de las corridas. La columna `bs` del CSV preserva el formato de 7 columnas que ya manejaba el consolidador `consolidate_perf_zen5.py` (rama `len(parts) >= 7`).
 
 **Tolerancias de validacion:** `ABS_TOL = 1e-4f`, `REL_TOL = 1e-3f`.
 
 ---
 
-## 15. Modulo `matmul_tiled_ikj_omp` (Fase 1.6 — kernel 6x16 + OpenMP `parallel for` en `ic`)
+## 15. Modulo `matmul_tiled_ikj_omp` (kernel 6x32 AVX-512 + OpenMP `parallel for` en `ic`, Zen 5)
 
 **Archivo header:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.h`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.h)
-**Implementacion:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.c`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.c) (microkernel compartido en [`src/microkernels/kernel_avx2_tiled.h`](../src/microkernels/kernel_avx2_tiled.h))
-**Compilacion requerida:** `-O3 -march=znver2 -mavx2 -mfma -fopenmp`
+**Implementacion:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.c`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.c) (microkernel compartido en [`src/microkernels/kernel_avx512_tiled.h`](../src/microkernels/kernel_avx512_tiled.h))
+**Compilacion requerida:** `-O3 -march=native -fopenmp`
 
-Hermano paralelo de `matmul_tiled_ikj_avx2` (Modulo 14). Mismo microkernel registrado $6 \times 16$, mismo loop nest, **pero el bucle externo $i_c$ esta distribuido entre threads** con `#pragma omp for schedule(static)`. La region `omp parallel` se abre una sola vez por invocacion y abarca el bucle $p_c$ entero; el barrier implicito al final de cada `omp for` sincroniza las pasadas $p_c$ (necesario porque $C$ se acumula entre pasadas).
+Hermano paralelo de `matmul_tiled_ikj_avx2` (Modulo 14). Mismo microkernel registrado $6 \times 32$ AVX-512, mismo loop nest, **pero el bucle externo $i_c$ esta distribuido entre threads** con `#pragma omp for schedule(static)`. La region `omp parallel` se abre una sola vez por invocacion y abarca el bucle $p_c$ entero; el barrier implicito al final de cada `omp for` sincroniza las pasadas $p_c$ (necesario porque $C$ se acumula entre pasadas).
 
 ### 15.1 Constantes y global
 
 ```c
 #define TILED_IKJ_OMP_MR 6u
-#define TILED_IKJ_OMP_NR 16u
-#define TILED_IKJ_OMP_MC 192u
-#define TILED_IKJ_OMP_BS_DEFAULT 384u
+#define TILED_IKJ_OMP_NR 32u
+#define TILED_IKJ_OMP_MC 288u
+#define TILED_IKJ_OMP_BS_DEFAULT 256u
 extern size_t g_tiled_ikj_omp_bs;
 ```
 
-Misma geometria que `matmul_tiled_ikj_avx2`. El microkernel esta duplicado adrede en el `.c` (no factorizado a un header compartido) para garantizar que GCC lo inline en cada unidad de compilacion sin spilling de los $12$ acumuladores YMM; explico la razon en el comentario de `matmul_tiled_ikj_omp.c`.
+Misma geometria que `matmul_tiled_ikj_avx2`. El microkernel vive en el header `kernel_avx512_tiled.h` como `static inline`; cada TU que lo incluye obtiene su copia inlineada bajo `-O3`, evitando el spilling de los $12$ acumuladores ZMM a traves del ABI.
 
 ### 15.2 Funciones publicas
 
@@ -969,27 +1011,25 @@ Mismo contrato externo que las contrapartes seriales:
 - Cada thread procesa un rango disjunto del loop $i_c$, escribiendo exclusivamente en filas $[i_c, i_c + m_c)$ de $C$ — sin conflictos de escritura ni false sharing entre tiles diferentes ($\text{MC} \cdot n \cdot 4 = 192 \cdot 128 \cdot 4 = 96$ KiB por bloque, varios ordenes de magnitud por encima de la linea de cache).
 - El numero de threads lo fija `OMP_NUM_THREADS` antes de invocar el binario.
 
-### 15.3 Recomendacion para el Ryzen $5$ $4600$H
+### 15.3 Recomendacion para el EPYC 9R45 (AWS c8a.2xlarge, Zen 5)
 
-Configuracion empiricamente mejor en el sweep del Modulo 14: **`OMP_NUM_THREADS=6 OMP_PLACES=cores OMP_PROC_BIND=close`**. Un thread por core fisico (los $6$ cores fisicos del Renoir), evitando los hilos SMT que comparten las unidades FMA con sus siblings. `bind=close` mantiene los threads pegados a un CCX cuando hay $\leq 3$, y se reparte entre los dos cuando hay $\geq 4$.
-
-SMT a $12$ threads degrada el rendimiento $\sim 60\%$ porque los pares de hilos compiten por las dos pipas FMA de cada core fisico.
+Configuracion recomendada: **`OMP_NUM_THREADS=8 OMP_PLACES=cores OMP_PROC_BIND=close`**. La VM expone $8$ vCPUs en un solo NUMA node con SMT deshabilitada por el hipervisor, asi que `close` y `spread` son topologicamente equivalentes (todos los cores comparten el mismo L3 de $32$ MiB).
 
 ### 15.4 Binarios
 
 | Binario | Target make | Flags |
 |---------|-------------|-------|
-| `bin/bench_tiled_ikj_omp_O3`    | `bench_tiled_ikj_omp`    | `CFLAGS_OMP_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma -fopenmp`) |
-| `bin/validate_tiled_ikj_omp_O3` | `validate_tiled_ikj_omp` | idem |
+| `bin/bench_tiled_ikj_omp_ZEN5`    | `bench_tiled_ikj_omp_ZEN5`    | `CFLAGS_OMP_ZEN5` (`-O3 -march=native -fopenmp` + thresholds) |
+| `bin/validate_tiled_ikj_omp_ZEN5` | `validate_tiled_ikj_omp_ZEN5` | idem |
 
-**CLI bench:** `bench_tiled_ikj_omp_O3 <m> [num_iters] [num_runs] [bs]`
+**CLI bench:** `bench_tiled_ikj_omp_ZEN5 <m> [num_iters] [num_runs] [bs]`
 
 **Salida CSV** (7 columnas, identica a `tiled_ikj_avx2`):
 ```
 tiled_ikj_omp,m,n,num_iters,bs,median_seconds,gflops
 ```
 
-**Integracion en el pipeline perf:** `profile_perf_zen2.sh` fija `OMP_NUM_THREADS=6 OMP_PLACES=cores OMP_PROC_BIND=close` cuando `VARIANT=tiled_ikj_omp` (cambiado en Fase 1.6 desde $8/$close, que era subOptimo para el microkernel FMA-bound). `run_perf_zen2_sweep.sh` incluye `tiled_ikj_omp` en su array `VARIANTS` por defecto. `consolidate_perf_zen2.py` no requiere cambios.
+**Integracion en el pipeline perf:** `scripts/profile_perf_zen5.sh` fija `OMP_NUM_THREADS=8 OMP_PLACES=cores OMP_PROC_BIND=close` cuando `VARIANT=tiled_ikj_omp`. `scripts/run_perf_zen5_sweep.sh` incluye `tiled_ikj_omp` en su array `VARIANTS` por defecto. `scripts/consolidate_perf_zen5.py` parsea la salida.
 
 ---
 

@@ -1,10 +1,18 @@
 /*
- * matmul_morton_avx2.h - Morton-recursive matmul with an AVX2 + FMA
- * microkernel as leaf (Sesion 03 / Prompt 4, Stage A4 integration).
+ * matmul_morton_avx2.h - Morton-recursive matmul with an AVX-512 + FMA
+ * microkernel as leaf (Zen 5 / EPYC 9R45 main_server variant).
+ *
+ * The "_avx2" suffix in the file name is retained for API compatibility
+ * with the rest of the project (drivers, sweep scripts, CSV column
+ * labels), but the leaf now uses kernel_avx512_4x32 from
+ * kernel_avx512_morton.h. The AVX2 path has been removed because the
+ * server CPU (AMD EPYC 9R45, Zen 5) supports the full AVX-512 ISA
+ * including AVX-512F / VL / BW / DQ, and the 32-wide ZMM register
+ * doubles FMA throughput per cycle vs the 16-wide YMM kernel.
  *
  * Same recursive structure as matmul_morton (Sesion 02 / Stage A3),
  * but the leaf computes the tile by repeatedly invoking
- * kernel_avx2_4x16. To make that kernel useful, A is stored in a
+ * kernel_avx512_4x32. To make that kernel useful, A is stored in a
  * DIFFERENT Morton variant than the one used by matmul_morton:
  *
  *   Sesion 02 layout (Morton "fino"):
@@ -31,7 +39,7 @@
  * Pre-conditions for the public wrapper:
  *   - m == k (A square).
  *   - m is a power of two and m >= MR = 4.
- *   - n >= NR = 16. (n is recommended to be a multiple of NR;
+ *   - n >= NR = 32. (n is recommended to be a multiple of NR;
  *     fallback ijk kernel handles non-multiples but slowly.)
  *   - A_morton was produced by reorganize_to_morton_blocks() below.
  *   - C does not alias A_morton or B.
@@ -45,13 +53,15 @@
 
 #include <stddef.h>
 
-#include "matrix_utils.h"   /* scalar_t */
-#include "kernel_avx2_morton.h"  /* for KERNEL_AVX2_MR / KERNEL_AVX2_NR */
+#include "matrix_utils.h"             /* scalar_t */
+#include "kernel_avx512_morton.h"     /* KERNEL_AVX512_MORTON_MR / _NR */
 
 /* Tile side used by the Morton-of-blocks layout. Same as the row
  * count of the microkernel, so each tile in A maps to one panel
- * column slice the microkernel will consume. */
-#define MORTON_AVX2_TILE KERNEL_AVX2_MR    /* 4 */
+ * column slice the microkernel will consume. The "_AVX2" naming is
+ * legacy from the Zen 2 variant; the actual value is the AVX-512
+ * kernel's MR (= 4). */
+#define MORTON_AVX2_TILE KERNEL_AVX512_MORTON_MR    /* 4 */
 
 /*
  * matmul_morton_avx2: compute C = A_morton * B with A in the

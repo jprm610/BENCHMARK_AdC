@@ -1,13 +1,14 @@
 /*
- * matmul_morton_omp.c - OpenMP-parallelized Morton-recursive matmul.
+ * matmul_morton_omp.c - OpenMP-parallelized Morton-recursive matmul
+ * wired to the AVX-512 microkernel kernel_avx512_4x32 (Zen 5 /
+ * EPYC 9R45 main_server variant).
  *
  * Same recursion and same leaf kernel as matmul_morton_avx2.c. The
- * leaf helpers (materialize_a_panel, kernel_base_morton_avx2,
- * kernel_base_morton_avx2_add, kernel_base_morton_avx2_ijk_fallback)
- * are duplicated here rather than #include'd from the AVX2
- * translation unit so this module is standalone: the AVX2 baseline
- * stays exactly as Prompt 4 left it, and no static helper ever
- * crosses the file boundary.
+ * leaf helpers (materialize_a_panel, kernel_base_morton_omp,
+ * kernel_base_morton_omp_add, kernel_base_morton_omp_ijk_fallback)
+ * are duplicated here rather than #include'd from the sibling
+ * translation unit so this module is standalone: no static helper
+ * ever crosses the file boundary.
  *
  * The recursion is parallelized as follows:
  *
@@ -36,15 +37,16 @@
  *   Morton-of-blocks layout into a per-thread scratch buffer. The
  *   pool is allocated once by the public wrapper using
  *   omp_get_max_threads() and indexed at the leaf by
- *   omp_get_thread_num(). With 12 threads and a 64x64 panel
- *   (16 KiB) the total scratch is ~192 KiB, negligible.
+ *   omp_get_thread_num(). With 8 threads (Zen 5 server: 1 thread/core)
+ *   and a 128x128 panel (64 KiB) the total scratch is ~512 KiB,
+ *   negligible vs the 32 MiB shared L3.
  */
 
 #include "matmul_morton_omp.h"
 
-#include "morton.h"             /* morton_encode, is_power_of_two */
-#include "kernel_avx2_morton.h"  /* kernel_avx2_4x16, KERNEL_AVX2_MR/NR */
-#include "matrix_utils.h"       /* xalloc_aligned, xfree */
+#include "morton.h"                /* morton_encode, is_power_of_two */
+#include "kernel_avx512_morton.h"  /* kernel_avx512_4x32, geometry */
+#include "matrix_utils.h"          /* xalloc_aligned, xfree */
 
 #include <assert.h>
 #include <stdint.h>
@@ -54,25 +56,23 @@
 
 #include <omp.h>
 
-#define MR KERNEL_AVX2_MR   /* 4 — unchanged: tied to MORTON_AVX2_TILE */
-#ifdef USE_AVX512
-#include "kernel_avx512.h"
-#define NR 32u
+#define MR KERNEL_AVX512_MORTON_MR   /* 4 — tied to MORTON_AVX2_TILE */
+#define NR KERNEL_AVX512_MORTON_NR   /* 32 */
 #define LEAF_KERNEL kernel_avx512_4x32
-#else
-#define NR KERNEL_AVX2_NR   /* 16 */
-#define LEAF_KERNEL kernel_avx2_4x16
-#endif
 
 /* ------------------------------------------------------------------ */
 /* Tunables                                                            */
 /* ------------------------------------------------------------------ */
 
+/* Defaults sized for the EPYC 9R45 (L1d 48 KiB / L2 1 MiB / L3 32 MiB
+ * shared). The 1048576 threshold gives a leaf side ~90 (A panel
+ * ~32 KiB, fits L1d). The makefile may override via -D... at
+ * compile time. */
 #ifndef MORTON_OMP_RECURSION_THRESHOLD_DEFAULT
-#define MORTON_OMP_RECURSION_THRESHOLD_DEFAULT ((size_t)64 * 64 * 128)  /* 524288 - Zen 2 default */
+#define MORTON_OMP_RECURSION_THRESHOLD_DEFAULT ((size_t)1048576UL)
 #endif
 #ifndef MORTON_OMP_PARALLEL_THRESHOLD_DEFAULT
-#define MORTON_OMP_PARALLEL_THRESHOLD_DEFAULT  ((size_t)64 * 64 * 128)  /* 524288 - Zen 2 default */
+#define MORTON_OMP_PARALLEL_THRESHOLD_DEFAULT  ((size_t)1048576UL)
 #endif
 size_t g_recursion_threshold_omp = MORTON_OMP_RECURSION_THRESHOLD_DEFAULT;
 size_t g_parallel_threshold_omp  = MORTON_OMP_PARALLEL_THRESHOLD_DEFAULT;
