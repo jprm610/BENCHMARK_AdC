@@ -43,7 +43,7 @@
 #include "matmul_morton_omp.h"
 
 #include "morton.h"             /* morton_encode, is_power_of_two */
-#include "kernel_avx2.h"        /* kernel_avx2_4x16, KERNEL_AVX2_MR/NR */
+#include "kernel_avx2_morton.h"  /* kernel_avx2_4x16, KERNEL_AVX2_MR/NR */
 #include "matrix_utils.h"       /* xalloc_aligned, xfree */
 
 #include <assert.h>

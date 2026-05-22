@@ -28,11 +28,14 @@ echo "OK: no intrinsics in src/."
 echo
 echo "[2/3] Compiling target binaries with -S for inspection..."
 mkdir -p build/audit
-for src in src/matmul_morton.c src/morton.c; do
+# Include paths must cover both the algorithm's own directory and core/
+# (matrix_utils.h, morton.h) so each TU compiles standalone.
+AUDIT_INCS="-Isrc/core -Isrc/algorithms/morton"
+for src in src/algorithms/morton/matmul_morton.c src/core/morton.c; do
     base=$(basename "$src" .c)
     gcc -O3 -march=znver2 -mavx2 -mfma -mbmi -mbmi2 \
         -S -o "build/audit/${base}.s" \
-        -Isrc "$src" || { echo "FAIL: could not compile $src"; exit 1; }
+        $AUDIT_INCS "$src" || { echo "FAIL: could not compile $src"; exit 1; }
 done
 echo "OK: assembler emitted under build/audit/"
 
