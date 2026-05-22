@@ -1,6 +1,6 @@
 /*
  * test_kernel_avx2.c - Standalone correctness test for the 4x16 AVX2
- * microkernel of kernel_avx2.c.
+ * microkernel declared in kernel_avx2_morton.h (header-only static inline).
  *
  * Four tests, all independent of Morton and recursion. They exercise
  * the kernel as a pure tile multiply with growing kc:
@@ -32,7 +32,7 @@
 #include <string.h>
 #include <time.h>
 
-#include "kernel_avx2.h"
+#include "kernel_avx2_morton.h"
 #include "matrix_utils.h"
 
 #define MR KERNEL_AVX2_MR  /* 4  */

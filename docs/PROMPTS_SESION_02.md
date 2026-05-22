@@ -8,6 +8,15 @@
 
 Este documento contiene los prompts en orden para alimentar a Claude Code durante la Sesion 02. Cada prompt esta diseniado para ser autosuficiente: incluye contexto, archivos a tocar, firmas, restricciones y criterio de aceptacion.
 
+> **Nota (2026-05-21): reorganizacion del arbol `src/`.** Los prompts
+> y fragmentos de Makefile abajo mencionan rutas planas (`src/foo.c`)
+> que corresponden al layout original. Tras el refactor del 2026-05-21
+> los archivos se reubicaron en subdirectorios funcionales (`core/`,
+> `microkernels/`, `algorithms/<familia>/`, `drivers/{bench,validate}/`,
+> `tests/`, `tools/`). Para el mapeo completo ver el aviso al inicio
+> de `docs/PLAN_SESION_03.md`. El contenido textual de los prompts se
+> conserva tal cual por valor de registro historico.
+
 ---
 
 ## 0. Contexto resumido

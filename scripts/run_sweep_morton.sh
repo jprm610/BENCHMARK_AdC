@@ -5,7 +5,7 @@
 # collect the gflops results into results/morton_O0.csv.
 #
 # Phase 6, Stage A3 sweep. The Morton kernel asserts m is a power of two
-# (see src/matmul_morton.c), so this script filters the input list and
+# (see src/algorithms/morton/matmul_morton.c), so this script filters the input list and
 # emits a stderr warning for any m that does not qualify.
 #
 # Usage:

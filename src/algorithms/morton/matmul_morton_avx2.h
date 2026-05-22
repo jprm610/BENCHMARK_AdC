@@ -46,7 +46,7 @@
 #include <stddef.h>
 
 #include "matrix_utils.h"   /* scalar_t */
-#include "kernel_avx2.h"    /* for KERNEL_AVX2_MR / KERNEL_AVX2_NR */
+#include "kernel_avx2_morton.h"  /* for KERNEL_AVX2_MR / KERNEL_AVX2_NR */
 
 /* Tile side used by the Morton-of-blocks layout. Same as the row
  * count of the microkernel, so each tile in A maps to one panel

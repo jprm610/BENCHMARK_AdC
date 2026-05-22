@@ -9,6 +9,17 @@
 
 Este documento contiene los prompts en orden para alimentar a Claude Code durante la Sesion 03. La Sesion 02 dejo Morton "funcionando y validado" pero sin optimizar a nivel de microkernel. El proposito de esta sesion es **bajar al hardware especifico**: explotar AVX2 + FMA del Zen 2, tunear tamanos de bloque a los caches reales del 4600H, paralelizar con OpenMP respetando la topologia de 2 CCX, y cerrar con un Roofline ubicado en la maquina real.
 
+> **Nota (2026-05-21): reorganizacion del arbol `src/`.** Los prompts
+> y fragmentos de Makefile abajo mencionan rutas planas (`src/foo.c`,
+> `src/kernel_avx2.{h,c}`) que corresponden al layout original. Tras
+> el refactor del 2026-05-21 los archivos se reubicaron en
+> subdirectorios funcionales y `kernel_avx2.{h,c}` se renombro a
+> `kernel_avx2_morton.{h,c}` (porque ahora hay un segundo microkernel
+> AVX2 `kernel_avx2_tiled.h` para la familia tiled). Para el mapeo
+> completo ver el aviso al inicio de `docs/PLAN_SESION_03.md`. El
+> contenido textual de los prompts se conserva tal cual por valor de
+> registro historico.
+
 ---
 
 ## 0. Contexto resumido
