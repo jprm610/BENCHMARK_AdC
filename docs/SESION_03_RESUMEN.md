@@ -7,6 +7,16 @@
 
 Este documento sirve para retomar el proyecto sin releer la conversacion de la Sesion 03. Anexa al `SESION_02_RESUMEN.md` los hallazgos cuantitativos de la sesion: microkernel a $\sim 64.6 \%$ del techo FMA single-core de Zen 2, cliff L3 confirmado empiricamente en $m \approx 1024$, OMP que escala bien hasta $6$ threads, y un Roofline completo del Ryzen $5$ $4600$H.
 
+> **Nota (2026-05-21): reorganizacion del arbol `src/`.** Las rutas
+> `src/hwinfo.c`, `src/kernel_avx2.{h,c}`, etc. mencionadas abajo
+> corresponden al layout plano original. Tras el refactor del
+> 2026-05-21 los archivos viven en `src/tools/`, `src/microkernels/`,
+> `src/algorithms/<familia>/`, `src/drivers/{bench,validate}/`. El
+> microkernel `kernel_avx2.{h,c}` se renombro a `kernel_avx2_morton.{h,c}`
+> al introducir su contraparte 6x16 `kernel_avx2_tiled.h` para la
+> familia tiled. Mapeo completo en el aviso al inicio de
+> `docs/PLAN_SESION_03.md`.
+
 ---
 
 ## 1. Contexto del proyecto

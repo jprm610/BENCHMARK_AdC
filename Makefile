@@ -1,25 +1,72 @@
 #
-# Makefile for the iterated matmul benchmark - Phase 1 (naive baseline).
+# Makefile for the iterated matmul benchmark.
 #
-# Targets:
-#   make                  -> bench_naive_O0 and validate_naive_O0 (default)
-#   make bench_naive_O0   -> baseline benchmark binary (no compiler optimization)
-#   make bench_naive_pg   -> same as bench_naive_O0 but compiled with -pg for gprof
-#   make validate_naive   -> validate_naive_O0 binary that runs the algebraic sanity tests
-#   make sweep_naive      -> runs scripts/run_sweep_naive.sh after building bench_naive_O0
-#   make clean            -> remove binaries and object files (keeps CSV/plots)
-#   make distclean        -> clean plus remove results/*.csv and plots/*
+# Source layout (post src/ reorg):
 #
-# The point of having both bench_naive_O0 and bench_naive_pg as separate binaries
-# is so that the gprof instrumentation does not contaminate timing on the
-# non-profiled benchmark.
+#   src/core/          matrix_utils.{c,h}, timing.h, morton.{c,h}
+#   src/microkernels/  kernel_avx2_morton.h         (4x16, Morton family,
+#                                                    header-only static inline)
+#                      kernel_avx2_tiled.h          (6x16, tiled_ikj family,
+#                                                    header-only static inline)
+#   src/algorithms/
+#     naive/           matmul_naive.{c,h}
+#     loops/           matmul_loops.{c,h}
+#     morton/          matmul_morton{,_avx2,_omp}.{c,h}
+#     tiled_ikj/       matmul_tiled_ikj{,_avx2,_omp}.{c,h}
+#   src/drivers/
+#     bench/           bench_*.c       (one per algorithm)
+#     validate/        validate_*.c    (one per algorithm)
+#   src/tests/         test_morton.c, test_kernel_avx2.c
+#   src/tools/         hwinfo.c
+#
+# All -I flags below are added together so that #include "foo.h" works
+# regardless of which subdirectory the header lives in. This keeps the
+# source files free of relative paths like "../../core/matrix_utils.h"
+# and lets each .c stay in its conceptual subdir without referring to
+# its on-disk neighbors explicitly.
+#
+# Common targets:
+#   make                   -> bench_naive_O0 and validate_naive_O0 (default)
+#   make bench_naive_O0    -> baseline benchmark binary (no compiler optimization)
+#   make bench_naive_pg    -> same as bench_naive_O0 but compiled with -pg for gprof
+#   make validate_naive    -> validate_naive_O0 binary that runs the algebraic tests
+#   make sweep_naive       -> runs scripts/run_sweep_naive.sh after building
+#   make results [M=...]   -> full perf-counter sweep (variant x m grid)
+#   make clean             -> remove binaries and object files (keeps CSV/plots)
+#   make distclean         -> clean plus remove results/*.csv and plots/*
 #
 
 CC      := gcc
 CSTD    := -std=c11
 WARN    := -Wall -Wextra -Wpedantic
-INCS    := -Isrc
-LIBS    := -lm
+
+# ---------------------------------------------------------------------
+# Source tree layout
+# ---------------------------------------------------------------------
+
+SRC_DIR        := src
+
+CORE_DIR       := $(SRC_DIR)/core
+MK_DIR         := $(SRC_DIR)/microkernels
+ALG_DIR        := $(SRC_DIR)/algorithms
+NAIVE_DIR      := $(ALG_DIR)/naive
+LOOPS_DIR      := $(ALG_DIR)/loops
+MORTON_DIR     := $(ALG_DIR)/morton
+TILED_DIR      := $(ALG_DIR)/tiled_ikj
+BENCH_DIR      := $(SRC_DIR)/drivers/bench
+VALIDATE_DIR   := $(SRC_DIR)/drivers/validate
+TESTS_DIR      := $(SRC_DIR)/tests
+TOOLS_DIR      := $(SRC_DIR)/tools
+
+BIN_DIR        := bin
+OBJ_DIR        := build
+
+# Aggregate -I flag so every #include "foo.h" resolves regardless of
+# which subdirectory the header lives in.
+INCS := -I$(CORE_DIR) -I$(MK_DIR) \
+        -I$(NAIVE_DIR) -I$(LOOPS_DIR) -I$(MORTON_DIR) -I$(TILED_DIR)
+
+LIBS := -lm
 
 # -O0 is mandatory for Phase 1. -g for debugging symbols and meaningful
 # function names in gprof/perf reports. -fno-omit-frame-pointer makes
@@ -30,15 +77,12 @@ LIBS    := -lm
 BASE_CFLAGS := $(CSTD) $(WARN) $(INCS) -O0 -g -fno-omit-frame-pointer \
                -D_POSIX_C_SOURCE=200809L
 
-SRC_DIR  := src
-BIN_DIR  := bin
-OBJ_DIR  := build
+# Common module list (kernel + helpers) used by both bench and validate
+# of every algorithm.
+COMMON_SRCS := $(NAIVE_DIR)/matmul_naive.c $(CORE_DIR)/matrix_utils.c
 
-# Common module list (kernel + helpers) used by both bench and validate.
-COMMON_SRCS := $(SRC_DIR)/matmul_naive.c $(SRC_DIR)/matrix_utils.c
-
-BENCH_SRCS    := $(COMMON_SRCS) $(SRC_DIR)/bench_naive.c
-VALIDATE_SRCS := $(COMMON_SRCS) $(SRC_DIR)/validate_naive.c
+BENCH_SRCS    := $(COMMON_SRCS) $(BENCH_DIR)/bench_naive.c
+VALIDATE_SRCS := $(COMMON_SRCS) $(VALIDATE_DIR)/validate_naive.c
 
 BENCH_NAIVE_O0     := $(BIN_DIR)/bench_naive_O0
 BENCH_NAIVE_PG     := $(BIN_DIR)/bench_naive_pg
@@ -84,7 +128,7 @@ distclean: clean
 # Fase 6 / Etapa A3 support module - Morton (Z-order) encoding tests
 # =====================================================================
 
-TEST_MORTON_SRCS := $(SRC_DIR)/morton.c $(SRC_DIR)/matrix_utils.c $(SRC_DIR)/test_morton.c
+TEST_MORTON_SRCS := $(CORE_DIR)/morton.c $(CORE_DIR)/matrix_utils.c $(TESTS_DIR)/test_morton.c
 TEST_MORTON      := $(BIN_DIR)/test_morton
 
 .PHONY: test_morton
@@ -101,10 +145,10 @@ $(TEST_MORTON): $(TEST_MORTON_SRCS) | $(BIN_DIR)
 # (Test 4); matmul_naive is the canonical reference baseline.
 # =====================================================================
 
-MORTON_KERNEL_SRCS       := $(SRC_DIR)/matmul_morton.c $(SRC_DIR)/morton.c
-BENCH_MORTON_SRCS        := $(COMMON_SRCS) $(MORTON_KERNEL_SRCS) $(SRC_DIR)/bench_morton.c
+MORTON_KERNEL_SRCS       := $(MORTON_DIR)/matmul_morton.c $(CORE_DIR)/morton.c
+BENCH_MORTON_SRCS        := $(COMMON_SRCS) $(MORTON_KERNEL_SRCS) $(BENCH_DIR)/bench_morton.c
 VALIDATE_MORTON_SRCS     := $(COMMON_SRCS) $(MORTON_KERNEL_SRCS) \
-                            $(SRC_DIR)/validate_morton.c
+                            $(VALIDATE_DIR)/validate_morton.c
 
 BENCH_MORTON_O0          := $(BIN_DIR)/bench_morton_O0
 VALIDATE_MORTON_O0       := $(BIN_DIR)/validate_morton_O0
@@ -137,9 +181,9 @@ sweep_morton_run: $(BENCH_MORTON_O0)
 # sweep_loops    : runs scripts/run_sweep_loops.sh -> results/loop_order.csv
 # =====================================================================
 
-LOOPS_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_loops.c
-BENCH_LOOPS_SRCS    := $(LOOPS_COMMON_SRCS) $(SRC_DIR)/bench_loops.c
-VALIDATE_LOOPS_SRCS := $(LOOPS_COMMON_SRCS) $(SRC_DIR)/validate_loops.c
+LOOPS_COMMON_SRCS   := $(COMMON_SRCS) $(LOOPS_DIR)/matmul_loops.c
+BENCH_LOOPS_SRCS    := $(LOOPS_COMMON_SRCS) $(BENCH_DIR)/bench_loops.c
+VALIDATE_LOOPS_SRCS := $(LOOPS_COMMON_SRCS) $(VALIDATE_DIR)/validate_loops.c
 
 BENCH_LOOPS_O0      := $(BIN_DIR)/bench_loops_O0
 BENCH_LOOPS_O3      := $(BIN_DIR)/bench_loops_O3
@@ -235,7 +279,7 @@ audit:
 hwinfo: $(HWINFO_BIN)
 	./$(HWINFO_BIN)
 
-$(HWINFO_BIN): $(SRC_DIR)/hwinfo.c | $(BIN_DIR)
+$(HWINFO_BIN): $(TOOLS_DIR)/hwinfo.c | $(BIN_DIR)
 	$(CC) $(CFLAGS_O3) -o $@ $< $(LIBS)
 
 # ---------------------------------------------------------------------
@@ -264,67 +308,62 @@ plot_threshold:
 	python3 scripts/plot_threshold_sweep.py
 
 # ---------------------------------------------------------------------
-# Sesion 03 / Prompt 3 - AVX2 + FMA microkernel
+# Sesion 03 / Prompt 3 - AVX2 + FMA microkernel for the Morton family
 #
-# kernel_avx2.c uses immintrin.h. We compile it to an object with the
-# stage-A4 flag set (-march=znver2 -mavx2 -mfma -funroll-loops
-# -ffast-math) and link the test driver against it. -Wpedantic is
-# dropped here because immintrin types are GCC extensions and trigger
-# pedantic warnings on perfectly valid code. The audit script keeps
-# verifying that pdep/pext do not get emitted (criterion 4 / 5).
+# kernel_avx2_morton.h is now header-only (`static inline`), matching
+# the layout of kernel_avx2_tiled.h and of Juan Pablo's kernel_avx512.h
+# in opt_zen5. There is no kernel_avx2_morton.o anymore: each .c that
+# includes the header (matmul_morton_avx2.c, matmul_morton_omp.c,
+# tests/test_kernel_avx2.c) gets its own inlined copy under -O3.
+# Bench/validate binaries are compiled with -mavx2 -mfma via
+# CFLAGS_O3_ZEN2, which is what the immintrin intrinsics require.
+#
+# The audit script keeps verifying that pdep/pext do not get emitted
+# (criterion 4 / 5).
 # ---------------------------------------------------------------------
 
-CFLAGS_AVX2_KERNEL := $(CSTD) -Wall -Wextra $(INCS) \
-                      -O3 -march=znver2 -mavx2 -mfma \
-                      -funroll-loops -ffast-math
-
-KERNEL_AVX2_OBJ   := $(OBJ_DIR)/kernel_avx2.o
-TEST_KERNEL_AVX2  := $(BIN_DIR)/test_kernel_avx2
+TEST_KERNEL_AVX2 := $(BIN_DIR)/test_kernel_avx2
 
 .PHONY: test_kernel_avx2
 
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)
 
-$(KERNEL_AVX2_OBJ): $(SRC_DIR)/kernel_avx2.c $(SRC_DIR)/kernel_avx2.h \
-                    $(SRC_DIR)/matmul_naive.h | $(OBJ_DIR)
-	$(CC) $(CFLAGS_AVX2_KERNEL) -c -o $@ $<
-
 test_kernel_avx2: $(TEST_KERNEL_AVX2)
 	./$(TEST_KERNEL_AVX2)
 
-$(TEST_KERNEL_AVX2): $(SRC_DIR)/test_kernel_avx2.c $(KERNEL_AVX2_OBJ) \
-                     $(SRC_DIR)/matrix_utils.c $(SRC_DIR)/matrix_utils.h \
-                     $(SRC_DIR)/matmul_naive.h | $(BIN_DIR)
+$(TEST_KERNEL_AVX2): $(TESTS_DIR)/test_kernel_avx2.c \
+                     $(MK_DIR)/kernel_avx2_morton.h \
+                     $(CORE_DIR)/matrix_utils.c $(CORE_DIR)/matrix_utils.h \
+                     $(NAIVE_DIR)/matmul_naive.h | $(BIN_DIR)
 	$(CC) $(CFLAGS_O3_ZEN2) \
-	      $(SRC_DIR)/test_kernel_avx2.c \
-	      $(SRC_DIR)/matrix_utils.c \
-	      $(KERNEL_AVX2_OBJ) \
+	      $(TESTS_DIR)/test_kernel_avx2.c \
+	      $(CORE_DIR)/matrix_utils.c \
 	      -o $@ $(LIBS)
 
 # ---------------------------------------------------------------------
 # Sesion 03 / Prompt 4 - Morton + AVX2 integration
 #
-# matmul_morton_avx2 wires the AVX2 microkernel into the recursive
-# Morton skeleton, using a Morton-of-blocks layout for A (tile = 4)
-# that materializes nicely to a row-major panel in the leaf. The
-# baseline _O0 binaries remain untouched for regression.
+# matmul_morton_avx2 wires the AVX2 microkernel (kernel_avx2_morton)
+# into the recursive Morton skeleton, using a Morton-of-blocks layout
+# for A (tile = 4) that materializes nicely to a row-major panel in
+# the leaf. The baseline _O0 binaries remain untouched for regression.
 #
 # validate_morton_avx2 links matmul_morton.c too, because Test 5
 # cross-checks the AVX2 variant against the Sesion 02 Morton kernel.
 # ---------------------------------------------------------------------
 
-MORTON_AVX2_SHARED_SRCS  := $(SRC_DIR)/matmul_morton_avx2.c \
-                             $(SRC_DIR)/morton.c \
-                             $(SRC_DIR)/matrix_utils.c \
-                             $(SRC_DIR)/matmul_naive.c
+MORTON_AVX2_SHARED_SRCS  := $(MORTON_DIR)/matmul_morton_avx2.c \
+                             $(CORE_DIR)/morton.c \
+                             $(CORE_DIR)/matrix_utils.c \
+                             $(NAIVE_DIR)/matmul_naive.c
 
 BENCH_MORTON_AVX2_SRCS    := $(MORTON_AVX2_SHARED_SRCS) \
-                             $(SRC_DIR)/bench_morton_avx2.c
+                             $(BENCH_DIR)/bench_morton_avx2.c
 
 VALIDATE_MORTON_AVX2_SRCS := $(MORTON_AVX2_SHARED_SRCS) \
-                             $(SRC_DIR)/matmul_morton.c \
-                             $(SRC_DIR)/validate_morton_avx2.c
+                             $(MORTON_DIR)/matmul_morton.c \
+                             $(VALIDATE_DIR)/validate_morton_avx2.c
 
 BENCH_MORTON_AVX2_O3    := $(BIN_DIR)/bench_morton_avx2_O3
 VALIDATE_MORTON_AVX2_O3 := $(BIN_DIR)/validate_morton_avx2_O3
@@ -339,19 +378,13 @@ bench_morton_avx2:    $(BENCH_MORTON_AVX2_O3)
 bench_morton_avx2_O3: $(BENCH_MORTON_AVX2_O3)
 validate_morton_avx2: $(VALIDATE_MORTON_AVX2_O3)
 
-$(BENCH_MORTON_AVX2_O3): $(BENCH_MORTON_AVX2_SRCS) $(KERNEL_AVX2_OBJ) \
-                         | $(BIN_DIR)
-	$(CC) $(CFLAGS_O3_ZEN2) \
-	      $(BENCH_MORTON_AVX2_SRCS) \
-	      $(KERNEL_AVX2_OBJ) \
-	      -o $@ $(LIBS)
+$(BENCH_MORTON_AVX2_O3): $(BENCH_MORTON_AVX2_SRCS) \
+                         $(MK_DIR)/kernel_avx2_morton.h | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_MORTON_AVX2_SRCS) -o $@ $(LIBS)
 
-$(VALIDATE_MORTON_AVX2_O3): $(VALIDATE_MORTON_AVX2_SRCS) $(KERNEL_AVX2_OBJ) \
-                            | $(BIN_DIR)
-	$(CC) $(CFLAGS_O3_ZEN2) \
-	      $(VALIDATE_MORTON_AVX2_SRCS) \
-	      $(KERNEL_AVX2_OBJ) \
-	      -o $@ $(LIBS)
+$(VALIDATE_MORTON_AVX2_O3): $(VALIDATE_MORTON_AVX2_SRCS) \
+                            $(MK_DIR)/kernel_avx2_morton.h | $(BIN_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) $(VALIDATE_MORTON_AVX2_SRCS) -o $@ $(LIBS)
 
 # ---------------------------------------------------------------------
 # Sesion 03 / Prompt 5 - bench_naive_O3 driver for fair flag-set
@@ -414,18 +447,18 @@ plot_morton_avx2_xl:
 
 CFLAGS_OMP_ZEN2 := $(CFLAGS_O3_ZEN2) -fopenmp
 
-MORTON_OMP_SHARED_SRCS  := $(SRC_DIR)/matmul_morton_omp.c \
-                            $(SRC_DIR)/matmul_morton_avx2.c \
-                            $(SRC_DIR)/morton.c \
-                            $(SRC_DIR)/matrix_utils.c \
-                            $(SRC_DIR)/matmul_naive.c
+MORTON_OMP_SHARED_SRCS  := $(MORTON_DIR)/matmul_morton_omp.c \
+                            $(MORTON_DIR)/matmul_morton_avx2.c \
+                            $(CORE_DIR)/morton.c \
+                            $(CORE_DIR)/matrix_utils.c \
+                            $(NAIVE_DIR)/matmul_naive.c
 
 BENCH_MORTON_OMP_SRCS    := $(MORTON_OMP_SHARED_SRCS) \
-                            $(SRC_DIR)/bench_morton_omp.c
+                            $(BENCH_DIR)/bench_morton_omp.c
 
 VALIDATE_MORTON_OMP_SRCS := $(MORTON_OMP_SHARED_SRCS) \
-                            $(SRC_DIR)/matmul_morton.c \
-                            $(SRC_DIR)/validate_morton_omp.c
+                            $(MORTON_DIR)/matmul_morton.c \
+                            $(VALIDATE_DIR)/validate_morton_omp.c
 
 BENCH_MORTON_OMP_O3    := $(BIN_DIR)/bench_morton_omp_O3
 VALIDATE_MORTON_OMP_O3 := $(BIN_DIR)/validate_morton_omp_O3
@@ -437,17 +470,13 @@ bench_morton_omp:    $(BENCH_MORTON_OMP_O3)
 bench_morton_omp_O3: $(BENCH_MORTON_OMP_O3)
 validate_morton_omp: $(VALIDATE_MORTON_OMP_O3)
 
-$(BENCH_MORTON_OMP_O3): $(BENCH_MORTON_OMP_SRCS) $(KERNEL_AVX2_OBJ) | $(BIN_DIR)
-	$(CC) $(CFLAGS_OMP_ZEN2) \
-	      $(BENCH_MORTON_OMP_SRCS) \
-	      $(KERNEL_AVX2_OBJ) \
-	      -o $@ $(LIBS)
+$(BENCH_MORTON_OMP_O3): $(BENCH_MORTON_OMP_SRCS) \
+                        $(MK_DIR)/kernel_avx2_morton.h | $(BIN_DIR)
+	$(CC) $(CFLAGS_OMP_ZEN2) $(BENCH_MORTON_OMP_SRCS) -o $@ $(LIBS)
 
-$(VALIDATE_MORTON_OMP_O3): $(VALIDATE_MORTON_OMP_SRCS) $(KERNEL_AVX2_OBJ) | $(BIN_DIR)
-	$(CC) $(CFLAGS_OMP_ZEN2) \
-	      $(VALIDATE_MORTON_OMP_SRCS) \
-	      $(KERNEL_AVX2_OBJ) \
-	      -o $@ $(LIBS)
+$(VALIDATE_MORTON_OMP_O3): $(VALIDATE_MORTON_OMP_SRCS) \
+                           $(MK_DIR)/kernel_avx2_morton.h | $(BIN_DIR)
+	$(CC) $(CFLAGS_OMP_ZEN2) $(VALIDATE_MORTON_OMP_SRCS) -o $@ $(LIBS)
 
 sweep_omp_scaling: $(BENCH_MORTON_OMP_O3)
 	bash scripts/run_omp_scaling.sh
@@ -458,7 +487,7 @@ plot_omp_scaling:
 # ---------------------------------------------------------------------
 # Sesion 03 / Prompt 7 - perf Zen 2 hardware counter sweep
 #
-# Crosses (variant, m) for 10 variants x 3 m's = 30 cells, two perf
+# Crosses (variant, m) for 13 variants x 3 m's = 39 cells, two perf
 # invocations per cell (group A: compute side, group B: memory + TLB
 # side) to keep multiplexing percentages close to 100%. The
 # consolidator merges both groups into one CSV row per cell.
@@ -549,9 +578,9 @@ roofline: stream plot_roofline
 #                    compiled at -O0 for deterministic numerical output.
 # =====================================================================
 
-TILED_IKJ_COMMON_SRCS    := $(COMMON_SRCS) $(SRC_DIR)/matmul_tiled_ikj.c
-BENCH_TILED_IKJ_SRCS     := $(TILED_IKJ_COMMON_SRCS) $(SRC_DIR)/bench_tiled_ikj.c
-VALIDATE_TILED_IKJ_SRCS  := $(TILED_IKJ_COMMON_SRCS) $(SRC_DIR)/validate_tiled_ikj.c
+TILED_IKJ_COMMON_SRCS    := $(COMMON_SRCS) $(TILED_DIR)/matmul_tiled_ikj.c
+BENCH_TILED_IKJ_SRCS     := $(TILED_IKJ_COMMON_SRCS) $(BENCH_DIR)/bench_tiled_ikj.c
+VALIDATE_TILED_IKJ_SRCS  := $(TILED_IKJ_COMMON_SRCS) $(VALIDATE_DIR)/validate_tiled_ikj.c
 
 # BENCH_TILED_IKJ_O3 is forward-declared above (just before the `results`
 # target) so its expansion in `results`'s prerequisite list works.
@@ -573,15 +602,20 @@ $(VALIDATE_TILED_IKJ_O0): $(VALIDATE_TILED_IKJ_SRCS) | $(BIN_DIR)
 #
 # Extends matmul_tiled_ikj (Phase 1.2) by adding a third outer blocking
 # loop over j and replacing the scalar innermost j pass with an AVX2
-# broadcast+FMA vector loop.  Both binaries are compiled with
-# CFLAGS_O3_ZEN2 because matmul_tiled_ikj_avx2.c uses immintrin intrinsics
-# that require -mavx2 -mfma; compiling at -O0 without those flags
-# would produce an assembler error on the _mm256_fmadd_ps call.
+# broadcast+FMA vector loop. Both binaries are compiled with
+# CFLAGS_O3_ZEN2 because matmul_tiled_ikj_avx2.c uses immintrin
+# intrinsics (transitively through kernel_avx2_tiled.h) that require
+# -mavx2 -mfma; compiling at -O0 without those flags would produce an
+# assembler error on the _mm256_fmadd_ps call.
+#
+# Note: kernel_avx2_tiled.h is header-only (`static inline`), so there
+# is no kernel_avx2_tiled.o object to link against. The header is
+# included directly by matmul_tiled_ikj_avx2.c.
 # =====================================================================
 
-TILED_IKJ_AVX2_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_tiled_ikj_avx2.c
-BENCH_TILED_IKJ_AVX2_SRCS    := $(TILED_IKJ_AVX2_COMMON_SRCS) $(SRC_DIR)/bench_tiled_ikj_avx2.c
-VALIDATE_TILED_IKJ_AVX2_SRCS := $(TILED_IKJ_AVX2_COMMON_SRCS) $(SRC_DIR)/validate_tiled_ikj_avx2.c
+TILED_IKJ_AVX2_COMMON_SRCS   := $(COMMON_SRCS) $(TILED_DIR)/matmul_tiled_ikj_avx2.c
+BENCH_TILED_IKJ_AVX2_SRCS    := $(TILED_IKJ_AVX2_COMMON_SRCS) $(BENCH_DIR)/bench_tiled_ikj_avx2.c
+VALIDATE_TILED_IKJ_AVX2_SRCS := $(TILED_IKJ_AVX2_COMMON_SRCS) $(VALIDATE_DIR)/validate_tiled_ikj_avx2.c
 
 # BENCH_TILED_IKJ_AVX2_O3 is forward-declared above; only the validate
 # binary path is defined here.
@@ -607,12 +641,13 @@ $(VALIDATE_TILED_IKJ_AVX2_O3): $(VALIDATE_TILED_IKJ_AVX2_SRCS) | $(BIN_DIR)
 #
 # Uses CFLAGS_OMP_ZEN2 (defined above as CFLAGS_O3_ZEN2 + -fopenmp)
 # so the hardware event comparisons remain apples-to-apples with the
-# other O3_ZEN2 variants.
+# other O3_ZEN2 variants. Shares kernel_avx2_tiled.h with the AVX2
+# sibling; no extra object file required.
 # =====================================================================
 
-TILED_IKJ_OMP_COMMON_SRCS   := $(COMMON_SRCS) $(SRC_DIR)/matmul_tiled_ikj_omp.c
-BENCH_TILED_IKJ_OMP_SRCS    := $(TILED_IKJ_OMP_COMMON_SRCS) $(SRC_DIR)/bench_tiled_ikj_omp.c
-VALIDATE_TILED_IKJ_OMP_SRCS := $(TILED_IKJ_OMP_COMMON_SRCS) $(SRC_DIR)/validate_tiled_ikj_omp.c
+TILED_IKJ_OMP_COMMON_SRCS   := $(COMMON_SRCS) $(TILED_DIR)/matmul_tiled_ikj_omp.c
+BENCH_TILED_IKJ_OMP_SRCS    := $(TILED_IKJ_OMP_COMMON_SRCS) $(BENCH_DIR)/bench_tiled_ikj_omp.c
+VALIDATE_TILED_IKJ_OMP_SRCS := $(TILED_IKJ_OMP_COMMON_SRCS) $(VALIDATE_DIR)/validate_tiled_ikj_omp.c
 
 # BENCH_TILED_IKJ_OMP_O3 is forward-declared above; only the validate
 # binary path is defined here.

@@ -18,7 +18,7 @@ Toda la implementacion usa `float` (IEEE 754 binary32, 4 bytes). Se centraliza c
 typedef float scalar_t;
 ```
 
-Definido en [`src/matmul_naive.h`](../src/matmul_naive.h). Cambiar a `double` requeriria reemplazar este `typedef` y revisar tolerancias en `validate_naive.c`.
+Definido en [`src/core/matrix_utils.h`](../src/core/matrix_utils.h). Cambiar a `double` requeriria reemplazar este `typedef` y revisar tolerancias en `src/drivers/validate/validate_naive.c`.
 
 ### 1.2 Tipos enteros
 
@@ -46,7 +46,7 @@ Comentarios y nombres en ingles, sin emojis ni caracteres no ASCII (compatibilid
 
 ## 2. Modulo `matmul_naive`
 
-**Archivo:** [`src/matmul_naive.h`](../src/matmul_naive.h), [`src/matmul_naive.c`](../src/matmul_naive.c).
+**Archivo:** [`src/algorithms/naive/matmul_naive.h`](../src/algorithms/naive/matmul_naive.h), [`src/algorithms/naive/matmul_naive.c`](../src/algorithms/naive/matmul_naive.c).
 
 Contiene el kernel ingenuo $C = A \cdot B$ y el orquestador de la recurrencia $B_{i+1} = A \cdot B_i$.
 
@@ -120,7 +120,7 @@ void benchmark_iterations(scalar_t *B_out,
 
 ## 3. Modulo `matrix_utils`
 
-**Archivo:** [`src/matrix_utils.h`](../src/matrix_utils.h), [`src/matrix_utils.c`](../src/matrix_utils.c).
+**Archivo:** [`src/core/matrix_utils.h`](../src/core/matrix_utils.h), [`src/core/matrix_utils.c`](../src/core/matrix_utils.c).
 
 Utilidades de alocacion, inicializacion y comparacion. Independiente de la implementacion del kernel.
 
@@ -202,7 +202,7 @@ Despues de varias iteraciones la suma de errores de redondeo crece como $\sqrt{m
 
 ## 4. Modulo `timing`
 
-**Archivo:** [`src/timing.h`](../src/timing.h) (solo cabecera, sin `.c`).
+**Archivo:** [`src/core/timing.h`](../src/core/timing.h) (solo cabecera, sin `.c`).
 
 ### 4.1 `now_seconds`
 
@@ -332,7 +332,7 @@ python3 scripts/plot_results.py results/naive_O0.csv results/loop_order.csv \
 
 ## 6. Modulo `matmul_loops` (Fase 1.1 — cache-aware)
 
-**Archivo:** [`src/matmul_loops.h`](../src/matmul_loops.h), [`src/matmul_loops.c`](../src/matmul_loops.c).
+**Archivo:** [`src/algorithms/loops/matmul_loops.h`](../src/algorithms/loops/matmul_loops.h), [`src/algorithms/loops/matmul_loops.c`](../src/algorithms/loops/matmul_loops.c).
 
 Las seis variantes de orden de bucles de $C = A \cdot B$. Misma firma que `matmul_naive`.
 
@@ -419,7 +419,7 @@ para que los binarios `validate_*` puedan compararlo contra `matmul_naive` sin c
 
 ## 8. Modulo `morton` (Fase 6, Etapa A3 - support)
 
-**Archivo:** [`src/morton.h`](../src/morton.h), [`src/morton.c`](../src/morton.c).
+**Archivo:** [`src/core/morton.h`](../src/core/morton.h), [`src/core/morton.c`](../src/core/morton.c).
 
 Bit-interleaving Z-order y conversion entre layout row-major y Morton para matrices cuadradas. Implementacion Nivel 1 portatil (magic constants y shifts; sin BMI2 `pdep`/`pext`).
 
@@ -491,7 +491,7 @@ Returns 1 if `m > 0 && (m & (m - 1)) == 0`, 0 otherwise.
 
 ## 9. Modulo `matmul_morton` (Fase 6, Etapa A3 - kernel)
 
-**Archivo:** [`src/matmul_morton.h`](../src/matmul_morton.h), [`src/matmul_morton.c`](../src/matmul_morton.c).
+**Archivo:** [`src/algorithms/morton/matmul_morton.h`](../src/algorithms/morton/matmul_morton.h), [`src/algorithms/morton/matmul_morton.c`](../src/algorithms/morton/matmul_morton.c).
 
 Kernel recursivo donde $A$ esta en layout Morton (Z-order) y $B$, $C$ siguen en row-major. La recursion sobre $A$ se hace via offsets Morton en lugar de via `(puntero, leading dimension)`.
 
@@ -624,7 +624,7 @@ Todos extienden el Makefile **al final**, sin modificar las recetas del baseline
 
 ## 11. Modulo `kernel_avx2` (Sesion 03, Etapa A4)
 
-**Archivo:** [`src/kernel_avx2.h`](../src/kernel_avx2.h), [`src/kernel_avx2.c`](../src/kernel_avx2.c).
+**Archivo:** [`src/microkernels/kernel_avx2_morton.h`](../src/microkernels/kernel_avx2_morton.h) (header-only, `static inline`). Renombrado desde `kernel_avx2.{h,c}` y consolidado en un unico header cuando se introdujo el microkernel 6x16 `kernel_avx2_tiled.h` para la familia tiled. La conversion a header-only sigue el patron de `kernel_avx512.h` de `opt_zen5` (un solo header con todos los microkernels como `static inline`).
 
 Microkernel AVX2 + FMA que acumula un tile fijo de $4 \times 16$ de $C$. Los $4 \times 16 = 64$ elementos del tile viven en $8$ registros YMM (4 filas $\times$ 2 vectores de 8 lanes FP32). Queda mitad del banco de YMM libre para los broadcasts de $A$ y los loads de $B$, condicion necesaria para mantener los dos pipes FMA del Zen 2 saturados sin spill.
 
@@ -657,13 +657,13 @@ void kernel_avx2_4x16(scalar_t       *restrict C, size_t ldc,
 
 - $C[r, c] \mathrel{+}= \sum_{p=0}^{kc-1} A[r, p] \cdot B[p, c]$ para todo $(r, c)$ con $r \in [0, 4)$ y $c \in [0, 16)$. $A$ y $B$ no se modifican.
 
-**Compilacion.** El objeto `build/obj/kernel_avx2.o` se compila aparte con flags Stage A4:
+**Compilacion.** No hay `.o` separado: el header se incluye en cada `.c` que lo necesita (`matmul_morton_avx2.c`, `matmul_morton_omp.c`, `tests/test_kernel_avx2.c`) y se inline bajo `-O3`. Las TU que lo incluyen son compiladas con los flags Zen 2 estandar del proyecto:
 
 ```
--O3 -march=znver2 -mavx2 -mfma -funroll-loops -ffast-math
+-O3 -march=znver2 -mavx2 -mfma -D_POSIX_C_SOURCE=200809L
 ```
 
-`-Wpedantic` se omite porque los tipos `__m256` son extensiones GCC. `-ffast-math` autoriza reasociacion de la suma FP, lo que el microkernel necesita para emitir las cadenas FMA, pero a cambio acumula un poco mas de error de redondeo (relevante para las tolerancias de validacion del modulo $matmul\_morton\_avx2$).
+`-Wpedantic` se admite porque las TU ya pasaban con el bench/validate; los tipos `__m256` no disparan warnings al estar marcados como GCC extensions. `-ffast-math` no se aplica globalmente al bench (rompia validaciones del kernel naive), pero no es necesario para emitir FMAs cuando el codigo ya esta escrito con intrinsics explicitos (`_mm256_fmadd_ps`).
 
 **Performance esperada.** El techo single-core del Zen 2 es $2$ FMA $\times$ $8$ lanes $\times$ $2$ flops/op $\times$ $4.0$ GHz $= 128$ GFLOPS en FP32. En hojas cuyo working set cabe en L1d ($\leq 32$ KiB) el microkernel toca $\sim 8$–$10$ FMA-ops por ciclo (medido `fp_ret_sse_avx_ops.all`/cycle en Prompt 7), lo que se traduce en $\sim 80$ a $90$ GFLOPS sostenidos a la frecuencia turbo bajo carga AVX2. Es el techo computacional real para una sola hoja; el throughput de `matmul_morton_avx2` sobre la matriz completa es menor por el costo de materializacion de paneles y el trafico de $B$ desde L2/L3.
 
@@ -680,7 +680,7 @@ Expuestas para que `matmul_morton_avx2` y el test de unidad calcen sus bloques a
 
 ## 12. Modulo `matmul_morton_avx2` (Sesion 03, Etapa A4 integracion)
 
-**Archivo:** [`src/matmul_morton_avx2.h`](../src/matmul_morton_avx2.h), [`src/matmul_morton_avx2.c`](../src/matmul_morton_avx2.c).
+**Archivo:** [`src/algorithms/morton/matmul_morton_avx2.h`](../src/algorithms/morton/matmul_morton_avx2.h), [`src/algorithms/morton/matmul_morton_avx2.c`](../src/algorithms/morton/matmul_morton_avx2.c).
 
 Variante de `matmul_morton` cuyo leaf invoca el microkernel AVX2 de la Seccion 11. La recursion sigue la misma estructura cache-oblivious (Caso N independiente, Caso MK acoplado en cuatro cuadrantes) pero el layout de $A$ cambia.
 
@@ -760,7 +760,7 @@ Misma semantica que sus contrapartes en `matmul_morton`. El primero reorganiza $
 
 ## 13. Modulo `matmul_morton_omp` (Sesion 03, Etapa A5)
 
-**Archivo:** [`src/matmul_morton_omp.h`](../src/matmul_morton_omp.h), [`src/matmul_morton_omp.c`](../src/matmul_morton_omp.c).
+**Archivo:** [`src/algorithms/morton/matmul_morton_omp.h`](../src/algorithms/morton/matmul_morton_omp.h), [`src/algorithms/morton/matmul_morton_omp.c`](../src/algorithms/morton/matmul_morton_omp.c).
 
 Variante paralela de `matmul_morton_avx2`. Reusa el microkernel AVX2 y el layout Morton-de-bloques; agrega `#pragma omp parallel single` en el wrapper publico y emite OpenMP tasks en cada subdivision recursiva por encima del threshold de paralelizacion. El scratch buffer del leaf pasa a ser un pool por-thread indexado por `omp_get_thread_num()` para que las hojas paralelas no compartan memoria intermedia.
 
@@ -829,7 +829,7 @@ Misma estructura que en los modulos anteriores: el primero reorganiza $A$ intern
 
 ## 14. Modulo `matmul_tiled_ikj_avx2` (Fase 1.6 — BLIS-style 6x16 register-blocked)
 
-**Archivo:** [`src/matmul_tiled_ikj_avx2.h`](../src/matmul_tiled_ikj_avx2.h), [`src/matmul_tiled_ikj_avx2.c`](../src/matmul_tiled_ikj_avx2.c).
+**Archivo:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.h`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.h), [`src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.c`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.c). El microkernel inline 6x16 vive en [`src/microkernels/kernel_avx2_tiled.h`](../src/microkernels/kernel_avx2_tiled.h) (header-only `static inline`, compartido con `matmul_tiled_ikj_omp`).
 
 Kernel BLIS-style con micropanel registrado $6 \times 16$, especificamente afinado para el Ryzen $5$ $4600$H. Reemplaza la version anterior (`load`/`FMA`/`store` por $(i, p)$) por un microkernel inline que mantiene un sub-tile $6 \times 16$ de $C$ en $12$ registros YMM durante toda la pasada $k_c$; $C$ toca memoria solo dos veces por micro-tile (load al entrar, store al salir).
 
@@ -927,8 +927,8 @@ El cuarto argumento opcional `[bs]` llama a `matmul_tiled_ikj_avx2_set_bs(bs)` a
 
 ## 15. Modulo `matmul_tiled_ikj_omp` (Fase 1.6 — kernel 6x16 + OpenMP `parallel for` en `ic`)
 
-**Archivo header:** [`src/matmul_tiled_ikj_omp.h`](../src/matmul_tiled_ikj_omp.h)
-**Implementacion:** [`src/matmul_tiled_ikj_omp.c`](../src/matmul_tiled_ikj_omp.c)
+**Archivo header:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.h`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.h)
+**Implementacion:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.c`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.c) (microkernel compartido en [`src/microkernels/kernel_avx2_tiled.h`](../src/microkernels/kernel_avx2_tiled.h))
 **Compilacion requerida:** `-O3 -march=znver2 -mavx2 -mfma -fopenmp`
 
 Hermano paralelo de `matmul_tiled_ikj_avx2` (Modulo 14). Mismo microkernel registrado $6 \times 16$, mismo loop nest, **pero el bucle externo $i_c$ esta distribuido entre threads** con `#pragma omp for schedule(static)`. La region `omp parallel` se abre una sola vez por invocacion y abarca el bucle $p_c$ entero; el barrier implicito al final de cada `omp for` sincroniza las pasadas $p_c$ (necesario porque $C$ se acumula entre pasadas).
