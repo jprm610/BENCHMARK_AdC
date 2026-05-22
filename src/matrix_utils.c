@@ -10,7 +10,6 @@
 #include <stdint.h>
 #include <errno.h>
 
-
 /*
     *xalloc_aligned: Asignar memoria para la matriz.
         INPUTS:
@@ -40,7 +39,8 @@ scalar_t *xalloc_aligned(size_t num_elements)
     - Hasta el rounded calculado. (Supera al tamaño de la matriz).
     */
     void *ptr = aligned_alloc(64, rounded);
-    if (ptr == NULL) {
+    if (ptr == NULL)
+    {
         fprintf(stderr,
                 "xalloc_aligned: aligned_alloc failed "
                 "(elements=%llu, bytes=%llu)\n",
@@ -51,7 +51,6 @@ scalar_t *xalloc_aligned(size_t num_elements)
     return (scalar_t *)ptr;
 }
 
-
 /*
 xfree: Liberar memoria asignada para la matriz.
     INPUTS:
@@ -61,11 +60,11 @@ xfree: Liberar memoria asignada para la matriz.
 */
 void xfree(scalar_t *ptr)
 {
-    if (ptr != NULL) {
+    if (ptr != NULL)
+    {
         free(ptr);
     }
 }
-
 
 /*
 (LCG) Linear Congruential Generator: Generador de números pseudoaleatorios.
@@ -79,7 +78,6 @@ static unsigned int lcg_next(unsigned int *state)
     return *state;
 }
 
-
 /*
 init_matrix_random: Inicializar una matriz con valores pseudoaleatorios.
     INPUTS:
@@ -91,7 +89,8 @@ init_matrix_random: Inicializar una matriz con valores pseudoaleatorios.
     - Ninguno (void).
 */
 void init_matrix_random(scalar_t *M,
-                        size_t rows, size_t cols,
+                        size_t rows,
+                        size_t cols,
                         unsigned int seed)
 {
     unsigned int state = seed ? seed : 1u;
@@ -103,8 +102,10 @@ void init_matrix_random(scalar_t *M,
     */
     scalar_t scale = (scalar_t)(1.0 / sqrt((double)rows));
 
-    for (size_t i = 0; i < rows; ++i) {
-        for (size_t j = 0; j < cols; ++j) {
+    for (size_t i = 0; i < rows; ++i)
+    {
+        for (size_t j = 0; j < cols; ++j)
+        {
             unsigned int r = lcg_next(&state);
             /*
             1. r en [0, 1], dividir por 2^32
@@ -116,7 +117,6 @@ void init_matrix_random(scalar_t *M,
         }
     }
 }
-
 
 /*
 init_matrix_zero: Inicializar una matriz con ceros. (rows, cols).
@@ -132,7 +132,6 @@ void init_matrix_zero(scalar_t *M, size_t rows, size_t cols)
     memset(M, 0, rows * cols * sizeof(scalar_t));
 }
 
-
 /*
 init_matrix_identity: Inicializar una matriz identidad. (rows, cols).
     INPUTS:
@@ -144,11 +143,11 @@ init_matrix_identity: Inicializar una matriz identidad. (rows, cols).
 void init_matrix_identity(scalar_t *M, size_t n)
 {
     init_matrix_zero(M, n, n);
-    for (size_t i = 0; i < n; ++i) {
+    for (size_t i = 0; i < n; ++i)
+    {
         M[i * n + i] = (scalar_t)1;
     }
 }
-
 
 /*
 matrices_close: Verificar si dos matrices son "cercanas" dentro de tolerancias.
@@ -178,16 +177,21 @@ int matrices_close(const scalar_t *A_ref,
         |A_ref[i] - A_test[i]| <= max(abs_tol, rel_tol * |A_ref[i]|)
     - De lo contario, (todos correctos) retornar 1.
     */
-    for (size_t i = 0; i < num_elements; ++i) {
+    for (size_t i = 0; i < num_elements; ++i)
+    {
         scalar_t r = A_ref[i];
         scalar_t t = A_test[i];
         scalar_t diff = (scalar_t)fabs((double)(r - t));
         scalar_t mag = (scalar_t)fabs((double)r);
         scalar_t tol = abs_tol > rel_tol * mag ? abs_tol : rel_tol * mag;
-        if (diff > tol) {
-            if (first_bad_index) *first_bad_index = i;
-            if (bad_ref)         *bad_ref = r;
-            if (bad_test)        *bad_test = t;
+        if (diff > tol)
+        {
+            if (first_bad_index)
+                *first_bad_index = i;
+            if (bad_ref)
+                *bad_ref = r;
+            if (bad_test)
+                *bad_test = t;
             return 0;
         }
     }

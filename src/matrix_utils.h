@@ -9,23 +9,17 @@
  */
 typedef float scalar_t;
 
-
 scalar_t *xalloc_aligned(size_t num_elements);
 
-
 void xfree(scalar_t *ptr);
-
 
 void init_matrix_random(scalar_t *M,
                         size_t rows, size_t cols,
                         unsigned int seed);
 
-
 void init_matrix_zero(scalar_t *M, size_t rows, size_t cols);
 
-
 void init_matrix_identity(scalar_t *M, size_t n);
-
 
 int matrices_close(const scalar_t *A_ref,
                    const scalar_t *A_test,
