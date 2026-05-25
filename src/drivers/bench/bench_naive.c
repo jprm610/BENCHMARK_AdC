@@ -162,7 +162,6 @@ int main(int argc, char **argv)
 
 //---------------------------------------------------------------------------------------------------
     // 8) Save: Línea CSV.
-    printf("kernel,m,n,num_iters,median_seconds,gflops\n");
     printf("naive,%llu,%llu,%llu,%.6f,%.6f\n",
            (unsigned long long)m,
            (unsigned long long)n,
