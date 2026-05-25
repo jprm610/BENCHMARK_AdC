@@ -1,8 +1,0 @@
-# started on Thu May 21 21:02:24 2026
-
-34260466038,,cycles,8809904182,100.00,,
-134633130644,,instructions,8809904182,100.00,3.93,insn per cycle
-52166092,,l2_cache_req_stat.ls_rd_blk_l_hit_x,8809904182,100.00,,
-8661217,,cache-misses,8809904182,100.00,,
-181179,,bp_l1_tlb_miss_l2_tlb_miss,8809904182,100.00,,
-202403,,dTLB-load-misses,8809904182,100.00,,

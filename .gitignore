@@ -1,6 +1,7 @@
 # --- C build artifacts ---
 bin/
 build/
+results/
 *.o
 *.a
 *.so
