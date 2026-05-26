@@ -20,18 +20,9 @@
  */
 
 #include "matmul_loops.h"
-#include "matrix_utils.h"   /* xalloc_aligned, xfree */
+#include "matrix_utils.h"   /* xalloc_aligned, xfree, init_matrix_zero */
 
-#include <string.h>         /* memset, memcpy, strcmp */
-
-/* ------------------------------------------------------------------ */
-/* Helpers                                                              */
-/* ------------------------------------------------------------------ */
-
-static void zero_matrix(scalar_t *C, size_t m, size_t n)
-{
-    memset(C, 0, m * n * sizeof(scalar_t));
-}
+#include <string.h>         /* memcpy, strcmp */
 
 /* ------------------------------------------------------------------ */
 /* Six loop-order kernels                                               */
@@ -67,7 +58,7 @@ void matmul_ikj(scalar_t *C,
                 const scalar_t *B,
                 size_t m, size_t k_dim, size_t n)
 {
-    zero_matrix(C, m, n);
+    init_matrix_zero(C, m, n);
     for (size_t i = 0; i < m; ++i) {
         for (size_t p = 0; p < k_dim; ++p) {
             scalar_t a_ip = A[i * k_dim + p];
@@ -107,7 +98,7 @@ void matmul_jki(scalar_t *C,
                 const scalar_t *B,
                 size_t m, size_t k_dim, size_t n)
 {
-    zero_matrix(C, m, n);
+    init_matrix_zero(C, m, n);
     for (size_t j = 0; j < n; ++j) {
         for (size_t p = 0; p < k_dim; ++p) {
             scalar_t b_pj = B[p * n + j];
@@ -127,7 +118,7 @@ void matmul_kij(scalar_t *C,
                 const scalar_t *B,
                 size_t m, size_t k_dim, size_t n)
 {
-    zero_matrix(C, m, n);
+    init_matrix_zero(C, m, n);
     for (size_t p = 0; p < k_dim; ++p) {
         for (size_t i = 0; i < m; ++i) {
             scalar_t a_ip = A[i * k_dim + p];
@@ -146,7 +137,7 @@ void matmul_kji(scalar_t *C,
                 const scalar_t *B,
                 size_t m, size_t k_dim, size_t n)
 {
-    zero_matrix(C, m, n);
+    init_matrix_zero(C, m, n);
     for (size_t p = 0; p < k_dim; ++p) {
         for (size_t j = 0; j < n; ++j) {
             scalar_t b_pj = B[p * n + j];
