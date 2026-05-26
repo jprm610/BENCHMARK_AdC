@@ -23,9 +23,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 VARIANTS=(${VARIANTS:-naive morton morton_avx512 morton_omp loop_ijk loop_ikj loop_jik loop_jki loop_kij loop_kji tiled_ikj tiled_ikj_avx512 tiled_ikj_omp})
-MS=(${MS:-1024 4096 8192})
+MS=(${MS:-1024 2048 4096 8192 16384 32768})
 ITERS_PER_RUN=${ITERS_PER_RUN:-1}
-RUNS=${RUNS:-3}
+if [ "${ITERS_PER_RUN}" -eq 0 ]; then
+    RUNS=${RUNS:-1}
+else
+    RUNS=${RUNS:-3}
+fi
 
 export ITERS_PER_RUN
 export RUNS
