@@ -34,12 +34,12 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |-- README.md                          -> Este archivo
 |-- Makefile                           -> Targets de compilacion, profiling y graficas
 |-- docs/
-|   |-- API.md                         -> Contrato publico de las funciones
-|   |-- SESION_01_RESUMEN.md           -> Resumen para retomar Fase 1
-|   |-- PROMPTS_SESION_02.md           -> Guion de prompts de la Sesion 02
-|   |-- PLAN_SESION_03.md              -> Plan tecnico de la Sesion 03 + bitacora de hallazgos
-|   |-- PROMPTS_SESION_03.md           -> Guion completo de los 10 prompts de la Sesion 03
-|   `-- SESION_03_RESUMEN.md           -> Resumen para retomar Sesion 03
+|   |-- 0.0) makefile.md               -> Referencia de uso del Makefile (targets y flags)
+|   |-- 0.1) matrix_utils.md           -> Helpers compartidos (matrix_utils)
+|   |-- 1.1) matmul_naive.md           -> Algoritmo naive (baseline ijk)
+|   |-- 1.2) matmul_loops.md           -> Reordenamiento de bucles (6 variantes)
+|   |-- 1.3) matmul_tiled_ikj.md       -> Tiling explicito sobre ikj
+|   `-- API.md                         -> Contrato publico de las funciones
 |-- src/
 |   |-- core/                              -> Modulos compartidos por todos los algoritmos
 |   |   |-- matrix_utils.{h,c}             -> Helpers (alocacion, init, comparacion)
@@ -62,35 +62,16 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |   |-- drivers/                           -> Programas main: medicion (bench) y verificacion (validate)
 |   |   |-- bench/                         -> bench_naive.c, bench_loops.c, bench_morton{,_avx2,_omp}.c, bench_tiled_ikj{,_avx2,_omp}.c
 |   |   `-- validate/                      -> validate_naive.c, validate_loops.c, validate_morton{,_avx2,_omp}.c, validate_tiled_ikj{,_avx2,_omp}.c
-|   |-- tests/                             -> Tests unitarios standalone
-|   |   |-- test_morton.c                  -> Round-trip encode/decode + contiguidad de cuadrantes
-|   |   `-- test_kernel_avx2.c             -> Unit test del microkernel 4x16
-|   `-- tools/
-|       `-- hwinfo.c                       -> Fingerprint runtime del CPU (cores, cache, AVX2/FMA/BMI2)
+|   `-- tests/                             -> Tests unitarios standalone
+|       |-- test_morton.c                  -> Round-trip encode/decode + contiguidad de cuadrantes
+|       `-- test_kernel_avx2.c             -> Unit test del microkernel 4x16
 |-- scripts/
-|   |   # Fase 1 (Sesion 01)
-|   |-- run_sweep_naive.sh             -> Sweep baseline + gprof + perf
-|   |-- profile_gprof_naive.sh         -> gprof standalone
-|   |-- profile_perf_naive.sh          -> perf standalone
-|   |-- plot_results.py                -> Graficas del baseline
-|   |   # Fase 6 (Sesion 02)
-|   |-- run_sweep_morton.sh            -> Sweep -> results/morton_O0.csv (potencias de 2)
-|   |   # Sesion 03
-|   |-- audit_no_pdep.sh               -> Auditoria de PDEP/PEXT (Zen 2)
-|   |-- run_threshold_sweep.sh         -> Tuning empirico RECURSION_THRESHOLD
-|   |-- plot_threshold_sweep.py        -> Plot del threshold sweep
-|   |-- run_sweep_morton_avx2_xl.sh    -> Extension de morton_avx2 hasta m=32768
-|   |-- plot_morton_avx2_xl.py         -> Plot de la extension
-|   |-- run_omp_scaling.sh             -> Escalado threads 1..12 close/spread
-|   |-- plot_omp_scaling.py            -> Plot escalado OMP
 |   |-- profile_perf_zen2.sh           -> Captura perf por celda (variant, m)
-|   |-- run_perf_zen2_sweep.sh         -> Orquesta 39 celdas (13 variantes x 3 m)
+|   |-- run_perf_zen2_sweep.sh         -> Orquesta el sweep de variantes x tamanos
 |   |-- consolidate_perf_zen2.py       -> Consolida grupos A+B -> results/metrics.csv
-|   |-- plot_perf_zen2.py              -> 4 paneles: IPC, FMA, L3 miss, TLB walks
-|   |-- measure_stream.sh              -> Descarga, compila y corre STREAM (Triad 1T y 6T)
-|   `-- plot_roofline.py               -> Roofline anclado a STREAM medido
+|   `-- plot_perf_zen2.py              -> 4 paneles: IPC, FMA, L3 miss, TLB walks
 |-- results/                            -> CSV y reportes de profiling (gitignored)
-|-- plots/                              -> Imagenes generadas (gitignored salvo perf_zen2 / roofline)
+|-- plots/                              -> Imagenes generadas (gitignored)
 `-- bin/                                -> Binarios compilados (gitignored)
 ```
 
@@ -153,7 +134,7 @@ sudo cp perf /usr/local/bin/
 perf --version
 ```
 
-**Importante para WSL2:** los contadores de PMU disponibles dependen del soporte del hipervisor. En la practica funcionan al menos `instructions`, `cycles`, `branches`, `branch-misses`, `task-clock`, `page-faults`. Si algun evento devuelve `<not supported>`, no es un error tuyo, simplemente el evento no esta expuesto. El script `profile_perf_naive.sh` ignora esos eventos.
+**Importante para WSL2:** los contadores de PMU disponibles dependen del soporte del hipervisor. En la practica funcionan al menos `instructions`, `cycles`, `branches`, `branch-misses`, `task-clock`, `page-faults`. Si algun evento devuelve `<not supported>`, no es un error tuyo, simplemente el evento no esta expuesto.
 
 Para bajar la restriccion de seguridad (necesario en muchos kernels):
 
@@ -186,7 +167,7 @@ source ~/venvs/matmul/bin/activate
 pip install matplotlib numpy
 ```
 
-Recuerda activar el venv (`source ~/venvs/matmul/bin/activate`) cada vez que abras una nueva terminal antes de ejecutar `scripts/plot_results.py`.
+Recuerda activar el venv (`source ~/venvs/matmul/bin/activate`) cada vez que abras una nueva terminal antes de ejecutar los scripts de plotting (`scripts/plot_perf_zen2.py`).
 
 Alternativa rapida sin venv (no recomendada para entornos compartidos):
 
@@ -224,9 +205,8 @@ Esto produce dos binarios en `bin/`:
 Targets individuales del baseline (Fase 1):
 
 ```bash
-make bench_naive_O0      # solo el benchmark baseline
+make bench_naive_O3      # solo el benchmark baseline
 make validate_naive      # solo el verificador baseline
-make bench_naive_pg      # version con -pg para gprof, paso 2
 make clean               # borra bin/ y build/
 make distclean           # clean + borra results/*.csv y plots/*
 ```
@@ -255,10 +235,8 @@ Targets de Fase 6 (Morton Z-order cache-oblivious):
 
 ```bash
 make test_morton              # bin/test_morton (tests del modulo morton)
-make bench_morton             # bin/bench_morton_O0   (m debe ser potencia de 2)
+make bench_morton_O3          # bin/bench_morton_O3   (m debe ser potencia de 2)
 make validate_morton          # bin/validate_morton_O0 (idem)
-
-make sweep_morton_run         # produce results/morton_O0.csv
 ```
 
 Para comparaciones entre kernels (naive + loops + tiled_ikj* + morton*) usar el pipeline unificado de la Sesion 03:
@@ -273,9 +251,11 @@ make results                  # sweep perf Zen 2 + consolida -> results/metrics.
 -std=c11 -Wall -Wextra -Wpedantic -O0 -g -fno-omit-frame-pointer
 ```
 
-- `-O0`: requisito del proyecto. Sin optimizacion del compilador.
-- `-g`: simbolos de debug, necesarios para que `gprof` y `perf report` muestren nombres legibles.
+- `-O0`: usado por los `validate_*` para que las comparaciones reflejen el algoritmo sin reordenamientos del compilador.
+- `-g`: simbolos de debug, necesarios para que `perf report` muestre nombres legibles.
 - `-fno-omit-frame-pointer`: deja el stack pointer en su sitio para que las herramientas de profiling resuelvan call graphs sin DWARF unwinding.
+
+Los binarios de medicion (`bench_*_O3`) se compilan con `CFLAGS_O3_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma`).
 
 ---
 
@@ -330,79 +310,22 @@ m,n,num_iters,median_seconds,gflops
 1024,128,4,X.XXXXXX,X.XXXXXX
 ```
 
-### 5.3 Sweep completo: paso 3 del proyecto
+### 5.3 Sweep completo y consolidacion
+
+El flujo unificado vive en `make results`. Lanza el sweep de hardware counters sobre todas las variantes activas y consolida en `results/metrics.csv`:
 
 ```bash
-make sweep_naive
+make results                                        # defaults completos
+make results MS="1024 4096"                         # solo esos tamanos
+make results VARIANTS="tiled_ikj_avx2 morton_avx2"  # solo esas variantes
+make results ITERS_PER_RUN=0                        # I_full = 2m/n, 1 run
 ```
 
-Equivalente a `bash scripts/run_sweep_naive.sh`. Corre el benchmark para los valores por defecto $m \in \{256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192\}$ y por cada uno produce **tres archivos**:
+La especificacion completa de knobs (`VARIANTS`, `MS`, `ITERS_PER_RUN`, `RUNS`) y todos los targets relacionados estan en [`docs/0.0) makefile.md`](docs/0.0\)%20makefile.md).
 
-1. Una linea en `results/naive_O0.csv` con la medicion de gflops.
-2. Un reporte `results/gprof_naive_m<m>.txt` (perfil por funcion).
-3. Un reporte `results/perf_naive_m<m>.txt` (contadores de hardware).
+### 5.4 Flujo de Fase 6: Morton (Z-order) cache-oblivious
 
-Asi tienes registro completo de paso 1 (timing baseline), paso 2 (profiling) y paso 3 (escalamiento) en una sola corrida.
-
-Para un rango custom:
-
-```bash
-bash scripts/run_sweep_naive.sh "256 512 1024 2048"
-```
-
-Controlar el profiling:
-
-```bash
-PROFILING=0     bash scripts/run_sweep_naive.sh                  # solo CSV, sin profiling
-PROFILING=gprof bash scripts/run_sweep_naive.sh                  # CSV + solo gprof
-PROFILING=perf  bash scripts/run_sweep_naive.sh                  # CSV + solo perf
-PROFILE_ITERS=2 PROFILE_RUNS=1 bash scripts/run_sweep_naive.sh   # mas iteraciones para el profile
-```
-
-Por defecto el profiling usa `iters=1, runs=1` (una sola corrida determinista) para no multiplicar los tiempos. La medicion del CSV sigue usando 5 corridas internas con mediana para tener un valor estadisticamente estable.
-
-**Nota sobre tiempos esperados a `-O0`:** una corrida completa de baseline a `-O0` con $m = 8192$ puede tomar varios minutos. Para el reporte final, el sweep completo del rango por defecto puede tardar entre 1 y 2 horas dependiendo del hardware. Conviene lanzarlo y dejarlo correr. Si solo necesitas el CSV (sin profiling), usa `PROFILING=0` para reducir el tiempo al minimo.
-
-### 5.4 Graficas a partir del CSV
-
-Con el venv activado (`source ~/venvs/matmul/bin/activate`) y el CSV ya generado:
-
-```bash
-python3 scripts/plot_results.py
-```
-
-Produce dos PNG en `plots/`:
-
-- `plots/naive_gflops_vs_m.png`: gflops sostenidos vs $m$, con marcas verticales para las transiciones de cache.
-- `plots/naive_time_vs_m.png`: tiempo por iteracion en escala log-log, con la curva teorica $2 m^2 n$ anclada en el $m$ mas pequeno. Sirve para comparar con la complejidad esperada.
-
-**Defaults calibrados para AMD Ryzen 5 4600H** (la maquina de pruebas inicial):
-
-- L1d: 32 KB por core (192 KiB totales / 6 cores)
-- L2 : 512 KB por core (3 MiB totales / 6 cores)
-- L3 : 4 MB compartida (4 MiB / 1 instancia)
-
-Si corres en otra maquina personaliza los argumentos:
-
-```bash
-python3 scripts/plot_results.py \
-    --cpu-label "Intel Core i7-XXXX" \
-    --l1-kb 32 --l2-kb 1024 --l3-kb 8192
-```
-
-Para conocer los tamanos exactos de tu maquina:
-
-```bash
-lscpu | grep -E "cache|Model name"
-# o, mas explicito:
-getconf -a | grep CACHE
-```
-
-**Importante:** los valores que pides en el script son **por core** para L1 y L2, y **totales (compartido)** para L3. `lscpu` reporta el total de L1/L2 sumado a traves de los cores ("192 KiB (6 instances)"); divide entre el numero de instancias para sacar el valor por core.
-
-### 5.5 Flujo de Fase 6: Morton (Z-order) cache-oblivious
-
-#### 5.5.1 Validacion
+#### 5.4.1 Validacion
 
 ```bash
 ./bin/validate_morton_O0    256   # 3 invariantes + cross-validation contra naive (m potencia de 2)
@@ -411,37 +334,21 @@ getconf -a | grep CACHE
 
 Cada uno imprime `VALIDATION OK` (o `MORTON TESTS OK`) y retorna 0 cuando todo pasa.
 
-#### 5.5.2 Bench individual
+#### 5.4.2 Bench individual
 
 ```bash
-./bin/bench_morton_O0    1024 4 1        # m debe ser potencia de 2
+./bin/bench_morton_O3    1024 4 1        # m debe ser potencia de 2
 ```
 
-Misma CLI y mismo CSV de salida que `bench_naive_O0`. `bench_morton_O0` ejecuta `reorganize_to_morton(A)` una sola vez antes del warm-up, fuera del tiempo medido, para que las GFLOP/s reflejen solo el kernel.
+Misma CLI y mismo CSV de salida que `bench_naive_O3`. `bench_morton_O3` ejecuta `reorganize_to_morton(A)` una sola vez antes del warm-up, fuera del tiempo medido, para que las GFLOP/s reflejen solo el kernel.
 
-#### 5.5.3 Sweep individual
+#### 5.4.3 Comparacion entre kernels
 
-```bash
-make sweep_morton_run                         # produce results/morton_O0.csv
-# equivalente a:
-bash scripts/run_sweep_morton.sh              # 4 potencias de 2, ~50 min a -O0
-```
-
-Para un rango custom:
-
-```bash
-bash scripts/run_sweep_morton.sh    "1024 2048 4096 8192"
-```
-
-`run_sweep_morton.sh` filtra y omite con warning a stderr cualquier $m$ que no sea potencia de 2.
-
-#### 5.5.4 Comparacion entre kernels
-
-Para comparar Morton contra el resto del pipeline (naive, loops, tiled_ikj*, morton_avx2, morton_omp) se usa el pipeline unificado de la Sesion 03 (seccion 5.6):
+Para comparar Morton contra el resto del pipeline (naive, loops, tiled_ikj*, morton_avx2, morton_omp) se usa el pipeline unificado:
 
 ```bash
 sudo sh -c 'echo 1 > /proc/sys/kernel/perf_event_paranoid'   # una vez por boot
-make results              # sweep perf Zen 2 sobre 13 variantes -> results/metrics.csv
+make results              # sweep perf Zen 2 sobre las variantes activas -> results/metrics.csv
 ```
 
 ### 5.7 Flujo de Fase 1.2: tiling explicito (`tiled_ikj`)
@@ -564,26 +471,20 @@ python3 scripts/consolidate_perf_zen2.py --out results/metrics.csv
 
 ---
 
-### 5.6 Flujo de Sesion 03: microkernel AVX2 + OpenMP + Roofline
+### 5.6 Flujo de Sesion 03: microkernel AVX2 + OpenMP
 
-La Sesion 03 lleva el proyecto al hardware del Ryzen $5$ $4600$H (Zen $2$): microkernel AVX2 + FMA $4 \times 16$, paralelizacion con OpenMP tasks, profiling con eventos PMC de Zen $2$ y Roofline anclado al bandwidth STREAM medido. Todos los targets nuevos viven bajo el bloque `# === Sesion 03 targets ===` del `Makefile` y no tocan los pipelines de Fases $1$ ni $6$.
+La Sesion 03 lleva el proyecto al hardware del Ryzen $5$ $4600$H (Zen $2$): microkernel AVX2 + FMA $4 \times 16$, paralelizacion con OpenMP tasks y profiling con eventos PMC de Zen $2$. Todos los targets nuevos viven bajo el bloque `# === Sesion 03 targets ===` del `Makefile` y no tocan los pipelines de Fases $1$ ni $6$.
 
 #### 5.6.1 Targets de un solo comando
 
 ```bash
-make audit                            # auditoria PDEP/PEXT (imprime PASS / FAIL)
-make hwinfo                           # bin/hwinfo: caracteristicas del CPU en runtime
-make sweep_threshold                  # mide el RECURSION_THRESHOLD optimo de Morton
 make validate_morton_avx2             # cross-valida la variante AVX2 contra naive y morton
-make bench_morton_avx2                # bench single-core del microkernel AVX2
-OMP_NUM_THREADS=6 make bench_morton_omp   # version paralela (OpenMP tasks)
-make results                          # sweep perf Zen 2 sobre 13 variantes -> results/metrics.csv
-make stream                           # mide DRAM bandwidth con STREAM (Triad 1T y 6T)
+make bench_morton_avx2_O3             # bench single-core del microkernel AVX2
+OMP_NUM_THREADS=6 make bench_morton_omp_O3   # version paralela (OpenMP)
+make results                          # sweep perf Zen 2 sobre las variantes activas -> results/metrics.csv
 make profile_zen2                     # captura eventos perf Zen 2 (group A + group B por celda)
-make plot_roofline                    # genera plots/roofline_4600h.png anclado al STREAM medido
+make plot_perf_zen2                   # genera plots/perf_zen2_breakdown.png
 ```
-
-`make audit` debe ejecutarse antes de cualquier bench: BMI2 en Zen $2$ esta microcodeado ($\sim 18$ ciclos para `PDEP`/`PEXT`) y un uso incidental degradaria el throughput sin notarlo. El script verifica que ningun modulo Morton emite `pdep` ni `pext` en el ensamblador.
 
 `make profile_zen2` requiere `kernel.perf_event_paranoid <= 2`. Ajustar una vez por boot con:
 
@@ -599,74 +500,47 @@ sudo sysctl -w kernel.perf_event_paranoid=1
 | `OMP_PROC_BIND`   | `close` (recomendado)           | Mantiene threads en el mismo CCX. `spread` los reparte entre los $2$ CCXs. |
 | `OMP_PLACES`      | `cores`                         | Une cada thread a un core fisico. |
 
-Mejor combinacion empirica para throughput puro (sweep de Prompt $6$, `results/omp_scaling.csv`): `OMP_NUM_THREADS=12 OMP_PROC_BIND=close` toca $\sim 256$ GFLOPS a $m = 8192$ y $\sim 262$ GFLOPS a $m = 4096$. Para single-CCX limpio (e.g. compartiendo el laptop con otras cargas): `OMP_NUM_THREADS=3 OMP_PROC_BIND=close`.
+Mejor combinacion empirica para throughput puro: `OMP_NUM_THREADS=12 OMP_PROC_BIND=close` toca $\sim 256$ GFLOPS a $m = 8192$ y $\sim 262$ GFLOPS a $m = 4096$. Para single-CCX limpio (e.g. compartiendo el laptop con otras cargas): `OMP_NUM_THREADS=3 OMP_PROC_BIND=close`.
 
-#### 5.6.3 Reproducir el Roofline completo
+#### 5.6.3 Reproducir el sweep completo
 
 ```bash
 source ~/venvs/matmul/bin/activate
 sudo sysctl -w kernel.perf_event_paranoid=1
 
-make audit                            # PASS
 make results                           # ~25 min, sweep perf Zen 2 -> results/metrics.csv
 make plot_perf_zen2                    # ~1  min, plots/perf_zen2_breakdown.png
-make stream                            # ~2  min
-make profile_zen2_omp                  # ~3  min, perf de morton_omp para el Roofline
-make plot_roofline                     # < 1 min, plots/roofline_4600h.png
+make profile_zen2_omp                  # ~3  min, perf de morton_omp con varios threads
 ```
 
-Mejor resultado esperado al cierre: `morton_avx2` a $\sim 40$ GFLOPS bench-wide a $m = 8192$ ($\sim 64 \%$ del techo FMA single-core medido con perf), y `morton_omp` a $\sim 260$ GFLOPS con $12$ threads `close` segun `omp_scaling.csv`. El reporte completo de hallazgos esta en [`docs/SESION_03_RESUMEN.md`](docs/SESION_03_RESUMEN.md).
+Mejor resultado esperado al cierre: `morton_avx2` a $\sim 40$ GFLOPS bench-wide a $m = 8192$ ($\sim 64 \%$ del techo FMA single-core medido con perf), y `morton_omp` a $\sim 260$ GFLOPS con $12$ threads `close`.
 
 ---
 
-## 6. Paso 2: profiling
+## 6. Profiling: contadores de hardware con perf
 
-**Atajo:** `make sweep_naive` corre los tres (CSV + gprof + perf) por cada valor de $m$ automaticamente. Las dos subsecciones siguientes describen como correr cada profiler por separado para un solo $m$, util durante el desarrollo o para inspeccionar un cliff concreto.
+El profiling de hardware counters se hace via `make profile_zen2` (sweep completo) o `make profile_zen2_one VARIANT=<v> M=<m>` (una sola celda). Ambos invocan `scripts/profile_perf_zen2.sh`, que captura los grupos A y B de eventos PMC de Zen 2 por celda `(variant, m)` y deja los `.txt` crudos en `results/perf_<variant>_m<M>_{A,B}.txt`. El consolidador `scripts/consolidate_perf_zen2.py` los une en `results/metrics.csv`.
 
-### 6.1 Perfil por funcion con gprof
+Eventos cubiertos (grupos A + B):
 
-```bash
-make bench_naive_pg                              # compila bench con -pg
-bash scripts/profile_gprof_naive.sh              # m=2048, iters=1, runs=1 por defecto
-bash scripts/profile_gprof_naive.sh 1024         # m custom
-bash scripts/profile_gprof_naive.sh 1024 2 1     # m, iteraciones, corridas medidas
-```
-
-El reporte queda en `results/gprof_naive_m<M>.txt`. Es esperable que **mas del 95% del tiempo** caiga en `matmul_naive`; eso confirma que esa funcion es el cuello de botella.
-
-Para inspeccionar manualmente:
-
-```bash
-gprof bin/bench_naive_pg gmon.out > results/gprof_manual.txt
-less results/gprof_manual.txt
-```
-
-### 6.2 Contadores de hardware con perf
-
-```bash
-bash scripts/profile_perf_naive.sh               # m=2048, iters=1, runs=1
-bash scripts/profile_perf_naive.sh 1024          # m custom
-bash scripts/profile_perf_naive.sh 1024 2 1      # m, iteraciones, corridas
-```
-
-El reporte queda en `results/perf_naive_m<M>.txt`. Los eventos solicitados cubren los cuatro puntos del paso 2:
-
-| Pregunta del proyecto | Eventos de perf |
-|------------------------|-----------------|
+| Pregunta | Eventos de perf |
+|----------|-----------------|
 | Numero de instrucciones | `instructions` |
-| IPC promedio            | `instructions` / `cycles` |
-| Fallos de pagina        | `page-faults`, `minor-faults`, `major-faults` |
-| Efectividad del branching | `branches`, `branch-misses` |
-| (Bonus) memoria         | `cache-references`, `cache-misses`, `L1-dcache-load-misses`, `LLC-load-misses` |
+| IPC promedio | `instructions` / `cycles` |
+| FMA throughput | `fp_ret_sse_avx_ops.all` (uops AVX/FMA retirados) |
+| Cache misses | `l1d_misses`, `l2_misses`, `l3_misses` |
+| TLB walks | `dtlb_walks`, `itlb_walks` |
+| Branching | `branches`, `branch-misses` |
+| Fallos de pagina | `page-faults`, `minor-faults`, `major-faults` |
 
-**Interpretacion tipica a `-O0`:** IPC bajo (entre 0.3 y 0.8 sobre un peak teorico de 4-6), branch miss rate $< 0.5\%$, mucha actividad en cache misses. El cuello de botella es memoria, no CPU.
+`make profile_zen2` requiere `kernel.perf_event_paranoid <= 2`. Ajustar una vez por boot con `sudo sysctl -w kernel.perf_event_paranoid=1`.
 
-Si un evento aparece como `<not supported>` en WSL2 es normal (limitacion del hipervisor). Los eventos basicos (`instructions`, `cycles`, `branches`, `branch-misses`, `page-faults`) suelen funcionar.
+Si un evento aparece como `<not supported>` en WSL2 es normal (limitacion del hipervisor); el script lo registra y continua.
 
-### 6.3 (Opcional) Cachegrind
+### 6.1 (Opcional) Cachegrind
 
 ```bash
-valgrind --tool=cachegrind --cache-sim=yes ./bin/bench_naive_O0 1024 1
+valgrind --tool=cachegrind --cache-sim=yes ./bin/bench_naive_O3 1024 1
 ls cachegrind.out.*
 cg_annotate cachegrind.out.<pid> | less
 ```
@@ -705,40 +579,30 @@ Cualquier proceso (Chrome con 80 pestanas, Slack, Zoom, Docker Desktop, OneDrive
 
 ### 7.4 Reporta la mediana
 
-`bench_naive_O0` ya hace cinco corridas y reporta la mediana. Si quieres ser mas estricto, edita `DEFAULT_RUNS` en `src/drivers/bench/bench_naive.c` y recompila.
+`bench_naive_O3` ya hace cinco corridas y reporta la mediana. Si quieres ser mas estricto, edita `DEFAULT_RUNS` en `src/drivers/bench/bench_naive.c` y recompila. El sweep `make results` controla el numero de runs medidos via el knob `RUNS` (default 3, o 1 cuando `ITERS_PER_RUN=0` activa `I_full`).
 
 ---
 
-## 8. Flujo de trabajo completo para la entrega de la Fase 1
-
-Resumen de un ciclo completo para los **tres primeros pasos**:
+## 8. Flujo de trabajo completo
 
 ```bash
-# 1. Compilar todo (incluye bench_naive_O0, bench_naive_pg y validate_naive_O0)
-make
-make bench_naive_pg
+# 1. Compilar todo
+make build
 
-# 2. Verificar correctitud
-./bin/validate_naive_O0 256
+# 2. Verificar correctitud de las 8 variantes
+make validate_all
 
-# 3. Paso 1, 2 y 3 de una sola pasada:
-#    - CSV con gflops vs m (paso 3)
-#    - gprof por cada m (paso 2.a)
-#    - perf por cada m (paso 2.b)
-make sweep_naive
+# 3. Sweep perf + consolidacion
+make results                                        # defaults completos
+# o con knobs:
+make results MS="1024 4096" VARIANTS="naive loop_ikj morton_avx2 tiled_ikj_avx2"
 
-# 4. Generar las graficas (paso 3)
+# 4. (Opcional) Plots de los contadores perf
 source ~/venvs/matmul/bin/activate
-python3 scripts/plot_results.py
+make plot_perf_zen2                                 # plots/perf_zen2_breakdown.png
 ```
 
-Al terminar, en `results/` y `plots/` deberian estar:
-
-- `results/naive_O0.csv` (datos del sweep)
-- `results/gprof_naive_m256.txt`, `results/gprof_naive_m384.txt`, ..., `results/gprof_naive_m8192.txt`
-- `results/perf_naive_m256.txt`, `results/perf_naive_m384.txt`, ..., `results/perf_naive_m8192.txt`
-- `plots/naive_gflops_vs_m.png`
-- `plots/naive_time_vs_m.png`
+Al terminar, en `results/` esta `metrics.csv` con una fila por celda `(variant, m)` y todos los contadores; en `plots/` los PNG correspondientes.
 
 ---
 
@@ -766,10 +630,10 @@ El proyecto **esta disenado para que cada fase se entregue de forma incremental*
 Necesitas instalarlo. Es la opcion acordada por compatibilidad con `gprof` y `perf`. La instalacion son dos comandos en PowerShell (seccion 3.1).
 
 **perf no se compila / no encuentra el kernel.**
-WSL2 usa un kernel propio de Microsoft. La opcion mas robusta es compilar `perf` desde el repositorio `WSL2-Linux-Kernel` como muestra la seccion 3.3. Si no es viable, los tres puntos del paso 2 que se pueden medir tambien con `gprof` y `cachegrind` siguen siendo accesibles.
+WSL2 usa un kernel propio de Microsoft. La opcion mas robusta es compilar `perf` desde el repositorio `WSL2-Linux-Kernel` como muestra la seccion 3.3. Si no es viable, `cachegrind` (Seccion 6.1) sigue siendo accesible para diagnostico fino.
 
 **El sweep tarda mucho.**
-A `-O0` es esperable. Reduce el rango con `bash scripts/run_sweep_naive.sh "256 512 1024 2048"` mientras desarrollas. El sweep completo se lanza una vez al final.
+Reduce el alcance con los knobs: `make results MS="1024 2048" VARIANTS="naive morton_avx2"` mientras desarrollas. El sweep completo se lanza una vez al final.
 
 **Quiero medir tambien con `-O3`.**
 Eso es parte de la Fase 4. Aqui no se hace para mantener el baseline limpio y el paso 1 explicito.

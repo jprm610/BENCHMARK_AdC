@@ -12,7 +12,6 @@
 #   src/drivers/bench/    bench_*.c  (one per algorithm)
 #   src/drivers/validate/ validate_*.c
 #   src/tests/            test_morton.c, test_kernel_avx2.c
-#   src/tools/            hwinfo.c
 #
 # Key targets:
 #   make build         -> compile all bench + validate binaries
@@ -45,7 +44,6 @@ TILED_DIR    := $(ALG_DIR)/tiled_ikj
 BENCH_DIR    := $(SRC_DIR)/drivers/bench
 VALIDATE_DIR := $(SRC_DIR)/drivers/validate
 TESTS_DIR    := $(SRC_DIR)/tests
-TOOLS_DIR    := $(SRC_DIR)/tools
 
 BIN_DIR := bin
 OBJ_DIR := build
@@ -143,12 +141,11 @@ VALIDATE_TILED_IKJ_OMP_SRCS := $(COMMON_SRCS) $(TILED_DIR)/matmul_tiled_ikj_omp.
 BENCH_TILED_IKJ_OMP_O3    := $(BIN_DIR)/bench_tiled_ikj_omp_O3
 VALIDATE_TILED_IKJ_OMP_O3 := $(BIN_DIR)/validate_tiled_ikj_omp_O3
 
-# --- tests & tools ---
+# --- tests ---
 TEST_MORTON_SRCS := $(CORE_DIR)/morton.c $(CORE_DIR)/matrix_utils.c \
                     $(TESTS_DIR)/test_morton.c
 TEST_MORTON      := $(BIN_DIR)/test_morton
 TEST_KERNEL_AVX2 := $(BIN_DIR)/test_kernel_avx2
-HWINFO_BIN       := $(BIN_DIR)/hwinfo
 
 # Aggregate lists used by build / validate_all / results.
 ALL_BENCH := \
@@ -181,9 +178,9 @@ ALL_VALIDATE := \
         bench_tiled_ikj_O3 validate_tiled_ikj \
         bench_tiled_ikj_avx2_O3 validate_tiled_ikj_avx2 \
         bench_tiled_ikj_omp_O3 validate_tiled_ikj_omp \
-        test_morton test_kernel_avx2 hwinfo audit \
+        test_morton test_kernel_avx2 \
         profile_zen2 profile_zen2_one profile_zen2_omp \
-        consolidate_zen2 stream roofline plot_perf_zen2 \
+        consolidate_zen2 plot_perf_zen2 \
         clean distclean
 
 # ── 6. MAIN TARGETS ───────────────────────────────────────────────────
@@ -345,12 +342,6 @@ consolidate_zen2:
 
 # ── 9. ANALYSIS & AUXILIARY ───────────────────────────────────────────
 
-stream:
-	bash scripts/measure_stream.sh
-
-roofline: stream
-	python3 scripts/plot_roofline.py
-
 plot_perf_zen2:
 	python3 scripts/plot_perf_zen2.py
 
@@ -372,12 +363,3 @@ $(TEST_KERNEL_AVX2): $(TESTS_DIR)/test_kernel_avx2.c \
 	      $(TESTS_DIR)/test_kernel_avx2.c \
 	      $(CORE_DIR)/matrix_utils.c \
 	      -o $@ $(LIBS)
-
-hwinfo: $(HWINFO_BIN)
-	./$(HWINFO_BIN)
-
-$(HWINFO_BIN): $(TOOLS_DIR)/hwinfo.c | $(BIN_DIR)
-	$(CC) $(CFLAGS_O3) -o $@ $< $(LIBS)
-
-audit:
-	bash scripts/audit_no_pdep.sh

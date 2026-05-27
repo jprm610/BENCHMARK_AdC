@@ -29,10 +29,9 @@
  * Topology note (Renoir / Ryzen 5 4600H): the chip has 2 CCX of 3
  * cores each; L3 (4 MiB) is private per CCX. Threads on different
  * CCXs do not share L3 and pay Infinity Fabric for any coherence
- * traffic. The benchmark script (scripts/run_omp_scaling.sh) compares
- * OMP_PROC_BIND=close (favors same-CCX) and =spread (uses both CCXs);
- * the read-out is that close scales well up to 3 threads then taxes
- * the L3, spread scales further but pays cross-CCX traffic.
+ * traffic. Empirically, OMP_PROC_BIND=close scales well up to 3
+ * threads then taxes the L3; spread scales further but pays
+ * cross-CCX traffic.
  *
  * Pre-conditions for the public wrapper are identical to
  * matmul_morton_avx2: m == k, m a power of two with m >= MR = 4, A in
