@@ -17,6 +17,7 @@
 #   make build         -> compile all bench + validate binaries
 #   make validate_all  -> build + run all validate_* (correctness gate)
 #   make results       -> build + perf sweep -> results/metrics.csv
+#   make plots         -> render figures from results/metrics.csv into plots/
 #   make clean         -> remove binaries and object files
 #   make distclean     -> clean + remove results/*.csv and plots/*
 #
@@ -180,7 +181,7 @@ ALL_VALIDATE := \
         bench_tiled_ikj_omp_O3 validate_tiled_ikj_omp \
         test_morton test_kernel_avx2 \
         profile_zen2 profile_zen2_one profile_zen2_omp \
-        consolidate_zen2 plot_perf_zen2 \
+        consolidate_zen2 plots \
         clean distclean
 
 # ── 6. MAIN TARGETS ───────────────────────────────────────────────────
@@ -342,8 +343,10 @@ consolidate_zen2:
 
 # ── 9. ANALYSIS & AUXILIARY ───────────────────────────────────────────
 
-plot_perf_zen2:
-	python3 scripts/plot_perf_zen2.py
+# Render all figures from results/metrics.csv into plots/.
+# Run after `make results` (which produces results/metrics.csv).
+plots:
+	python3 scripts/plot_metrics.py
 
 # Unit tests (build + run).
 test_morton: $(TEST_MORTON)

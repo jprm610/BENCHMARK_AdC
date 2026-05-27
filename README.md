@@ -69,7 +69,7 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |   |-- profile_perf_zen2.sh           -> Captura perf por celda (variant, m)
 |   |-- run_perf_zen2_sweep.sh         -> Orquesta el sweep de variantes x tamanos
 |   |-- consolidate_perf_zen2.py       -> Consolida grupos A+B -> results/metrics.csv
-|   `-- plot_perf_zen2.py              -> 4 paneles: IPC, FMA, L3 miss, TLB walks
+|   `-- plot_metrics.py                -> 8 figuras: GFLOPS, speedup, ejecutiva, eficiencia, breakdown perf, cache, OMP, roofline
 |-- results/                            -> CSV y reportes de profiling (gitignored)
 |-- plots/                              -> Imagenes generadas (gitignored)
 `-- bin/                                -> Binarios compilados (gitignored)
@@ -167,7 +167,7 @@ source ~/venvs/matmul/bin/activate
 pip install matplotlib numpy
 ```
 
-Recuerda activar el venv (`source ~/venvs/matmul/bin/activate`) cada vez que abras una nueva terminal antes de ejecutar los scripts de plotting (`scripts/plot_perf_zen2.py`).
+Recuerda activar el venv (`source ~/venvs/matmul/bin/activate`) cada vez que abras una nueva terminal antes de ejecutar los scripts de plotting (`scripts/plot_metrics.py`).
 
 Alternativa rapida sin venv (no recomendada para entornos compartidos):
 
@@ -483,7 +483,7 @@ make bench_morton_avx2_O3             # bench single-core del microkernel AVX2
 OMP_NUM_THREADS=6 make bench_morton_omp_O3   # version paralela (OpenMP)
 make results                          # sweep perf Zen 2 sobre las variantes activas -> results/metrics.csv
 make profile_zen2                     # captura eventos perf Zen 2 (group A + group B por celda)
-make plot_perf_zen2                   # genera plots/perf_zen2_breakdown.png
+make plots                            # genera 8 figuras en plots/ a partir de results/metrics.csv
 ```
 
 `make profile_zen2` requiere `kernel.perf_event_paranoid <= 2`. Ajustar una vez por boot con:
@@ -509,7 +509,7 @@ source ~/venvs/matmul/bin/activate
 sudo sysctl -w kernel.perf_event_paranoid=1
 
 make results                           # ~25 min, sweep perf Zen 2 -> results/metrics.csv
-make plot_perf_zen2                    # ~1  min, plots/perf_zen2_breakdown.png
+make plots                             # ~1  min, 8 figuras en plots/
 make profile_zen2_omp                  # ~3  min, perf de morton_omp con varios threads
 ```
 
@@ -599,7 +599,7 @@ make results MS="1024 4096" VARIANTS="naive loop_ikj morton_avx2 tiled_ikj_avx2"
 
 # 4. (Opcional) Plots de los contadores perf
 source ~/venvs/matmul/bin/activate
-make plot_perf_zen2                                 # plots/perf_zen2_breakdown.png
+make plots                                          # 8 figuras en plots/
 ```
 
 Al terminar, en `results/` esta `metrics.csv` con una fila por celda `(variant, m)` y todos los contadores; en `plots/` los PNG correspondientes.

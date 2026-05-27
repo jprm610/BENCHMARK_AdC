@@ -25,9 +25,11 @@
 #
 # After the sweep:
 #   python3 scripts/consolidate_perf_zen2.py
-#       -> results/perf_zen2_summary.csv
-#   python3 scripts/plot_perf_zen2.py
-#       -> plots/perf_zen2_breakdown.png
+#       -> results/metrics.csv
+#   python3 scripts/plot_metrics.py
+#       -> plots/{gflops_vs_m,speedup_vs_naive,best_per_family,
+#                 efficiency_pct_peak,perf_breakdown,
+#                 cache_hierarchy,omp_scaling,roofline}.png
 
 set -euo pipefail
 
@@ -65,4 +67,4 @@ echo "Sweep complete."
 echo "Files in $REPO_DIR/results/perf_<variant>_m<M>_{A,B}.txt"
 echo "Next:"
 echo "  python3 scripts/consolidate_perf_zen2.py"
-echo "  python3 scripts/plot_perf_zen2.py"
+echo "  python3 scripts/plot_metrics.py"
