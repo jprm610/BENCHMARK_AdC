@@ -1,29 +1,5 @@
 /*
- * matmul_tiled_ikj_avx2.c - BLIS-style 6x16 register-blocked matmul.
- *
- * See matmul_tiled_ikj_avx2.h for the loop nest design and the rationale
- * behind the block sizes. This file contains:
- *   - the public matmul_tiled_ikj_avx2 function that orchestrates the
- *     three-level tile loop pc / ic / jr-ir, calling into the 6x16
- *     microkernel declared in kernel_avx2_tiled.h for the aligned
- *     interior and into kernel_avx2_tiled_residual_rows for the
- *     m % MR / n % NR tails;
- *   - the public benchmark_iterations_tiled_ikj_avx2 wrapper that
- *     handles the iterated B_{k+1} = A * B_k recurrence with the
- *     standard double-buffer + swap pattern.
- *
- * Correctness contract identical to matmul_naive: C is overwritten
- * via memset before the tile loops; A and B are read-only; no aliasing.
- *
- * Why the microkernel lives in a header (kernel_avx2_tiled.h) instead
- * of a separate .c like kernel_avx2_morton: the FMA chain only stays
- * in registers when the compiler can see the full loop in one
- * translation unit. Putting the microkernel in a separate .c would
- * force a function call boundary and would risk spilling the 15
- * active YMMs through the ABI. The header exposes the kernel as
- * `static inline` so each translation unit (this file and
- * matmul_tiled_ikj_omp.c) gets its own inlined copy under -O3, which
- * preserves the original codegen verified by objdump.
+ * matmul_tiled_ikj_avx2.c - Estilo BLIS con bucles ikj y microkernel AVX2 6x16.
  */
 
 #include "matmul_tiled_ikj_avx2.h"
@@ -46,94 +22,138 @@ void matmul_tiled_ikj_avx2_set_bs(size_t bs)
     g_tiled_ikj_avx2_bs = bs;
 }
 
+/*
+matmul_tiled_ikj_avx2: Estilo BLIS tiled_ikj matmul (6x16)
+INPUTS:
+- C: Puntero a la matriz de salida. (m x n)
+- A: Puntero a la matriz A. (m x k)
+- B: Puntero a la matriz B. (k x n)
+- m: Número de filas de A y C.
+- k: Número de columnas de A y filas de B.
+- n: Número de columnas de B y C.
+*/
 void matmul_tiled_ikj_avx2(scalar_t *C,
                        const scalar_t *A,
                        const scalar_t *B,
-                       size_t m, size_t k, size_t n)
+                       size_t m, size_t k_dim, size_t n)
 {
-    const size_t MR = TILED_IKJ_AVX2_MR;
-    const size_t NR = TILED_IKJ_AVX2_NR;
-    const size_t MC = TILED_IKJ_AVX2_MC;
-    const size_t KC = g_tiled_ikj_avx2_bs;
+    // Hiperparámetros según hardware. (Definidos en matmul_tiled_ikj_avx2.h)
+    // Microkernel
+    const size_t MR = TILED_IKJ_AVX2_MR;    // Filas microkernel (6)
+    const size_t NR = TILED_IKJ_AVX2_NR;    // Columnas microkernel (16)
+    // Tiling
+    const size_t MC = TILED_IKJ_AVX2_MC;    // Filas bloque L2 (192)
+    const size_t KC = g_tiled_ikj_avx2_bs;  // Columnas bloque L1d (384) (ajustable)
 
-    memset(C, 0, m * n * sizeof(scalar_t));
+    // C en 0s, ya que se acumulará el resultado de cada bloque.
+    init_matrix_zero(C, m, n);
 
+    // Necesario para manejar casos donde m o n no son múltiplos de MR o NR.
+    // para que puedan ser procesados por los bloques 6x16 del microkernel.
+    // Lo que no se computa en residual rows.
     const size_t m_aligned = (m / MR) * MR;
     const size_t n_aligned = (n / NR) * NR;
 
-    /* Outer loop on the contracted dimension: kc-deep panels of A and
-     * B. Each pp iteration adds its partial sum into C (which is in
-     * memory between pp iterations, but loaded into YMMs inside the
-     * microkernel for each kc burst). */
-    for (size_t pp = 0; pp < k; pp += KC) {
-        const size_t kc = (pp + KC < k) ? KC : k - pp;
+    // kk externo (tamaño KC)
+    // Columnas de A y filas de B.
+    for (size_t kk = 0; kk < k_dim; kk += KC) {
+        const size_t kc = (kk + KC < k_dim) ? KC : k_dim - kk;
 
-        /* Block over the m dimension to keep the A panel mc x kc in
-         * L2 across all jr iterations of the same ic block. */
+        // ic interno (tamaño MC)
         for (size_t ic = 0; ic < m_aligned; ic += MC) {
             const size_t ic_end = (ic + MC <= m_aligned) ? ic + MC
                                                          : m_aligned;
 
-            /* jr outer / ir inner is the BLIS canonical order: each
-             * (ic, jr) pair sweeps mc/mr microkernels that share the
-             * same kc x nr B panel (12 KiB, fits in L1d), reusing it
-             * mc/mr times before moving to the next jr panel. */
+            // jr sobre columnas de B (tamano NR)
             for (size_t jr = 0; jr < n_aligned; jr += NR) {
+                // ir sobre filas de A (tamano MR)
+                // A (MR (6) x KC (384))  <- L2
+                // B (KC (384) x NR (16)) <- L1d (Se reusa para todo jr)
+                // C (MR (6) x NR (16))   <- registros YMM
                 for (size_t ir = ic; ir + MR <= ic_end; ir += MR) {
+                    // C[6×16] += A[6×KC] × B[KC×16]
                     kernel_avx2_tiled_6x16(&C[ir * n + jr], n,
-                                           &A[ir * k + pp], k,
-                                           &B[pp * n + jr], n,
+                                           &A[ir * k_dim + kk], k_dim,
+                                           &B[kk * n + jr], n,
                                            kc);
                 }
             }
-
-            /* Tail in n (n % NR != 0). With n=128 in this project this
-             * branch is dead, but keep the kernel correct for arbitrary
-             * n so the validator can call it at m=256 etc. */
+            
+            // Si NR no divide n, hay columnas residuales.
+            // En este caso como n=128 y NR=16, nunca hay columnas residuales.
             if (n_aligned < n) {
                 kernel_avx2_tiled_residual_rows(
                     &C[ic * n + n_aligned], n,
-                    &A[ic * k + pp], k,
-                    &B[pp * n + n_aligned], n,
+                    &A[ic * k_dim + kk], k_dim,
+                    &B[kk * n + n_aligned], n,
                     ic_end - ic, n - n_aligned, kc);
             }
         }
 
-        /* Tail in m (m % MR != 0). Up to MR-1 = 5 residual rows. */
+        // Si MR no divide m, hay filas residuales.
         if (m_aligned < m) {
             kernel_avx2_tiled_residual_rows(
                 &C[m_aligned * n], n,
-                &A[m_aligned * k + pp], k,
-                &B[pp * n], n,
+                &A[m_aligned * k_dim + kk], k_dim,
+                &B[kk * n], n,
                 m - m_aligned, n, kc);
         }
     }
 }
 
+
+/*
+benchmark_iterations_tiled_ikj_avx2: Implementa recurrencia:
+        B_{i+1} = A * B_{i} con B_0 = Z.
+INPUTS:
+- B_out: Puntero a la matriz de salida (num_iters x n x n).
+- A: Puntero a la matriz A (m x m).
+- Z: Puntero a la matriz Z (m x n).
+- m: Número de filas de A y B_i.
+- n: Número de columnas de B_i.
+- num_iters: Número de iteraciones.
+*/
 void benchmark_iterations_tiled_ikj_avx2(scalar_t *B_out,
                                      const scalar_t *A,
                                      const scalar_t *Z,
                                      size_t m, size_t n,
                                      size_t num_iters)
 {
+    /*
+    - Punteros hacia B_curr y B_next.
+    - Más adelante se hará un swap de punteros para evitar copiar B_curr a B_next.
+    */
     scalar_t *B_curr = xalloc_aligned(m * n);
     scalar_t *B_next = xalloc_aligned(m * n);
 
+    /* 
+    - Inicializar B_curr con Z, que corresponde a B_0 en la recurrencia. (Una copia)
+    - Funciona porque Z es contigua.
+    */
     memcpy(B_curr, Z, m * n * sizeof(scalar_t));
 
+    // For i = 0, 1, ..., num_iters (I = 2m/n)
     for (size_t iter = 0; iter < num_iters; ++iter) {
+        // Calcular B_{i+1} = A * B_{i} usando matmul_tiled_ikj_avx2.
         matmul_tiled_ikj_avx2(B_next, A, B_curr, m, m, n);
 
+        /*
+        - Guardar las primeras n filas de B_{i+1} en B_out_{i}.
+        - Cada B_out_{i} es contiguo. (Ver cómo se define el buffer completo en bench_naive.c)
+        */
         scalar_t *out_block = B_out + iter * n * n;
         for (size_t i = 0; i < n; ++i)
             for (size_t j = 0; j < n; ++j)
                 out_block[i * n + j] = B_next[i * n + j];
-
+        
+        
+        // Swap B_next y B_curr (Sin copiar).
         scalar_t *tmp = B_curr;
         B_curr        = B_next;
         B_next        = tmp;
     }
 
+    // Liberar memoria al final del benchmark.
     xfree(B_curr);
     xfree(B_next);
 }
