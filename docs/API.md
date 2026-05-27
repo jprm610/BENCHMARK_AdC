@@ -247,11 +247,7 @@ kernel,m,n,num_iters,median_seconds,gflops
 
 Internamente ejecuta una corrida de warm-up (no medida) y luego `num_runs` corridas medidas, reportando la mediana de los tiempos. Cuando `num_runs == 1` la "mediana" es trivialmente esa unica muestra.
 
-### 5.2 `bin/bench_naive_pg`
-
-Igual que `bench_naive_O0` pero compilado adicionalmente con `-pg` para soportar `gprof`. Misma CLI. Produce `gmon.out` en el cwd al ejecutarse.
-
-### 5.3 `bin/validate_naive_O0`
+### 5.2 `bin/validate_naive_O0`
 
 Valida la implementacion sobre tres invariantes algebraicos: $A \cdot 0 = 0$, $I \cdot Z = Z$, $A \cdot (Z_1 + Z_2) = A \cdot Z_1 + A \cdot Z_2$. Imprime `VALIDATION OK` y retorna 0 si todas pasan; imprime detalles del fallo y retorna 1 en caso contrario.
 
@@ -263,70 +259,20 @@ Valida la implementacion sobre tres invariantes algebraicos: $A \cdot 0 = 0$, $I
 
 Por defecto $m = 256$.
 
-### 5.4 `scripts/run_sweep_naive.sh`
+### 5.3 Sweep unificado: `make results`
 
-Orquesta los tres primeros pasos del proyecto en una sola pasada. Para cada $m$ del listado:
+El flujo unico de medicion vive en `make results`, que orquesta `scripts/run_perf_zen2_sweep.sh` (un sweep de hardware counters por celda `(variant, m)`) y `scripts/consolidate_perf_zen2.py` (union de los grupos A+B de eventos perf en una sola fila por celda). Salida canonica: `results/metrics.csv`.
 
-1. Ejecuta `bin/bench_naive_O0 <m>` (5 corridas + mediana) y agrega la linea CSV a `results/naive_O0.csv`.
-2. Ejecuta `bin/bench_naive_pg <m> <PROFILE_ITERS> <PROFILE_RUNS>` bajo `gprof`, guardando `results/gprof_naive_m<m>.txt`.
-3. Ejecuta `bin/bench_naive_O0 <m> <PROFILE_ITERS> <PROFILE_RUNS>` bajo `perf stat`, guardando `results/perf_naive_m<m>.txt`.
+Knobs (variables de entorno o argumentos del target):
 
-**Variables de entorno:**
+| Variable | Default | Descripcion |
+|----------|---------|-------------|
+| `VARIANTS` | todas las activas | Lista separada por espacios; subconjunto de `naive`, `loop_ijk..kji`, `morton{,_avx2,_omp}`, `tiled_ikj{,_avx2,_omp}`. |
+| `MS` | `1024 2048 4096 8192 16384 32768` | Tamanos de matriz. |
+| `ITERS_PER_RUN` | `1` | Iteraciones por run. `0` activa `I_full = 2m/n`. |
+| `RUNS` | `3` (o `1` si `ITERS_PER_RUN=0`) | Runs medidos para la mediana. |
 
-| Variable | Default | Efecto |
-|----------|---------|--------|
-| `PROFILING` | `full` | `full`/`gprof`/`perf`/`0` para escoger que profilers correr. |
-| `PROFILE_ITERS` | `1` | Iteraciones del benchmark dentro de cada corrida profileada. |
-| `PROFILE_RUNS` | `1` | Corridas medidas bajo el profiler (usar 1 minimiza overhead). |
-
-**Argumento posicional:**
-
-```
-scripts/run_sweep_naive.sh [m_list]
-```
-
-Si se omite, usa el listado por defecto $\{256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192\}$.
-
-### 5.5 `scripts/profile_gprof_naive.sh` y `scripts/profile_perf_naive.sh`
-
-Scripts standalone equivalentes a un paso del sweep. CLI uniforme:
-
-```
-scripts/profile_gprof_naive.sh <m> [num_iters] [num_runs]
-scripts/profile_perf_naive.sh  <m> [num_iters] [num_runs]
-```
-
-Defaults: `m=2048, num_iters=1, num_runs=1`. Ambos respetan el contrato CLI extendido de `bench_naive_O0`/`bench_naive_pg`.
-
-### 5.6 `scripts/plot_results.py`
-
-Graficador general para cualquier combinacion de CSVs del proyecto. Acepta uno o mas archivos CSV como argumentos posicionales, agrupa las filas por la columna `kernel` y produce tres archivos con el prefijo `--out`:
-
-- `<out>.png` — GFLOP/s vs m, una curva por kernel, eje x logaritmico base 2
-- `<out>_time.png` — tiempo por iteracion vs m (log-log) + referencia teorica $O(m^2 n)$
-- `<out>_combined.csv` — union de todas las filas de entrada, deduplicadas por `(kernel, m)`
-
-```
-scripts/plot_results.py [csvs ...]
-                        [--out BASE_PATH]
-                        [--title STRING]
-                        [--l1-kb K] [--l2-kb K] [--l3-kb K]
-                        [--cpu-label STRING]
-```
-
-Sin argumentos posicionales lee `results/naive_O0.csv` (comportamiento compatible con versiones anteriores). Los defaults de cache estan calibrados para el Ryzen 5 4600H: `--l1-kb 32 --l2-kb 512 --l3-kb 4096`; ajusta los flags en otra CPU.
-
-Ejemplos:
-
-```bash
-# solo los seis ordenes de bucles
-python3 scripts/plot_results.py results/loop_order.csv \
-    --out plots/loop_orders --title "Loop-order kernels"
-
-# ordenes de bucles mas naive en la misma grafica
-python3 scripts/plot_results.py results/naive_O0.csv results/loop_order.csv \
-    --out plots/loop_vs_naive
-```
+Para profiling de una sola celda usar `make profile_zen2_one VARIANT=<v> M=<m>` (alias de `scripts/profile_perf_zen2.sh <v> <m>`).
 
 ---
 
@@ -379,24 +325,14 @@ void benchmark_iterations_loops(scalar_t *B_out,
 
 Misma semantica que `benchmark_iterations` (Seccion 2.2) pero delegando cada paso $A \cdot B$ al `kernel` suministrado. Doble buffer + swap de punteros; aloja y libera los buffers internamente.
 
-### 6.5 Binarios y scripts
+### 6.5 Binarios
 
 | Binario | CLI | Salida |
 |---------|-----|--------|
-| `bin/bench_loops_O0` | `<order> <m> [num_iters] [num_runs]` | `kernel,m,n,num_iters,median_seconds,gflops` |
+| `bin/bench_loops_O3` | `<order> <m> [num_iters] [num_runs]` | `kernel,m,n,num_iters,median_seconds,gflops` |
 | `bin/validate_loops_O0` | `[m]` (default 256) | 4 tests por variante (3 invariantes + cross-val vs naive) |
 
-`run_sweep_loops.sh` requiere un orden como argumento obligatorio para evitar que los kernels se midan en el mismo proceso (lo que contamina el estado de cache y el presupuesto termico entre ordenes):
-
-```
-scripts/run_sweep_loops.sh <order> ["<m list>"]
-```
-
-- `<order>`: uno de `ijk ikj jik jki kij kji` (obligatorio)
-- `"<m list>"`: lista separada por espacios (opcional; default `256 384 512 768 1024 1536 2048 3072 4096`)
-- Salida: `results/loop_<order>.csv`
-
-Para correr los seis ordenes y obtener un CSV combinado usar `make sweep_loops_all`, que los encadena como procesos separados y concatena los resultados en `results/loop_order.csv`.
+Para medir los seis ordenes en el sweep unificado: `make results VARIANTS="loop_ijk loop_ikj loop_jik loop_jki loop_kij loop_kji"`. Cada celda corre en un proceso separado, evitando contaminacion de cache entre ordenes.
 
 ---
 
@@ -569,56 +505,35 @@ Misma logica que la anterior pero recibiendo $A$ **ya en Morton**. Usada por `be
 
 Los binarios de bench reusan el patron del baseline: 1 warm-up + `num_runs` corridas medidas con mediana, `num_iters` default = $\min(2m/n, 4)$, semillas 42 ($A$) y 43 ($Z$). En `bench_morton_O0` la reorganizacion a Morton se ejecuta una sola vez **antes** del warm-up para que el tiempo cronometrado sea solo el del kernel.
 
-### 10.2 Sweeps
+### 10.2 Profiling con perf
 
-| Script | Lista por defecto de $m$ | Salida CSV |
-|--------|--------------------------|------------|
-| `scripts/run_sweep_morton.sh`    | $\{1024, 2048, 4096, 8192\}$; filtra y omite no-potencias-de-2 con `Warning:` a stderr | `results/morton_O0.csv` |
-
-Misma CLI que `run_sweep_naive.sh`: el listado de $m$ se puede pasar como primer argumento.
-
-### 10.3 Profiling con perf
-
-Para comparaciones entre kernels usar el pipeline unificado de la Sesion 03: `make profile_zen2` (o `make results`) corre `scripts/run_perf_zen2_sweep.sh` sobre las 13 variantes activas en $m \in \{1024, 4096, 8192\}$ y el consolidador `scripts/consolidate_perf_zen2.py` produce `results/metrics.csv`. Ese pipeline reemplaza el comparador ad-hoc (`profile_perf_compare.sh` / `plot_perf_compare.py`) que se uso en Sesion 02.
+Para comparaciones entre kernels usar el pipeline unificado: `make profile_zen2` (o `make results`) corre `scripts/run_perf_zen2_sweep.sh` sobre las variantes activas y el consolidador `scripts/consolidate_perf_zen2.py` produce `results/metrics.csv`.
 
 Si `perf_event_paranoid` esta demasiado restrictivo, el script aborta con mensaje claro indicando el comando exacto para arreglarlo y la referencia a la seccion 3.3 del `README.md`.
 
-### 10.4 Targets de Makefile
+### 10.3 Targets de Makefile
 
 ```
 make test_morton                -> bin/test_morton
-make bench_morton               -> bin/bench_morton_O0
+make bench_morton_O3            -> bin/bench_morton_O3
 make validate_morton            -> bin/validate_morton_O0
-make sweep_morton_run           -> bash scripts/run_sweep_morton.sh
 ```
 
 Targets de Fase 1.1 (loop-reorder):
 
 ```
-make bench_loops                -> bin/bench_loops_O0
+make bench_loops_O3             -> bin/bench_loops_O3
 make validate_loops             -> bin/validate_loops_O0
-make sweep_loops_ijk            -> results/loop_ijk.csv  (proceso independiente)
-make sweep_loops_ikj            -> results/loop_ikj.csv
-make sweep_loops_jik            -> results/loop_jik.csv
-make sweep_loops_jki            -> results/loop_jki.csv
-make sweep_loops_kij            -> results/loop_kij.csv
-make sweep_loops_kji            -> results/loop_kji.csv
-make sweep_loops_all            -> los seis anteriores + results/loop_order.csv (combinado)
-make plot_naive                 -> plots/naive_O0.png  (solo baseline)
-make plot_loop                  -> plots/loop_orders.png  (6 ordenes desde loop_order.csv)
-make plot_loop_vs_naive         -> plots/loop_vs_naive.png  (naive + 6 ordenes)
 ```
 
 Targets de Fase 1.3 (tiled_ikj_avx2):
 
 ```
-make bench_tiled_ikj_avx2           -> bin/bench_tiled_ikj_avx2_O3
+make bench_tiled_ikj_avx2_O3        -> bin/bench_tiled_ikj_avx2_O3
 make validate_tiled_ikj_avx2        -> bin/validate_tiled_ikj_avx2_O3
 ```
 
-Ambos se compilan con `CFLAGS_O3_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma`), que es obligatorio para que `_mm256_fmadd_ps` emita la instruccion FMA real. El `make results` incluye `bench_tiled_ikj_avx2_O3` como dependencia y `run_perf_zen2_sweep.sh` incluye `tiled_ikj_avx2` en su lista de variantes por defecto.
-
-Todos extienden el Makefile **al final**, sin modificar las recetas del baseline (`bench_naive_O0`, `bench_naive_pg`, `validate_naive`, `sweep_naive`, `profile_*_naive`, `clean`, `distclean`).
+Todos se compilan con `CFLAGS_O3_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma`), que es obligatorio para que `_mm256_fmadd_ps` emita la instruccion FMA real. El `make results` incluye los binarios `bench_*_O3` como dependencia y `run_perf_zen2_sweep.sh` incluye todas las variantes activas en su lista por defecto.
 
 ---
 
@@ -802,7 +717,7 @@ Las globals se mantienen separadas de las de `matmul_morton_avx2` para poder tun
 El chip Renoir tiene **2 CCX de 3 cores cada uno**, con L3 de $4$ MiB privada por CCX. Threads que cruzan CCX pierden la coherencia de L3 y pagan trafico por el Infinity Fabric. Esto define dos regimenes:
 
 - **`OMP_NUM_THREADS=3 OMP_PROC_BIND=close`**: la opcion mas limpia para validaciones single-CCX y para diagnostico de scaling intra-cluster. Speedup cercano a lineal hasta $3$ threads; mas alla mete trafico cross-CCX y no escala.
-- **`OMP_NUM_THREADS=6 OMP_PROC_BIND=close`**: usa los $6$ cores fisicos repartidos entre los dos CCXs respetando la afinidad de cada thread a su core. Es el **default recomendado** y el usado en el sweep de Prompt 6 (`scripts/run_omp_scaling.sh`). En `omp_scaling.csv` se observan picos cercanos a este modo a $m = 8192$.
+- **`OMP_NUM_THREADS=6 OMP_PROC_BIND=close`**: usa los $6$ cores fisicos repartidos entre los dos CCXs respetando la afinidad de cada thread a su core. Es el **default recomendado**: en mediciones empiricas presenta picos cercanos a este modo a $m = 8192$.
 - **`OMP_NUM_THREADS=6 OMP_PROC_BIND=spread`**: distribuye los threads para maximizar L3 compartido por thread, util cuando el working set por thread es grande. Comparable a `close` en GFLOPS sostenidos para $m \geq 4096$.
 
 El SMT a $12$ threads aporta poco en este kernel: AVX2 + FMA ya satura los recursos de retirement; los hilos SMT extra se traducen en `cycles` mayores con la misma `fp_ops_per_cycle`.
@@ -853,7 +768,7 @@ extern size_t g_tiled_ikj_avx2_bs;
 void matmul_tiled_ikj_avx2_set_bs(size_t bs);
 ```
 
-Cambia $k_c$ en runtime. Solo se rechaza `bs == 0` (cualquier valor positivo es valido; no se requiere multiplo de $8$ porque el microkernel itera $p$ uno a la vez). Util para el `sweep_threshold` y para el barrido manual del bs.
+Cambia $k_c$ en runtime. Solo se rechaza `bs == 0` (cualquier valor positivo es valido; no se requiere multiplo de $8$ porque el microkernel itera $p$ uno a la vez). Util para barrido manual del bs.
 
 ### 14.3 `matmul_tiled_ikj_avx2`
 

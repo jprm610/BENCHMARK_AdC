@@ -12,8 +12,8 @@
  * Output (one CSV line on stdout):
  *   kernel,m,n,num_iters,median_seconds,gflops
  *
- * The header line is NOT printed here; run_sweep_loops.sh prints it once
- * before invoking this binary multiple times.
+ * The header line is NOT printed here; the orchestrating script
+ * (scripts/run_perf_zen2_sweep.sh) is responsible for any header.
  *
  * One warm-up run precedes the measured runs to populate caches and
  * resolve first-touch page faults.
