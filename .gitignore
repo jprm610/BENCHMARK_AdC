@@ -21,33 +21,6 @@ results/*.txt
 plots/*.png
 plots/*.pdf
 
-# Exception: hardware fingerprint is committed as a snapshot of the test
-# machine used to derive the cache cliffs and the Roofline anchors.
-!results/hwinfo.csv
-
-# Exception: Prompt 2 threshold sweep is the empirical evidence behind
-# the g_recursion_threshold choice documented in PLAN_SESION_03.md.
-# Re-runs of the sweep auto-create results/threshold_sweep.csv.bak via
-# scripts/run_threshold_sweep.sh; the .bak stays gitignored.
-!results/threshold_sweep.csv
-
-# Exception: Prompt 7 perf Zen 2 sweep. The 24 raw per-cell perf
-# stat outputs (perf_<variant>_m<M>_{A,B}.txt) and the consolidated
-# summary CSV are committed as the empirical evidence behind Section 9
-# of PLAN_SESION_03.md. The summary plot is the figure referenced
-# in the report. The bench-side stderr files (.bench.err) stay
-# gitignored as transient debug noise.
-!results/perf_naive_m*_A.txt
-!results/perf_naive_m*_B.txt
-!results/perf_recursive_m*_A.txt
-!results/perf_recursive_m*_B.txt
-!results/perf_morton_m*_A.txt
-!results/perf_morton_m*_B.txt
-!results/perf_morton_avx512_m*_A.txt
-!results/perf_morton_avx512_m*_B.txt
-!results/perf_zen2_summary.csv
-!plots/perf_zen2_breakdown.png
-
 # --- Editor / OS ---
 .vscode/
 .idea/

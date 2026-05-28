@@ -247,11 +247,7 @@ kernel,m,n,num_iters,median_seconds,gflops
 
 Internamente ejecuta una corrida de warm-up (no medida) y luego `num_runs` corridas medidas, reportando la mediana de los tiempos. Cuando `num_runs == 1` la "mediana" es trivialmente esa unica muestra.
 
-### 5.2 `bin/bench_naive_pg`
-
-Igual que `bench_naive_O0` pero compilado adicionalmente con `-pg` para soportar `gprof`. Misma CLI. Produce `gmon.out` en el cwd al ejecutarse.
-
-### 5.3 `bin/validate_naive_O0`
+### 5.2 `bin/validate_naive_O0`
 
 Valida la implementacion sobre tres invariantes algebraicos: $A \cdot 0 = 0$, $I \cdot Z = Z$, $A \cdot (Z_1 + Z_2) = A \cdot Z_1 + A \cdot Z_2$. Imprime `VALIDATION OK` y retorna 0 si todas pasan; imprime detalles del fallo y retorna 1 en caso contrario.
 
@@ -263,70 +259,16 @@ Valida la implementacion sobre tres invariantes algebraicos: $A \cdot 0 = 0$, $I
 
 Por defecto $m = 256$.
 
-### 5.4 `scripts/run_sweep_naive.sh`
+### 5.3 Sweep unificado: `make results`
 
-Orquesta los tres primeros pasos del proyecto en una sola pasada. Para cada $m$ del listado:
+El flujo unico de medicion vive en `make results`, que orquesta `scripts/run_perf_zen5_sweep.sh` (un sweep de hardware counters por celda `(variant, m)`) y `scripts/consolidate_perf_zen5.py` (union de los grupos A+B de eventos perf en una sola fila por celda). Salida canonica: `results/metrics.csv`.
 
-1. Ejecuta `bin/bench_naive_O0 <m>` (5 corridas + mediana) y agrega la linea CSV a `results/naive_O0.csv`.
-2. Ejecuta `bin/bench_naive_pg <m> <PROFILE_ITERS> <PROFILE_RUNS>` bajo `gprof`, guardando `results/gprof_naive_m<m>.txt`.
-3. Ejecuta `bin/bench_naive_O0 <m> <PROFILE_ITERS> <PROFILE_RUNS>` bajo `perf stat`, guardando `results/perf_naive_m<m>.txt`.
-
-**Variables de entorno:**
+Knobs (variables de entorno o argumentos del target):
 
 | Variable | Default | Efecto |
 |----------|---------|--------|
-| `PROFILING` | `full` | `full`/`gprof`/`perf`/`0` para escoger que profilers correr. |
-| `PROFILE_ITERS` | `1` | Iteraciones del benchmark dentro de cada corrida profileada. |
-| `PROFILE_RUNS` | `1` | Corridas medidas bajo el profiler (usar 1 minimiza overhead). |
-
-**Argumento posicional:**
-
-```
-scripts/run_sweep_naive.sh [m_list]
-```
-
-Si se omite, usa el listado por defecto $\{256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192\}$.
-
-### 5.5 `scripts/profile_gprof_naive.sh` y `scripts/profile_perf_naive.sh`
-
-Scripts standalone equivalentes a un paso del sweep. CLI uniforme:
-
-```
-scripts/profile_gprof_naive.sh <m> [num_iters] [num_runs]
-scripts/profile_perf_naive.sh  <m> [num_iters] [num_runs]
-```
-
-Defaults: `m=2048, num_iters=1, num_runs=1`. Ambos respetan el contrato CLI extendido de `bench_naive_O0`/`bench_naive_pg`.
-
-### 5.6 `scripts/plot_results.py`
-
-Graficador general para cualquier combinacion de CSVs del proyecto. Acepta uno o mas archivos CSV como argumentos posicionales, agrupa las filas por la columna `kernel` y produce tres archivos con el prefijo `--out`:
-
-- `<out>.png` — GFLOP/s vs m, una curva por kernel, eje x logaritmico base 2
-- `<out>_time.png` — tiempo por iteracion vs m (log-log) + referencia teorica $O(m^2 n)$
-- `<out>_combined.csv` — union de todas las filas de entrada, deduplicadas por `(kernel, m)`
-
-```
-scripts/plot_results.py [csvs ...]
-                        [--out BASE_PATH]
-                        [--title STRING]
-                        [--l1-kb K] [--l2-kb K] [--l3-kb K]
-                        [--cpu-label STRING]
-```
-
-Sin argumentos posicionales lee `results/naive_O0.csv` (comportamiento compatible con versiones anteriores). Los defaults de cache estan calibrados para el Ryzen 5 4600H: `--l1-kb 32 --l2-kb 512 --l3-kb 4096`; ajusta los flags en otra CPU.
-
-Ejemplos:
-
-```bash
-# solo los seis ordenes de bucles
-python3 scripts/plot_results.py results/loop_order.csv \
-    --out plots/loop_orders --title "Loop-order kernels"
-
-# ordenes de bucles mas naive en la misma grafica
-python3 scripts/plot_results.py results/naive_O0.csv results/loop_order.csv \
-    --out plots/loop_vs_naive
-```
+| `MS` | `"1024 2048 4096"` | Lista de tamaños $m$ a barrer. |
+| `VARIANTS` | todas | Subconjunto de variantes a correr. |
 
 ---
 

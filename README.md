@@ -34,61 +34,42 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |-- README.md                          -> Este archivo
 |-- Makefile                           -> Targets de compilacion, profiling y graficas
 |-- docs/
-|   |-- API.md                         -> Contrato publico de las funciones
-|   |-- SESION_01_RESUMEN.md           -> Resumen para retomar Fase 1
-|   |-- PROMPTS_SESION_02.md           -> Guion de prompts de la Sesion 02
-|   |-- PLAN_SESION_03.md              -> Plan tecnico de la Sesion 03 + bitacora de hallazgos
-|   |-- PROMPTS_SESION_03.md           -> Guion completo de los 10 prompts de la Sesion 03
-|   `-- SESION_03_RESUMEN.md           -> Resumen para retomar Sesion 03
+|   |-- 0.0) makefile.md               -> Referencia de uso del Makefile (targets y flags)
+|   |-- 0.1) matrix_utils.md           -> Helpers compartidos (matrix_utils)
+|   |-- 1.1) matmul_naive.md           -> Algoritmo naive (baseline ijk)
+|   |-- 1.2) matmul_loops.md           -> Reordenamiento de bucles (6 variantes)
+|   |-- 1.3) matmul_tiled_ikj.md       -> Tiling explicito sobre ikj
+|   `-- API.md                         -> Contrato publico de las funciones
 |-- src/
 |   |-- core/                              -> Modulos compartidos por todos los algoritmos
 |   |   |-- matrix_utils.{h,c}             -> Helpers (alocacion, init, comparacion)
 |   |   |-- timing.h                       -> clock_gettime(CLOCK_MONOTONIC) inline
 |   |   `-- morton.{h,c}                   -> Encoding Z-order + reorganizacion (Etapa A3)
-|   |-- microkernels/                      -> Tiles AVX-512 header-only (static inline)
-|   |   |-- kernel_avx512_morton.h         -> Microkernel 4x32 AVX-512 (Morton family, Zen 5)
-|   |   `-- kernel_avx512_tiled.h          -> Microkernel 6x32 AVX-512 + residual (tiled_ikj family, Zen 5)
+|   |-- microkernels/                      -> Kernels AVX-512 header-only (static inline)
+|   |   |-- kernel_avx512_morton.h         -> Microkernel 4x32 AVX-512 (familia Morton, Zen 5)
+|   |   `-- kernel_avx512_tiled.h          -> Microkernel 6x32 AVX-512 + residual (familia tiled_ikj, Zen 5)
 |   |-- algorithms/                        -> Una carpeta por familia de algoritmo
-|   |   |-- naive/matmul_naive.{h,c}       -> Baseline ijk (Sesion 01)
+|   |   |-- naive/matmul_naive.{h,c}       -> Baseline ijk
 |   |   |-- loops/matmul_loops.{h,c}       -> 6 ordenes de loop con lookup por nombre (Fase 1.1)
-|   |   |-- morton/                        -> Fase 6 / Sesion 02-03: kernel recursivo + AVX-512 + OMP
+|   |   |-- morton/                        -> Fase 6: kernel recursivo + AVX-512 + OMP
 |   |   |   |-- matmul_morton.{h,c}            -> Kernel recursivo con A en Morton fino (A3)
-|   |   |   |-- matmul_morton_avx512.{h,c}       -> Morton-de-bloques + microkernel 4x32 (Zen 5)
+|   |   |   |-- matmul_morton_avx512.{h,c}     -> Morton-de-bloques + microkernel 4x32 (Zen 5)
 |   |   |   `-- matmul_morton_omp.{h,c}        -> Variante paralela OpenMP tasks (Zen 5)
 |   |   `-- tiled_ikj/                     -> Fase 1.2-1.6: tiling explicito + BLIS 6x32 + OpenMP
 |   |       |-- matmul_tiled_ikj.{h,c}         -> Tiling Mc x Kc sobre ikj, apunta a L2 (escalar)
-|   |       |-- matmul_tiled_ikj_avx512.{h,c}    -> 6x32 AVX-512 (MR=6, NR=32, MC=288), BS=256 default
+|   |       |-- matmul_tiled_ikj_avx512.{h,c}  -> 6x32 AVX-512 (MR=6, NR=32, MC=288), BS=256 default
 |   |       `-- matmul_tiled_ikj_omp.{h,c}     -> 6x32 AVX-512 + #pragma omp parallel for schedule(static) en ic
 |   |-- drivers/                           -> Programas main: medicion (bench) y verificacion (validate)
 |   |   |-- bench/                         -> bench_naive.c, bench_loops.c, bench_morton{,_avx512,_omp}.c, bench_tiled_ikj{,_avx512,_omp}.c
 |   |   `-- validate/                      -> validate_naive.c, validate_loops.c, validate_morton{,_avx512,_omp}.c, validate_tiled_ikj{,_avx512,_omp}.c
-|   |-- tests/                             -> Tests unitarios standalone
-|   |   |-- test_morton.c                  -> Round-trip encode/decode + contiguidad de cuadrantes
-|   |   `-- test_kernel_avx512_morton.c    -> Unit test del microkernel 4x32 AVX-512
-|   `-- tools/
-|       `-- hwinfo.c                       -> Fingerprint runtime del CPU (cores, cache, AVX2/FMA/AVX-512)
+|   `-- tests/                             -> Tests unitarios standalone
+|       |-- test_morton.c                  -> Round-trip encode/decode + contiguidad de cuadrantes
+|       `-- test_kernel_avx512_morton.c    -> Unit test del microkernel 4x32 AVX-512
 |-- scripts/
-|   |   # Fase 1 (Sesion 01)
-|   |-- run_sweep_naive.sh             -> Sweep baseline + gprof + perf
-|   |-- profile_gprof_naive.sh         -> gprof standalone
-|   |-- profile_perf_naive.sh          -> perf standalone
-|   |-- plot_results.py                -> Graficas del baseline
-|   |   # Fase 6 (Sesion 02)
-|   |-- run_sweep_morton.sh            -> Sweep -> results/morton_O0.csv (potencias de 2)
-|   |   # Sesion 03
-|   |-- audit_no_pdep.sh               -> Auditoria de PDEP/PEXT (Zen 2)
-|   |-- run_threshold_sweep.sh         -> Tuning empirico RECURSION_THRESHOLD
-|   |-- plot_threshold_sweep.py        -> Plot del threshold sweep
-|   |-- run_sweep_morton_avx512_xl.sh    -> Extension de morton_avx512 hasta m=32768
-|   |-- plot_morton_avx512_xl.py         -> Plot de la extension
-|   |-- run_omp_scaling.sh             -> Escalado threads 1..12 close/spread
-|   |-- plot_omp_scaling.py            -> Plot escalado OMP
 |   |-- profile_perf_zen5.sh           -> Captura perf por celda (variant, m)
-|   |-- run_perf_zen5_sweep.sh         -> Orquesta 39 celdas (13 variantes x 3 m)
+|   |-- run_perf_zen5_sweep.sh         -> Orquesta las celdas (variantes x tamaños)
 |   |-- consolidate_perf_zen5.py       -> Consolida grupos A+B -> results/metrics.csv
-|   |-- plot_perf_zen2.py              -> 4 paneles: IPC, FMA, L3 miss, TLB walks
-|   |-- measure_stream.sh              -> Descarga, compila y corre STREAM (Triad 1T y 6T)
-|   `-- plot_roofline.py               -> Roofline anclado a STREAM medido
+|   `-- plot_perf_zen2.py              -> 4 paneles: IPC, FMA, L3 miss, TLB walks
 |-- results/                            -> CSV y reportes de profiling (gitignored)
 |-- plots/                              -> Imagenes generadas (gitignored salvo perf_zen2 / roofline)
 `-- bin/                                -> Binarios compilados (gitignored)

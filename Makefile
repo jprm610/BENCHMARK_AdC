@@ -17,7 +17,6 @@
 #   src/drivers/bench/    bench_*.c  (one per algorithm)
 #   src/drivers/validate/ validate_*.c
 #   src/tests/            test_morton.c, test_kernel_avx512_morton.c
-#   src/tools/            hwinfo.c
 #
 # Key targets:
 #   make build         -> compile all bench + validate binaries
@@ -50,7 +49,6 @@ TILED_DIR    := $(ALG_DIR)/tiled_ikj
 BENCH_DIR    := $(SRC_DIR)/drivers/bench
 VALIDATE_DIR := $(SRC_DIR)/drivers/validate
 TESTS_DIR    := $(SRC_DIR)/tests
-TOOLS_DIR    := $(SRC_DIR)/tools
 
 BIN_DIR := bin
 OBJ_DIR := build
@@ -163,12 +161,11 @@ VALIDATE_TILED_IKJ_OMP_SRCS := $(COMMON_SRCS) $(TILED_DIR)/matmul_tiled_ikj_omp.
 BENCH_TILED_IKJ_OMP_ZEN5    := $(BIN_DIR)/bench_tiled_ikj_omp_ZEN5
 VALIDATE_TILED_IKJ_OMP_ZEN5 := $(BIN_DIR)/validate_tiled_ikj_omp_ZEN5
 
-# --- tests & tools ---
-TEST_MORTON_SRCS         := $(CORE_DIR)/morton.c $(CORE_DIR)/matrix_utils.c \
-                            $(TESTS_DIR)/test_morton.c
-TEST_MORTON              := $(BIN_DIR)/test_morton
+# --- tests ---
+TEST_MORTON_SRCS          := $(CORE_DIR)/morton.c $(CORE_DIR)/matrix_utils.c \
+                             $(TESTS_DIR)/test_morton.c
+TEST_MORTON               := $(BIN_DIR)/test_morton
 TEST_KERNEL_AVX512_MORTON := $(BIN_DIR)/test_kernel_avx512_morton
-HWINFO_BIN               := $(BIN_DIR)/hwinfo
 
 # Aggregate lists used by build / validate_all / results.
 ALL_BENCH := \
@@ -201,9 +198,9 @@ ALL_VALIDATE := \
         bench_tiled_ikj_ZEN5 validate_tiled_ikj \
         bench_tiled_ikj_avx512_ZEN5 validate_tiled_ikj_avx512 \
         bench_tiled_ikj_omp_ZEN5 validate_tiled_ikj_omp \
-        test_morton test_kernel_avx512_morton hwinfo audit \
+        test_morton test_kernel_avx512_morton \
         profile_zen5 profile_zen5_one profile_zen5_omp \
-        consolidate_zen5 stream roofline plot_perf_zen5 \
+        consolidate_zen5 plot_perf_zen5 \
         clean distclean
 
 # ── 6. MAIN TARGETS ───────────────────────────────────────────────────
@@ -365,12 +362,6 @@ consolidate_zen5:
 
 # ── 9. ANALYSIS & AUXILIARY ───────────────────────────────────────────
 
-stream:
-	bash scripts/measure_stream.sh
-
-roofline: stream
-	python3 scripts/plot_roofline.py
-
 plot_perf_zen5:
 	python3 scripts/plot_perf_zen5.py
 
@@ -393,11 +384,3 @@ $(TEST_KERNEL_AVX512_MORTON): $(TESTS_DIR)/test_kernel_avx512_morton.c \
 	      $(CORE_DIR)/matrix_utils.c \
 	      -o $@ $(LIBS)
 
-hwinfo: $(HWINFO_BIN)
-	./$(HWINFO_BIN)
-
-$(HWINFO_BIN): $(TOOLS_DIR)/hwinfo.c | $(BIN_DIR)
-	$(CC) $(CFLAGS_O3) -o $@ $< $(LIBS)
-
-audit:
-	bash scripts/audit_no_pdep.sh

@@ -15,8 +15,7 @@
  *
  * The optional --threshold flag overrides g_recursion_threshold via
  * matmul_morton_set_threshold(N) BEFORE the warm-up runs, so every
- * timed iteration uses the requested value. Used by
- * scripts/run_threshold_sweep.sh (Sesion 03 / Prompt 2).
+ * timed iteration uses the requested value.
  *
  * Output: m,n,num_iters,median_seconds,gflops
  */
