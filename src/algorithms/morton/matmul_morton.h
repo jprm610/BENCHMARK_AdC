@@ -47,11 +47,9 @@ void matmul_morton(scalar_t *C,
  * value (32 * 32 * 128 = 131072 element products), preserved so that
  * existing callers see the same behaviour as before this knob was added.
  *
- * The setter is the recommended interface for tooling such as
- * scripts/run_threshold_sweep.sh, which iterates over thresholds to
- * find the empirical optimum on the test machine (Sesion 03 / Prompt 2).
- * Reading the variable directly is allowed but not part of the
- * supported API contract.
+ * The setter is the recommended interface for tuning the threshold from
+ * outside the kernel. Reading the variable directly is allowed but not
+ * part of the supported API contract.
  */
 extern size_t g_recursion_threshold;
 void matmul_morton_set_threshold(size_t threshold);
