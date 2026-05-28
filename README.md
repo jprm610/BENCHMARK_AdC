@@ -62,7 +62,7 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |   |-- drivers/                           -> Programas main: medicion (bench) y verificacion (validate)
 |   |   |-- bench/                         -> bench_naive.c, bench_loops.c, bench_morton{,_avx2,_omp}.c, bench_tiled_ikj{,_avx2,_omp}.c
 |   |   `-- validate/                      -> validate_naive.c, validate_loops.c, validate_morton{,_avx2,_omp}.c, validate_tiled_ikj{,_avx2,_omp}.c
-|   `-- tests/                             -> Tests unitarios standalone (ver docs/1.8) tests.md)
+|   `-- tests/                             -> Tests unitarios standalone (ver docs/1.9) tests.md)
 |       |-- test_matrix_utils.c            -> xalloc_aligned, init_matrix_*, matrices_close
 |       |-- test_morton.c                  -> Round-trip encode/decode + contiguidad de cuadrantes
 |       |-- test_kernel_avx2_morton.c      -> Microkernel 4x16 (kernel_avx2_morton.h)
@@ -240,7 +240,7 @@ make bench_morton_O3          # bin/bench_morton_O3   (m debe ser potencia de 2)
 make validate_morton          # bin/validate_morton_O0 (idem)
 ```
 
-Unit tests (capa por debajo de validate, ver [`docs/1.8) tests.md`](docs/1.8\)%20tests.md)):
+Unit tests (capa por debajo de validate, ver [`docs/1.9) tests.md`](docs/1.9\)%20tests.md)):
 
 ```bash
 make tests                       # bin/tests/* — los 4 unit-tests, en orden

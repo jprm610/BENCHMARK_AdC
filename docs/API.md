@@ -520,7 +520,7 @@ make bench_morton_O3            -> bin/bench_morton_O3
 make validate_morton            -> bin/validate_morton_O0
 ```
 
-La capa de unit-tests vive en `src/tests/` (ver `docs/1.8) tests.md`). Los binarios resultantes quedan en `bin/tests/` separados de los `bench_*_O3` y `validate_*`. `make validate_all` depende de `make tests`.
+La capa de unit-tests vive en `src/tests/` (ver `docs/1.9) tests.md`). Los binarios resultantes quedan en `bin/tests/` separados de los `bench_*_O3` y `validate_*`. `make validate_all` depende de `make tests`.
 
 Targets de Fase 1.1 (loop-reorder):
 
