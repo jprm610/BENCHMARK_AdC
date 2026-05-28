@@ -1,20 +1,27 @@
 /*
- * test_kernel_avx2.c - Standalone correctness test for the 4x16 AVX2
- * microkernel declared in kernel_avx2_morton.h (header-only static inline).
+ * test_kernel_avx2_tiled.c - Unit test for the 6x16 AVX2 microkernel
+ * declared in kernel_avx2_tiled.h (header-only static inline). Mirrors
+ * test_kernel_avx2_morton.c, which covers the sibling 4x16 microkernel
+ * used by the Morton family.
  *
- * Four tests, all independent of Morton and recursion. They exercise
- * the kernel as a pure tile multiply with growing kc:
+ * The 6x16 tile is used by matmul_tiled_ikj_avx2 and matmul_tiled_ikj_omp.
+ * It holds 12 YMM accumulators (6 rows x 2 vectors of 8 floats each),
+ * leaving 4 of the 16 architectural YMM registers free for the two B
+ * vectors plus one rolling A broadcast. The kernel ACCUMULATES into C.
  *
- *   Test 1: kc=1, A=[1,1,1,1]^T, B=known row of 16 distinct values.
- *           Expected: every row of C equals B. Smoke test for the
- *           broadcast + FMA in the simplest possible setting.
+ * Four tests, growing kc, exercise the kernel as a pure tile multiply:
+ *
+ *   Test 1: kc=1, A=[1,1,1,1,1,1]^T, B=known row of 16 distinct values.
+ *           Expected: every one of the 6 rows of C equals B. Smoke test
+ *           for the broadcast + FMA in the simplest possible setting.
  *
  *   Test 2: kc=8, random A and B. Compare against a reference ijk
  *           in double precision. Relative tolerance 1e-4 to absorb
  *           the FP32 accumulation error.
  *
- *   Test 3: kc=128, idem. Representative of the leaf tile size that
- *           matmul_morton_avx2 will dispatch to the kernel.
+ *   Test 3: kc=128, idem. Representative of an inner kc block of
+ *           matmul_tiled_ikj_avx2 (default bs is 384, but 128 is a
+ *           realistic intermediate working point).
  *
  *   Test 4: kc=1024, idem. Stress test: 1024 FMA chains per output
  *           lane; confirms the error does not blow up beyond what
@@ -32,11 +39,11 @@
 #include <string.h>
 #include <time.h>
 
-#include "kernel_avx2_morton.h"
+#include "kernel_avx2_tiled.h"
 #include "matrix_utils.h"
 
-#define MR KERNEL_AVX2_MR  /* 4  */
-#define NR KERNEL_AVX2_NR  /* 16 */
+#define MR ((size_t)KERNEL_AVX2_TILED_MR)  /* 6  */
+#define NR ((size_t)KERNEL_AVX2_TILED_NR)  /* 16 */
 
 static int g_failed = 0;
 
@@ -44,7 +51,8 @@ static int g_failed = 0;
  * stores the result back as scalar_t. This is the ground truth the AVX2
  * kernel must match within FP32-accumulation tolerance.
  *
- * Computes C[MR x NR] = A[MR x kc] * B[kc x NR] (overwrite). */
+ * Semantics: ACCUMULATE into C (C += A*B), matching the kernel under
+ * test. Caller must zero C beforehand if a fresh result is wanted. */
 static void reference_matmul(scalar_t       *C, size_t ldc,
                              const scalar_t *A, size_t lda,
                              const scalar_t *B, size_t ldb,
@@ -52,7 +60,7 @@ static void reference_matmul(scalar_t       *C, size_t ldc,
 {
     for (size_t i = 0; i < MR; ++i) {
         for (size_t j = 0; j < NR; ++j) {
-            double sum = 0.0;
+            double sum = (double)C[i * ldc + j];
             for (size_t p = 0; p < kc; ++p) {
                 sum += (double)A[i * lda + p] * (double)B[p * ldb + j];
             }
@@ -63,7 +71,7 @@ static void reference_matmul(scalar_t       *C, size_t ldc,
 
 /* LCG used to fill A and B with reproducible random values in [-1, 1].
  * Independent from matrix_utils's init_matrix_random so the test does
- * not depend on the scaling 1/sqrt(rows) that the recurrence needs. */
+ * not depend on the 1/sqrt(rows) scaling that the recurrence needs. */
 static unsigned int lcg_state = 1u;
 
 static void lcg_seed(unsigned int seed) { lcg_state = seed ? seed : 1u; }
@@ -126,9 +134,10 @@ static void run_check(const char *name, int passed)
 }
 
 /* Test 1: kc=1. A is a column of ones, B is a single row with the
- * pattern B[j] = (float)(j + 1). The product C = A * B should be a
- * tile where every one of the 4 rows is identical to B. Smoke test
- * for the broadcast and the FMA path with a single iteration. */
+ * pattern B[j] = (float)(j + 1). With C zeroed beforehand, the product
+ * C += A * B should leave every one of the 6 rows of C equal to B.
+ * Smoke test for the broadcast and the FMA path with a single
+ * iteration. */
 static void test_kc_1(void)
 {
     printf("Test 1: kc=1, A=ones column, B=known row\n");
@@ -154,7 +163,7 @@ static void test_kc_1(void)
         }
     }
 
-    kernel_avx2_4x16(C, ldc, A, lda, B, ldb, kc);
+    kernel_avx2_tiled_6x16(C, ldc, A, lda, B, ldb, kc);
 
     run_check("kc=1 ones x known row", compare_tiles(E, C, ldc, ldc,
                                                      1e-6f, 1e-6f));
@@ -185,7 +194,7 @@ static void test_random_with_kc(const char *name, size_t kc)
     init_matrix_zero(E, MR, ldc);
 
     reference_matmul(E, ldc, A, lda, B, ldb, kc);
-    kernel_avx2_4x16(C, ldc, A, lda, B, ldb, kc);
+    kernel_avx2_tiled_6x16(C, ldc, A, lda, B, ldb, kc);
 
     /* Tolerance scales mildly with kc because the FP32 accumulation
      * error grows like sqrt(kc) * epsilon. At kc=1024 we have about
@@ -201,8 +210,9 @@ static void test_random_with_kc(const char *name, size_t kc)
 
 int main(void)
 {
-    printf("=== kernel_avx2_4x16 unit tests ===\n");
-    printf("MR = %d, NR = %d\n", MR, NR);
+    printf("=== kernel_avx2_tiled_6x16 unit tests ===\n");
+    printf("MR = %llu, NR = %llu\n",
+           (unsigned long long)MR, (unsigned long long)NR);
 
     lcg_seed(0xC0FFEEu);
 

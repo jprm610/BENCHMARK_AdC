@@ -501,7 +501,7 @@ Misma logica que la anterior pero recibiendo $A$ **ya en Morton**. Usada por `be
 |---------|----------------|-----|--------|
 | `bin/bench_morton_O0`       | `bench_morton.c`       | `<m> [num_iters] [num_runs]`           | linea CSV `morton,m,n,num_iters,median_seconds,gflops`; aborta si $m$ no es potencia de 2 |
 | `bin/validate_morton_O0`    | `validate_morton.c`    | `[m]` (default 256, potencia de 2)     | 7 tests: 3 invariantes + 4 cross-validation contra `matmul_naive` (en $m \in \{4, 16, 64, 256\}$) |
-| `bin/test_morton`           | `test_morton.c`        | sin args                               | 4 grupos: tabla 4x4, round-trip encode/decode (4096 pares), contiguidad de cuadrantes para $m=8$, round-trip de reorganizacion para $m \in \{16, 64, 256\}$ |
+| `bin/tests/test_morton`     | `test_morton.c`        | sin args                               | 4 grupos: tabla 4x4, round-trip encode/decode (4096 pares), contiguidad de cuadrantes para $m=8$, round-trip de reorganizacion para $m \in \{16, 64, 256\}$ |
 
 Los binarios de bench reusan el patron del baseline: 1 warm-up + `num_runs` corridas medidas con mediana, `num_iters` default = $\min(2m/n, 4)$, semillas 42 ($A$) y 43 ($Z$). En `bench_morton_O0` la reorganizacion a Morton se ejecuta una sola vez **antes** del warm-up para que el tiempo cronometrado sea solo el del kernel.
 
@@ -514,10 +514,13 @@ Si `perf_event_paranoid` esta demasiado restrictivo, el script aborta con mensaj
 ### 10.3 Targets de Makefile
 
 ```
-make test_morton                -> bin/test_morton
+make tests                      -> bin/tests/* (los 4 unit-tests)
+make test_morton                -> bin/tests/test_morton
 make bench_morton_O3            -> bin/bench_morton_O3
 make validate_morton            -> bin/validate_morton_O0
 ```
+
+La capa de unit-tests vive en `src/tests/` (ver `docs/1.8) tests.md`). Los binarios resultantes quedan en `bin/tests/` separados de los `bench_*_O3` y `validate_*`. `make validate_all` depende de `make tests`.
 
 Targets de Fase 1.1 (loop-reorder):
 
@@ -572,7 +575,7 @@ void kernel_avx2_4x16(scalar_t       *restrict C, size_t ldc,
 
 - $C[r, c] \mathrel{+}= \sum_{p=0}^{kc-1} A[r, p] \cdot B[p, c]$ para todo $(r, c)$ con $r \in [0, 4)$ y $c \in [0, 16)$. $A$ y $B$ no se modifican.
 
-**Compilacion.** No hay `.o` separado: el header se incluye en cada `.c` que lo necesita (`matmul_morton_avx2.c`, `matmul_morton_omp.c`, `tests/test_kernel_avx2.c`) y se inline bajo `-O3`. Las TU que lo incluyen son compiladas con los flags Zen 2 estandar del proyecto:
+**Compilacion.** No hay `.o` separado: el header se incluye en cada `.c` que lo necesita (`matmul_morton_avx2.c`, `matmul_morton_omp.c`, `tests/test_kernel_avx2_morton.c`) y se inline bajo `-O3`. Las TU que lo incluyen son compiladas con los flags Zen 2 estandar del proyecto:
 
 ```
 -O3 -march=znver2 -mavx2 -mfma -D_POSIX_C_SOURCE=200809L

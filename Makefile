@@ -11,11 +11,13 @@
 #     tiled_ikj/          matmul_tiled_ikj{,_avx2,_omp}.{c,h}
 #   src/drivers/bench/    bench_*.c  (one per algorithm)
 #   src/drivers/validate/ validate_*.c
-#   src/tests/            test_morton.c, test_kernel_avx2.c
+#   src/tests/            test_matrix_utils.c, test_morton.c,
+#                         test_kernel_avx2_morton.c, test_kernel_avx2_tiled.c
 #
 # Key targets:
-#   make build         -> compile all bench + validate binaries
-#   make validate_all  -> build + run all validate_* (correctness gate)
+#   make build         -> compile all bench + validate + test binaries
+#   make tests         -> build + run all unit tests (fast, run first)
+#   make validate_all  -> tests + run all validate_* (correctness gate)
 #   make results       -> build + perf sweep -> results/metrics.csv
 #   make clean         -> remove binaries and object files
 #   make distclean     -> clean + remove results/*.csv and plots/*
@@ -45,8 +47,9 @@ BENCH_DIR    := $(SRC_DIR)/drivers/bench
 VALIDATE_DIR := $(SRC_DIR)/drivers/validate
 TESTS_DIR    := $(SRC_DIR)/tests
 
-BIN_DIR := bin
-OBJ_DIR := build
+BIN_DIR       := bin
+BIN_TESTS_DIR := $(BIN_DIR)/tests
+OBJ_DIR       := build
 
 INCS := -I$(CORE_DIR) -I$(MK_DIR) \
         -I$(NAIVE_DIR) -I$(LOOPS_DIR) -I$(MORTON_DIR) -I$(TILED_DIR)
@@ -142,10 +145,18 @@ BENCH_TILED_IKJ_OMP_O3    := $(BIN_DIR)/bench_tiled_ikj_omp_O3
 VALIDATE_TILED_IKJ_OMP_O3 := $(BIN_DIR)/validate_tiled_ikj_omp_O3
 
 # --- tests ---
+# Unit tests for the building blocks (core/, microkernels/). Output goes
+# to bin/tests/ so it does not mix with the bench_*/validate_* binaries.
+TEST_MATRIX_UTILS_SRCS := $(CORE_DIR)/matrix_utils.c \
+                          $(TESTS_DIR)/test_matrix_utils.c
+TEST_MATRIX_UTILS      := $(BIN_TESTS_DIR)/test_matrix_utils
+
 TEST_MORTON_SRCS := $(CORE_DIR)/morton.c $(CORE_DIR)/matrix_utils.c \
                     $(TESTS_DIR)/test_morton.c
-TEST_MORTON      := $(BIN_DIR)/test_morton
-TEST_KERNEL_AVX2 := $(BIN_DIR)/test_kernel_avx2
+TEST_MORTON      := $(BIN_TESTS_DIR)/test_morton
+
+TEST_KERNEL_AVX2_MORTON := $(BIN_TESTS_DIR)/test_kernel_avx2_morton
+TEST_KERNEL_AVX2_TILED  := $(BIN_TESTS_DIR)/test_kernel_avx2_tiled
 
 # Aggregate lists used by build / validate_all / results.
 ALL_BENCH := \
@@ -168,8 +179,14 @@ ALL_VALIDATE := \
     $(VALIDATE_TILED_IKJ_AVX2_O3) \
     $(VALIDATE_TILED_IKJ_OMP_O3)
 
+ALL_TESTS := \
+    $(TEST_MATRIX_UTILS) \
+    $(TEST_MORTON) \
+    $(TEST_KERNEL_AVX2_MORTON) \
+    $(TEST_KERNEL_AVX2_TILED)
+
 # ── 5. .PHONY ─────────────────────────────────────────────────────────
-.PHONY: all build validate_all results \
+.PHONY: all build tests validate_all results \
         bench_naive_O3 validate_naive \
         bench_loops_O3 validate_loops \
         bench_morton_O3 validate_morton \
@@ -178,20 +195,38 @@ ALL_VALIDATE := \
         bench_tiled_ikj_O3 validate_tiled_ikj \
         bench_tiled_ikj_avx2_O3 validate_tiled_ikj_avx2 \
         bench_tiled_ikj_omp_O3 validate_tiled_ikj_omp \
-        test_morton test_kernel_avx2 \
+        test_matrix_utils test_morton \
+        test_kernel_avx2_morton test_kernel_avx2_tiled \
         profile_zen2 profile_zen2_one profile_zen2_omp \
         consolidate_zen2 plot_perf_zen2 \
         clean distclean
 
 # ── 6. MAIN TARGETS ───────────────────────────────────────────────────
 
-# Compile all bench + validate binaries without running anything.
-build: $(ALL_BENCH) $(ALL_VALIDATE)
+# Compile all bench + validate + test binaries without running anything.
+build: $(ALL_BENCH) $(ALL_VALIDATE) $(ALL_TESTS)
 
 all: build
 
+# Build and run all unit tests in sequence; stops on first failure.
+# The unit tests guard the building blocks (matrix_utils, morton, the
+# two AVX2 microkernels) in isolation. They are cheap, so they run
+# before validate_all as a fast pre-flight check.
+tests: $(ALL_TESTS)
+	@echo "=== test_matrix_utils ==="
+	./$(TEST_MATRIX_UTILS)
+	@echo "=== test_morton ==="
+	./$(TEST_MORTON)
+	@echo "=== test_kernel_avx2_morton ==="
+	./$(TEST_KERNEL_AVX2_MORTON)
+	@echo "=== test_kernel_avx2_tiled ==="
+	./$(TEST_KERNEL_AVX2_TILED)
+	@echo "All unit tests passed."
+
 # Build and run all validate_* in sequence; stops on first failure.
-validate_all: $(ALL_VALIDATE)
+# Depends on tests: if the building blocks are broken there is no point
+# in running the algebraic invariants.
+validate_all: tests $(ALL_VALIDATE)
 	@echo "=== validate_naive ==="
 	./$(VALIDATE_NAIVE_O0)
 	@echo "=== validate_loops ==="
@@ -229,6 +264,9 @@ distclean: clean
 # ── 7. BUILD RULES ────────────────────────────────────────────────────
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
+
+$(BIN_TESTS_DIR): | $(BIN_DIR)
+	mkdir -p $(BIN_TESTS_DIR)
 
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)
@@ -345,21 +383,42 @@ consolidate_zen2:
 plot_perf_zen2:
 	python3 scripts/plot_perf_zen2.py
 
-# Unit tests (build + run).
+# Unit tests (build + run). Each target builds + runs a single test;
+# the aggregate target `tests` (Section 6) runs all of them in order.
+# Test binaries live in bin/tests/ to keep them separate from bench/
+# validate output.
+test_matrix_utils: $(TEST_MATRIX_UTILS)
+	./$(TEST_MATRIX_UTILS)
+
+$(TEST_MATRIX_UTILS): $(TEST_MATRIX_UTILS_SRCS) | $(BIN_TESTS_DIR)
+	$(CC) $(BASE_CFLAGS) $(TEST_MATRIX_UTILS_SRCS) -o $@ $(LIBS)
+
 test_morton: $(TEST_MORTON)
 	./$(TEST_MORTON)
 
-$(TEST_MORTON): $(TEST_MORTON_SRCS) | $(BIN_DIR)
+$(TEST_MORTON): $(TEST_MORTON_SRCS) | $(BIN_TESTS_DIR)
 	$(CC) $(BASE_CFLAGS) $(TEST_MORTON_SRCS) -o $@ $(LIBS)
 
-test_kernel_avx2: $(TEST_KERNEL_AVX2)
-	./$(TEST_KERNEL_AVX2)
+test_kernel_avx2_morton: $(TEST_KERNEL_AVX2_MORTON)
+	./$(TEST_KERNEL_AVX2_MORTON)
 
-$(TEST_KERNEL_AVX2): $(TESTS_DIR)/test_kernel_avx2.c \
-                     $(KERNEL_MORTON_H) \
-                     $(CORE_DIR)/matrix_utils.c $(CORE_DIR)/matrix_utils.h \
-                     $(NAIVE_DIR)/matmul_naive.h | $(BIN_DIR)
+$(TEST_KERNEL_AVX2_MORTON): $(TESTS_DIR)/test_kernel_avx2_morton.c \
+                            $(KERNEL_MORTON_H) \
+                            $(CORE_DIR)/matrix_utils.c \
+                            $(CORE_DIR)/matrix_utils.h | $(BIN_TESTS_DIR)
 	$(CC) $(CFLAGS_O3_ZEN2) \
-	      $(TESTS_DIR)/test_kernel_avx2.c \
+	      $(TESTS_DIR)/test_kernel_avx2_morton.c \
+	      $(CORE_DIR)/matrix_utils.c \
+	      -o $@ $(LIBS)
+
+test_kernel_avx2_tiled: $(TEST_KERNEL_AVX2_TILED)
+	./$(TEST_KERNEL_AVX2_TILED)
+
+$(TEST_KERNEL_AVX2_TILED): $(TESTS_DIR)/test_kernel_avx2_tiled.c \
+                           $(KERNEL_TILED_H) \
+                           $(CORE_DIR)/matrix_utils.c \
+                           $(CORE_DIR)/matrix_utils.h | $(BIN_TESTS_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) \
+	      $(TESTS_DIR)/test_kernel_avx2_tiled.c \
 	      $(CORE_DIR)/matrix_utils.c \
 	      -o $@ $(LIBS)
