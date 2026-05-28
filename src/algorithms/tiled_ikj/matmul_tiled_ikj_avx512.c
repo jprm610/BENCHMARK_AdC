@@ -49,6 +49,8 @@ void matmul_tiled_ikj_avx512(scalar_t *C,
     init_matrix_zero(C, m, n);
 
     // Necesario para manejar casos donde m o n no son múltiplos de MR o NR.
+    // para que puedan ser procesados por los bloques 6x32 del microkernel.
+    // Lo que no se computa en residual rows.
     const size_t m_aligned = (m / MR) * MR;
     const size_t n_aligned = (n / NR) * NR;
 
@@ -77,6 +79,8 @@ void matmul_tiled_ikj_avx512(scalar_t *C,
                 }
             }
 
+            // Si NR no divide n, hay columnas residuales.
+            // En este caso como n=128 y NR=32, nunca hay columnas residuales.
             if (n_aligned < n) {
                 kernel_avx512_tiled_residual_rows(
                     &C[ic * n + n_aligned], n,
@@ -86,6 +90,7 @@ void matmul_tiled_ikj_avx512(scalar_t *C,
             }
         }
 
+        // Si MR no divide m, hay filas residuales.
         if (m_aligned < m) {
             kernel_avx512_tiled_residual_rows(
                 &C[m_aligned * n], n,
@@ -114,24 +119,40 @@ void benchmark_iterations_tiled_ikj_avx512(scalar_t *B_out,
                                      size_t m, size_t n,
                                      size_t num_iters)
 {
+    /*
+    - Punteros hacia B_curr y B_next.
+    - Más adelante se hará un swap de punteros para evitar copiar B_curr a B_next.
+    */
     scalar_t *B_curr = xalloc_aligned(m * n);
     scalar_t *B_next = xalloc_aligned(m * n);
 
+    /*
+    - Inicializar B_curr con Z, que corresponde a B_0 en la recurrencia. (Una copia)
+    - Funciona porque Z es contigua.
+    */
     memcpy(B_curr, Z, m * n * sizeof(scalar_t));
 
+    // For i = 0, 1, ..., num_iters (I = 2m/n)
     for (size_t iter = 0; iter < num_iters; ++iter) {
+        // Calcular B_{i+1} = A * B_{i} usando matmul_tiled_ikj_avx512.
         matmul_tiled_ikj_avx512(B_next, A, B_curr, m, m, n);
 
+        /*
+        - Guardar las primeras n filas de B_{i+1} en B_out_{i}.
+        - Cada B_out_{i} es contiguo. (Ver cómo se define el buffer completo en bench_tiled_ikj_avx512.c)
+        */
         scalar_t *out_block = B_out + iter * n * n;
         for (size_t i = 0; i < n; ++i)
             for (size_t j = 0; j < n; ++j)
                 out_block[i * n + j] = B_next[i * n + j];
 
+        // Swap B_next y B_curr (Sin copiar).
         scalar_t *tmp = B_curr;
         B_curr        = B_next;
         B_next        = tmp;
     }
 
+    // Liberar memoria al final del benchmark.
     xfree(B_curr);
     xfree(B_next);
 }
