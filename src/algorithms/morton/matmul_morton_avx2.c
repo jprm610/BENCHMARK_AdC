@@ -1,30 +1,18 @@
-/*
- * matmul_morton_avx2.c - Morton-recursive matmul wired to the AVX2
- * microkernel kernel_avx2_4x16.
- *
- * Differences with respect to matmul_morton (Sesion 02):
- *   - A is stored in Morton-of-BLOCKS layout with tile=MORTON_AVX2_TILE=4
- *     instead of Morton-of-elements. See matmul_morton_avx2.h for the
- *     formal definition.
- *   - The leaf kernel materializes a row-major A_local panel from the
- *     Morton-of-blocks layout, then iterates kernel_avx2_4x16 over
- *     the 4x16 tiles of (A_local, B, C).
- *   - The recursion itself is unchanged: the {0,1,2,3}*(half*half)
- *     quadrant offsets still work because they encode positions in
- *     the Z-order of blocks, not of elements.
- *   - The threshold is separate (g_recursion_threshold_avx2) so the
- *     Sesion 02 default for g_recursion_threshold can stay at 131072
- *     and not affect this module.
- *
- * The scratch A_local buffer is allocated once in the public wrapper
- * and threaded through the recursion to avoid malloc/free per leaf.
- */
+// matmul_morton_avx2.c - Recursion Morton + microkernel AVX2 4x16.
+// Misma estructura recursiva que matmul_morton.c, pero:
+// - A vive en Morton-de-BLOQUES (tile MORTON_AVX2_TILE = 4) en vez de
+//   Morton-de-elementos.
+// - El leaf materializa un panel A_local row-major desde el layout
+//   Morton-de-bloques y dispatch el microkernel kernel_avx2_4x16
+//   sobre cada tile 4x16 de (A_local, B, C).
+// - El threshold es separado (g_recursion_threshold_avx2) para no
+//   afectar al modulo de la Fase 1.6.
 
 #include "matmul_morton_avx2.h"
 
-#include "morton.h"           /* morton_encode, is_power_of_two */
-#include "kernel_avx2_morton.h"  /* kernel_avx2_4x16, KERNEL_AVX2_MR/NR */
-#include "matrix_utils.h"     /* xalloc_aligned, xfree */
+#include "morton.h"             /* morton_encode, is_power_of_two */
+#include "kernel_avx2_morton.h" /* kernel_avx2_4x16, KERNEL_AVX2_MR/NR */
+#include "matrix_utils.h"       /* xalloc_aligned, xfree */
 
 #include <assert.h>
 #include <stdint.h>
@@ -39,8 +27,8 @@ size_t g_recursion_threshold_avx2 = (size_t)64 * 64 * 128;  /* 524288 */
 
 void matmul_morton_avx2_set_threshold(size_t threshold)
 {
-    /* Same guard as matmul_morton's setter: zero would collapse the
-     * whole problem to the leaf and is almost certainly a bug. */
+    /* Mismo guard que matmul_morton: threshold 0 colapsaria todo al
+     * leaf con las dimensiones globales. */
     if (threshold == 0) {
         fprintf(stderr,
                 "Warning: matmul_morton_avx2_set_threshold(0) ignored; "
@@ -51,23 +39,21 @@ void matmul_morton_avx2_set_threshold(size_t threshold)
     g_recursion_threshold_avx2 = threshold;
 }
 
-/* ------------------------------------------------------------------ */
-/* Layout reorganization                                               */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* Reorganizacion del layout                                          */
+/* ================================================================== */
 
-/*
- * reorganize_to_morton_blocks: pack a row-major m x m matrix into the
- * Morton-of-blocks layout with tile = MORTON_AVX2_TILE. The number of
- * blocks per side, m / MORTON_AVX2_TILE, must be a power of two so
- * that morton_encode applied to block coordinates yields a contiguous
- * permutation of [0, (m/MR)^2). m itself need not be a power of two
- * by itself, but in this project we always have m a power of two and
- * m >= MR, which trivially satisfies both conditions.
- */
 void reorganize_to_morton_blocks(const scalar_t *A_row,
                                  scalar_t *A_morton,
                                  size_t m)
 {
+    /*
+    Para que morton_encode aplicado a coordenadas-de-bloque produzca
+    una permutacion contigua de [0, (m/MR)^2), m/MR debe ser potencia
+    de 2. m mismo no tiene que serlo en general, pero el proyecto
+    siempre usa m potencia de 2 con m >= MR => ambas condiciones se
+    cumplen trivialmente.
+    */
     if (m == 0 || (m % MORTON_AVX2_TILE) != 0) {
         fprintf(stderr,
                 "Error in reorganize_to_morton_blocks: m (%llu) must be "
@@ -84,9 +70,9 @@ void reorganize_to_morton_blocks(const scalar_t *A_row,
         exit(EXIT_FAILURE);
     }
 
-    /* Walk in block coordinates so the inner two loops fill a single
-     * tile of A_morton at once; the cache behavior of the writes is
-     * sequential per tile. */
+    /* Recorrer en coordenadas de bloque para que las dos iteraciones
+     * internas llenen un tile completo de A_morton de una sola vez =>
+     * escrituras secuenciales por tile. */
     for (size_t bi = 0; bi < n_blocks_per_side; ++bi) {
         for (size_t bj = 0; bj < n_blocks_per_side; ++bj) {
             uint64_t bcode = morton_encode((uint32_t)bi, (uint32_t)bj);
@@ -106,22 +92,27 @@ void reorganize_to_morton_blocks(const scalar_t *A_row,
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Leaf kernels                                                        */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* Kernels leaf                                                        */
+/* ================================================================== */
 
-/* Materialize the m_block x k_block panel of A from the
- * Morton-of-blocks layout into a row-major scratch buffer. Both
- * m_block and k_block must be multiples of MR; the leaf checks
- * before calling. Each output row is contiguous and ready for
- * kernel_avx2_4x16 to consume with leading dimension k_block. */
+/*
+materialize_a_panel: Copia el panel m_block x k_block de A desde el
+layout Morton-de-bloques a un buffer row-major A_local con row stride
+k_block. El microkernel asume A row-major, asi que esta materializacion
+es la traduccion del layout.
+
+m_block y k_block deben ser multiplos de MORTON_AVX2_TILE (el leaf lo
+verifica antes de llamar). Cada fila destino queda contigua y el
+microkernel la consume con leading dimension k_block.
+*/
 static void materialize_a_panel(const scalar_t *A_morton,
                                 size_t a_morton_offset,
                                 size_t a_block_dim,
                                 scalar_t *A_local,
                                 size_t m_block, size_t k_block)
 {
-    (void)a_block_dim;  /* invariant: m_block == k_block == a_block_dim */
+    (void)a_block_dim;  /* invariante: m_block == k_block == a_block_dim */
 
     const size_t blocks_m = m_block / MORTON_AVX2_TILE;
     const size_t blocks_k = k_block / MORTON_AVX2_TILE;
@@ -139,8 +130,9 @@ static void materialize_a_panel(const scalar_t *A_morton,
                                               + ii * MORTON_AVX2_TILE];
                 scalar_t *dst = &A_local[row_local * k_block
                                        + bj * MORTON_AVX2_TILE];
-                /* Copy MORTON_AVX2_TILE = 4 floats; small enough for
-                 * the compiler to emit straight-line moves. */
+                /* Copiar MORTON_AVX2_TILE = 4 floats; suficientemente
+                 * pequeno para que el compilador emita straight-line
+                 * moves sin loop. */
                 for (size_t jj = 0; jj < MORTON_AVX2_TILE; ++jj) {
                     dst[jj] = src[jj];
                 }
@@ -149,12 +141,15 @@ static void materialize_a_panel(const scalar_t *A_morton,
     }
 }
 
-/* Fallback ijk kernel for leaves whose dimensions do not align to
- * the microkernel geometry (m_block not a multiple of MR or n_block
- * not a multiple of NR). Should not be invoked in the regular sweep
- * (m and n are powers of two with m >= 4, n >= 16) but we keep it
- * for safety. Indexing through A_local lets us reuse the
- * materialization for the slow path too. */
+/*
+kernel_base_morton_avx2_ijk_fallback: Camino lento para hojas con
+dimensiones que no alinean al tile del microkernel. En el sweep
+regular m es pot. de 2 con m >= 4 y n = 128 => nunca se invoca; queda
+por seguridad.
+
+Indexa A por A_local (row-major gracias a materialize_a_panel), no por
+A_morton, para no duplicar la logica de acceso Morton.
+*/
 static void kernel_base_morton_avx2_ijk_fallback(
     scalar_t *C, size_t ldc,
     const scalar_t *A_local, size_t lda,
@@ -174,9 +169,11 @@ static void kernel_base_morton_avx2_ijk_fallback(
     }
 }
 
-/* Overwrite-variant leaf: materializes A_local, zeros the C tile,
- * then runs the microkernel which accumulates into the (zeroed)
- * tile. The combination is equivalent to "C = A * B" on the leaf. */
+/*
+kernel_base_morton_avx2: Variante overwrite del leaf. Materializa
+A_local, zerea el tile de C, y luego deja al microkernel acumular sobre
+el (cero + acumulado = A * B exactamente).
+*/
 static void kernel_base_morton_avx2(
     scalar_t *C, const scalar_t *A_morton, const scalar_t *B,
     size_t m_block, size_t k_block, size_t n_block,
@@ -188,7 +185,7 @@ static void kernel_base_morton_avx2(
                         A_local_scratch, m_block, k_block);
 
     if ((m_block % MR) != 0 || (n_block % NR) != 0) {
-        /* Fallback: clear C first then accumulate via the slow path. */
+        /* Fallback: zerear C y acumular via camino lento. */
         for (size_t i = 0; i < m_block; ++i) {
             scalar_t *crow = &C[i * ldc];
             for (size_t j = 0; j < n_block; ++j) crow[j] = (scalar_t)0;
@@ -201,17 +198,17 @@ static void kernel_base_morton_avx2(
         return;
     }
 
-    /* Zero the C tile so that the microkernel (which accumulates
-     * starting from whatever is in C) ends with C = A * B exactly. */
+    /* Zero del tile de C antes del microkernel: el microkernel acumula
+     * sobre C, asi que para que la rama overwrite produzca exactamente
+     * A * B hay que partir desde C = 0. */
     for (size_t i = 0; i < m_block; ++i) {
         scalar_t *crow = &C[i * ldc];
         for (size_t j = 0; j < n_block; ++j) crow[j] = (scalar_t)0;
     }
 
-    /* Dispatch the microkernel over every 4x16 tile of the leaf. The
-     * microkernel's lda is k_block (the row stride of A_local), and
-     * its ldb / ldc are the caller-supplied strides (which point
-     * into the global B and C). */
+    /* Dispatch del microkernel sobre cada tile 4x16. La lda del
+     * microkernel es k_block (row stride de A_local); ldb / ldc son
+     * las del caller (apuntan al B y C globales). */
     for (size_t ii = 0; ii < m_block; ii += MR) {
         for (size_t jj = 0; jj < n_block; jj += NR) {
             kernel_avx2_4x16(&C[ii * ldc + jj], ldc,
@@ -222,9 +219,11 @@ static void kernel_base_morton_avx2(
     }
 }
 
-/* Accumulate-variant leaf: like the overwrite version but skips the
- * zeroing of C, so the microkernel accumulates on top of the previous
- * value. Used when the recursion split on k. */
+/*
+kernel_base_morton_avx2_add: Variante accumulate. Igual que la anterior
+pero SIN zerear C, asi el microkernel acumula sobre el valor previo de
+C (usado cuando la recursion split en k).
+*/
 static void kernel_base_morton_avx2_add(
     scalar_t *C, const scalar_t *A_morton, const scalar_t *B,
     size_t m_block, size_t k_block, size_t n_block,
@@ -254,14 +253,14 @@ static void kernel_base_morton_avx2_add(
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Recursion                                                           */
-/*                                                                     */
-/* Identical in shape to matmul_morton_inner / _inner_add: split n     */
-/* when it is the largest dimension; otherwise split m and k together  */
-/* into Morton quadrants of A. The scratch buffer for A_local is       */
-/* threaded through every call so the leaves do not malloc.            */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* Recursion                                                          */
+/*                                                                    */
+/* Misma forma que matmul_morton_inner / _inner_add: split de n        */
+/* cuando es la dimension mas grande; si no, split de m y k juntos en  */
+/* los 4 cuadrantes Morton de A. El scratch A_local se hilvana a       */
+/* traves de toda la recursion => las hojas no hacen malloc.           */
+/* ================================================================== */
 
 static void matmul_morton_avx2_inner(scalar_t *C,
                                      const scalar_t *A_morton,
@@ -302,7 +301,7 @@ static void matmul_morton_avx2_inner(scalar_t *C,
         return;
     }
 
-    /* Case N: split n. A is shared between the two recursive calls. */
+    /* Caso N: dividir n. A es compartida entre las dos llamadas. */
     if (n_block > a_block_dim && n_block >= 2) {
         size_t n_half = n_block / 2;
         matmul_morton_avx2_inner(C,          A_morton, B,
@@ -316,12 +315,12 @@ static void matmul_morton_avx2_inner(scalar_t *C,
         return;
     }
 
-    /* Case MK: split m and k together into the four Morton quadrants
-     * of A. With the Morton-of-blocks layout the quadrants still
-     * occupy four consecutive (half*half)-sized segments of A_morton:
-     * the Z-order key is computed on block coordinates, but the size
-     * of each block is constant (MORTON_AVX2_TILE^2 floats), so the
-     * offsets scale exactly like the Morton-of-elements case. */
+    /* Caso MK: dividir m y k juntos en los 4 cuadrantes Morton de A.
+     * Con el layout Morton-de-bloques los cuadrantes siguen ocupando 4
+     * segmentos consecutivos de (half*half) floats: el Z-order se
+     * calcula sobre coordenadas de bloque, pero el tamano de cada
+     * bloque es constante (MORTON_AVX2_TILE^2), asi que los offsets
+     * escalan igual que en el caso Morton-de-elementos. */
     if (a_block_dim >= 2) {
         assert(m_block == k_block);
         assert(m_block == a_block_dim);
@@ -355,7 +354,7 @@ static void matmul_morton_avx2_inner(scalar_t *C,
         return;
     }
 
-    /* Degenerate fallback. */
+    /* Fallback degenerado. */
     kernel_base_morton_avx2(C, A_morton, B,
                             m_block, k_block, n_block,
                             a_morton_offset, a_block_dim,
@@ -401,9 +400,9 @@ static void matmul_morton_avx2_inner_add(scalar_t *C,
         size_t half          = a_block_dim / 2;
         size_t quadrant_size = half * half;
 
-        /* All four products accumulate: we are already inside the
-         * _add branch, so C carries a previous value that every
-         * product must add onto. */
+        /* Los 4 productos acumulan: ya estamos dentro de la rama _add,
+         * asi que C trae un valor previo que cada producto debe
+         * preservar sumandose. */
         matmul_morton_avx2_inner_add(C, A_morton, B,
                                      half, half, n_block,
                                      a_morton_offset + (size_t)0 * quadrant_size,
@@ -429,22 +428,25 @@ static void matmul_morton_avx2_inner_add(scalar_t *C,
                                 ldc, ldb, A_local_scratch);
 }
 
-/* ------------------------------------------------------------------ */
-/* Public wrapper                                                      */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* Wrapper publico                                                    */
+/* ================================================================== */
 
-/* Return the maximum panel side that can land in the leaf for the
- * current threshold and (assumed minimum) leaf n. The scratch buffer
- * sized at side^2 is wide enough for any leaf the recursion produces
- * before the threshold cuts it off. We use n_floor = NR = 16 as the
- * smallest n a leaf can have without falling into the fallback path. */
+/*
+scratch_side_for_threshold: Devuelve el lado maximo de panel que el
+recursion-stop puede producir en la hoja con el threshold actual. El
+buffer A_local dimensionado a side^2 es suficiente para cualquier hoja
+que la recursion genere antes de que el threshold la corte.
+
+Usamos n_floor = NR = 16 como el n minimo que una hoja puede tener sin
+caer al fallback => side ~= sqrt(threshold / NR), redondeado arriba a
+potencia de 2 con minimo 64.
+*/
 static size_t scratch_side_for_threshold(size_t threshold)
 {
     size_t target = threshold / (size_t)NR;
-    /* Round up to the next power of two. */
     size_t side = 1;
     while (side * side < target) side <<= 1;
-    /* Guarantee a minimum so degenerate calls do not crash. */
     if (side < 64) side = 64;
     return side;
 }
@@ -470,7 +472,7 @@ void matmul_morton_avx2(scalar_t *C,
     }
 
     size_t side = scratch_side_for_threshold(g_recursion_threshold_avx2);
-    /* Clamp to the actual problem so we never allocate more than m*m. */
+    /* Clamp al tamano real del problema para no allocar mas que m*m. */
     if (side > m) side = m;
     scalar_t *A_local = xalloc_aligned(side * side);
 
@@ -485,9 +487,9 @@ void matmul_morton_avx2(scalar_t *C,
     xfree(A_local);
 }
 
-/* ------------------------------------------------------------------ */
-/* Benchmark orchestrators                                             */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* Orquestadores de benchmark                                         */
+/* ================================================================== */
 
 void benchmark_iterations_morton_avx2(scalar_t *B_out,
                                       const scalar_t *A,
@@ -518,7 +520,7 @@ void benchmark_iterations_morton_avx2_preorganized(scalar_t *B_out,
     for (size_t iter = 0; iter < num_iters; ++iter) {
         matmul_morton_avx2(B_next, A_morton, B_curr, m, m, n);
 
-        /* Store the first n rows of B_next into the output buffer. */
+        /* Almacena las primeras n filas de B_next en el buffer de salida. */
         scalar_t *out_block = B_out + iter * n * n;
         for (size_t i = 0; i < n; ++i) {
             for (size_t j = 0; j < n; ++j) {
@@ -526,7 +528,7 @@ void benchmark_iterations_morton_avx2_preorganized(scalar_t *B_out,
             }
         }
 
-        /* Swap so next iteration consumes what we just produced. */
+        /* Swap: la proxima iteracion consume lo que acabamos de producir. */
         scalar_t *tmp = B_curr;
         B_curr = B_next;
         B_next = tmp;
