@@ -1,35 +1,5 @@
 /*
- * matmul_tiled_ikj_avx512.c - BLIS-style 6x32 register-blocked matmul
- *                           (Zen 5 / EPYC 9R45 main_server variant).
- *
- * Renamed from matmul_tiled_ikj_avx2.c: the leaf now uses the 6x32
- * AVX-512 microkernel exposed by kernel_avx512_tiled.h. The AVX2
- * dispatch path (16-wide YMM 6x16 kernel) has been removed because
- * the EPYC 9R45 supports AVX-512 natively and the wider tile doubles
- * FMA throughput per cycle.
- *
- * See matmul_tiled_ikj_avx512.h for the loop nest design and the
- * rationale behind the block sizes. This file contains:
- *   - the public matmul_tiled_ikj_avx512 function that orchestrates the
- *     three-level tile loop pc / ic / jr-ir, calling into the 6x32
- *     microkernel from kernel_avx512_tiled.h for the aligned interior
- *     and into kernel_avx512_tiled_residual_rows for the m % MR /
- *     n % NR tails;
- *   - the public benchmark_iterations_tiled_ikj_avx512 wrapper that
- *     handles the iterated B_{k+1} = A * B_k recurrence with the
- *     standard double-buffer + swap pattern.
- *
- * Correctness contract identical to matmul_naive: C is overwritten
- * via memset before the tile loops; A and B are read-only; no aliasing.
- *
- * Why the microkernel lives in a header (kernel_avx512_tiled.h)
- * instead of a separate .c: the 12-ZMM accumulator chain only stays
- * in registers when the compiler can see the full FMA chain in one
- * translation unit. Putting the microkernel in a separate .c would
- * force a function-call boundary and would spill all 12 ZMMs through
- * the ABI on entry. The header exposes the kernel as `static inline`
- * so this TU (and matmul_tiled_ikj_omp.c) each get their own inlined
- * copy under -O3.
+ * matmul_tiled_ikj_avx512.c - Estilo BLIS con bucles ikj y microkernel AVX-512 6x32.
  */
 
 #include "matmul_tiled_ikj_avx512.h"
@@ -52,71 +22,92 @@ void matmul_tiled_ikj_avx512_set_bs(size_t bs)
     g_tiled_ikj_avx512_bs = bs;
 }
 
+/*
+matmul_tiled_ikj_avx512: Estilo BLIS tiled_ikj matmul (6x32)
+INPUTS:
+- C: Puntero a la matriz de salida. (m x n)
+- A: Puntero a la matriz A. (m x k)
+- B: Puntero a la matriz B. (k x n)
+- m: Número de filas de A y C.
+- k_dim: Número de columnas de A y filas de B.
+- n: Número de columnas de B y C.
+*/
 void matmul_tiled_ikj_avx512(scalar_t *C,
                        const scalar_t *A,
                        const scalar_t *B,
-                       size_t m, size_t k, size_t n)
+                       size_t m, size_t k_dim, size_t n)
 {
-    const size_t MR = TILED_IKJ_AVX512_MR;
-    const size_t NR = TILED_IKJ_AVX512_NR;
-    const size_t MC = TILED_IKJ_AVX512_MC;
-    const size_t KC = g_tiled_ikj_avx512_bs;
+    // Hiperparámetros según hardware. (Definidos en matmul_tiled_ikj_avx512.h)
+    // Microkernel
+    const size_t MR = TILED_IKJ_AVX512_MR;    // Filas microkernel (6)
+    const size_t NR = TILED_IKJ_AVX512_NR;    // Columnas microkernel (32)
+    // Tiling
+    const size_t MC = TILED_IKJ_AVX512_MC;    // Filas bloque L2 (288)
+    const size_t KC = g_tiled_ikj_avx512_bs;  // Columnas bloque L1d (256) (ajustable)
 
-    memset(C, 0, m * n * sizeof(scalar_t));
+    // C en 0s, ya que se acumulará el resultado de cada bloque.
+    init_matrix_zero(C, m, n);
 
+    // Necesario para manejar casos donde m o n no son múltiplos de MR o NR.
     const size_t m_aligned = (m / MR) * MR;
     const size_t n_aligned = (n / NR) * NR;
 
-    /* Outer loop on the contracted dimension: kc-deep panels of A and
-     * B. Each pp iteration adds its partial sum into C (which is in
-     * memory between pp iterations, but loaded into ZMMs inside the
-     * microkernel for each kc burst). */
-    for (size_t pp = 0; pp < k; pp += KC) {
-        const size_t kc = (pp + KC < k) ? KC : k - pp;
+    // kk externo (tamaño KC)
+    // Columnas de A y filas de B.
+    for (size_t kk = 0; kk < k_dim; kk += KC) {
+        const size_t kc = (kk + KC < k_dim) ? KC : k_dim - kk;
 
-        /* Block over the m dimension to keep the A panel mc x kc in
-         * L2 across all jr iterations of the same ic block. */
+        // ic interno (tamaño MC)
         for (size_t ic = 0; ic < m_aligned; ic += MC) {
             const size_t ic_end = (ic + MC <= m_aligned) ? ic + MC
                                                          : m_aligned;
 
-            /* jr outer / ir inner is the BLIS canonical order: each
-             * (ic, jr) pair sweeps mc/mr microkernels that share the
-             * same kc x nr B panel (kc=256, nr=32 -> 32 KiB, fits in
-             * L1d=48 KiB), reusing it mc/mr times before moving to
-             * the next jr panel. */
+            // jr sobre columnas de B (tamaño NR)
             for (size_t jr = 0; jr < n_aligned; jr += NR) {
+                // ir sobre filas de A (tamaño MR)
+                // A (MR (6) x KC (256))  <- L2
+                // B (KC (256) x NR (32)) <- L1d (Se reusa para todo jr)
+                // C (MR (6) x NR (32))   <- registros ZMM
                 for (size_t ir = ic; ir + MR <= ic_end; ir += MR) {
+                    // C[6×32] += A[6×KC] × B[KC×32]
                     kernel_avx512_tiled_6x32(&C[ir * n + jr], n,
-                                             &A[ir * k + pp], k,
-                                             &B[pp * n + jr], n,
+                                             &A[ir * k_dim + kk], k_dim,
+                                             &B[kk * n + jr], n,
                                              kc);
                 }
             }
 
-            /* Tail in n (n % NR != 0). With n=128 in this project this
-             * branch is dead, but keep the kernel correct for arbitrary
-             * n so the validator can call it at m=256 etc. */
             if (n_aligned < n) {
                 kernel_avx512_tiled_residual_rows(
                     &C[ic * n + n_aligned], n,
-                    &A[ic * k + pp], k,
-                    &B[pp * n + n_aligned], n,
+                    &A[ic * k_dim + kk], k_dim,
+                    &B[kk * n + n_aligned], n,
                     ic_end - ic, n - n_aligned, kc);
             }
         }
 
-        /* Tail in m (m % MR != 0). Up to MR-1 = 5 residual rows. */
         if (m_aligned < m) {
             kernel_avx512_tiled_residual_rows(
                 &C[m_aligned * n], n,
-                &A[m_aligned * k + pp], k,
-                &B[pp * n], n,
+                &A[m_aligned * k_dim + kk], k_dim,
+                &B[kk * n], n,
                 m - m_aligned, n, kc);
         }
     }
 }
 
+
+/*
+benchmark_iterations_tiled_ikj_avx512: Implementa recurrencia:
+        B_{i+1} = A * B_{i} con B_0 = Z.
+INPUTS:
+- B_out: Puntero a la matriz de salida (num_iters x n x n).
+- A: Puntero a la matriz A (m x m).
+- Z: Puntero a la matriz Z (m x n).
+- m: Número de filas de A y B_i.
+- n: Número de columnas de B_i.
+- num_iters: Número de iteraciones.
+*/
 void benchmark_iterations_tiled_ikj_avx512(scalar_t *B_out,
                                      const scalar_t *A,
                                      const scalar_t *Z,
