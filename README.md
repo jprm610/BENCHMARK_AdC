@@ -62,9 +62,11 @@ La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md
 |   |-- drivers/                           -> Programas main: medicion (bench) y verificacion (validate)
 |   |   |-- bench/                         -> bench_naive.c, bench_loops.c, bench_morton{,_avx512,_omp}.c, bench_tiled_ikj{,_avx512,_omp}.c
 |   |   `-- validate/                      -> validate_naive.c, validate_loops.c, validate_morton{,_avx512,_omp}.c, validate_tiled_ikj{,_avx512,_omp}.c
-|   `-- tests/                             -> Tests unitarios standalone
+|   `-- tests/                             -> Tests unitarios standalone (ver docs/1.8) tests.md)
+|       |-- test_matrix_utils.c            -> xalloc_aligned, init_matrix_*, matrices_close
 |       |-- test_morton.c                  -> Round-trip encode/decode + contiguidad de cuadrantes
-|       `-- test_kernel_avx512_morton.c    -> Unit test del microkernel 4x32 AVX-512
+|       |-- test_kernel_avx512_morton.c    -> Microkernel 4x32 (kernel_avx512_morton.h)
+|       `-- test_kernel_avx512_tiled.c     -> Microkernel 6x32 (kernel_avx512_tiled.h)
 |-- scripts/
 |   |-- profile_perf_zen5.sh           -> Captura perf por celda (variant, m)
 |   |-- run_perf_zen5_sweep.sh         -> Orquesta las celdas (variantes x tamaños)
@@ -235,12 +237,21 @@ make validate_tiled_ikj_omp       # bin/validate_tiled_ikj_omp_O3
 Targets de Fase 6 (Morton Z-order cache-oblivious):
 
 ```bash
-make test_morton              # bin/test_morton (tests del modulo morton)
 make bench_morton             # bin/bench_morton_O0   (m debe ser potencia de 2)
 make validate_morton          # bin/validate_morton_O0 (idem)
-
-make sweep_morton_run         # produce results/morton_O0.csv
 ```
+
+Unit tests (capa por debajo de validate, ver [`docs/1.8) tests.md`](docs/1.8\)%20tests.md)):
+
+```bash
+make tests                       # bin/tests/* — los 4 unit-tests, en orden
+make test_matrix_utils           # solo bin/tests/test_matrix_utils
+make test_morton                 # solo bin/tests/test_morton
+make test_kernel_avx512_morton   # solo bin/tests/test_kernel_avx512_morton
+make test_kernel_avx512_tiled    # solo bin/tests/test_kernel_avx512_tiled
+```
+
+`make validate_all` depende de `make tests`, asi que un fallo en los unit-tests aborta antes de correr los `validate_*`.
 
 Para comparaciones entre kernels (naive + loops + tiled_ikj* + morton*) usar el pipeline unificado de la Sesion 03:
 
@@ -387,7 +398,7 @@ getconf -a | grep CACHE
 
 ```bash
 ./bin/validate_morton_O0    256   # 3 invariantes + cross-validation contra naive (m potencia de 2)
-./bin/test_morton                 # tests del modulo Morton (encode/decode/reorganize)
+./bin/tests/test_morton           # tests del modulo Morton (encode/decode/reorganize)
 ```
 
 Cada uno imprime `VALIDATION OK` (o `MORTON TESTS OK`) y retorna 0 cuando todo pasa.
