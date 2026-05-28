@@ -1,49 +1,34 @@
-/*
- * matmul_morton_omp.c - OpenMP-parallelized Morton-recursive matmul.
- *
- * Same recursion and same leaf kernel as matmul_morton_avx2.c. The
- * leaf helpers (materialize_a_panel, kernel_base_morton_avx2,
- * kernel_base_morton_avx2_add, kernel_base_morton_avx2_ijk_fallback)
- * are duplicated here rather than #include'd from the AVX2
- * translation unit so this module is standalone: the AVX2 baseline
- * stays exactly as Prompt 4 left it, and no static helper ever
- * crosses the file boundary.
- *
- * The recursion is parallelized as follows:
- *
- *   - Each sub-problem larger than g_parallel_threshold_omp creates
- *     two OpenMP tasks at the recursive split. Sub-problems at or
- *     below that threshold recurse inline, without spawning tasks.
- *     This avoids the per-task overhead at the leaf.
- *
- *   - The MK split produces four sub-products. The two that target
- *     the top half of C must execute in order (TL writes, TR
- *     accumulates), and the two that target the bottom half must
- *     execute in order too. But top and bottom are independent: we
- *     spawn one task for the top sequence and one for the bottom
- *     sequence, then taskwait.
- *
- *   - The N split produces two fully independent sub-products: one
- *     task each, then taskwait.
- *
- *   - The k-only split (none of our recursions take it directly, but
- *     it is inside the MK split as the second product) is sequential
- *     by construction inside the per-half task body.
- *
- * Scratch buffers:
- *
- *   Each leaf materializes a row-major panel of A from the
- *   Morton-of-blocks layout into a per-thread scratch buffer. The
- *   pool is allocated once by the public wrapper using
- *   omp_get_max_threads() and indexed at the leaf by
- *   omp_get_thread_num(). With 12 threads and a 64x64 panel
- *   (16 KiB) the total scratch is ~192 KiB, negligible.
- */
+// matmul_morton_omp.c - Implementacion paralela con OpenMP tasks de la
+// recursion Morton + microkernel AVX2 4x16.
+//
+// Los helpers del leaf (materialize_a_panel, kernel_base_morton_omp,
+// _add, _ijk_fallback) estan DUPLICADOS aqui (no incluidos desde el
+// .c de la Fase 1.7) para que este modulo sea standalone: el AVX2
+// serial queda exactamente como Prompt 4 lo dejo, y ningun static
+// helper cruza la frontera del archivo.
+//
+// Paralelizacion:
+// - Cada sub-problema > g_parallel_threshold_omp crea 2 tasks OMP en
+//   el split. Sub-problemas <= a ese threshold recursan inline => evita
+//   el overhead per-task en el leaf.
+// - El split MK produce 4 sub-productos. Los dos a C_top deben ejecutar
+//   en orden (TL escribe, TR acumula sobre TL); idem C_bot. Pero top y
+//   bot son DISJUNTOS => 1 task para la secuencia top, 1 para la
+//   secuencia bot, taskwait.
+// - El split N produce 2 sub-productos totalmente independientes => 1
+//   task por mitad, taskwait.
+//
+// Scratch buffers:
+// - Cada leaf materializa un panel row-major de A en un buffer
+//   per-thread. El pool se aloja una vez en el wrapper publico usando
+//   omp_get_max_threads() y se indexa en la hoja por
+//   omp_get_thread_num(). Con 12 threads y panel 64x64 (16 KiB) el
+//   pool total es ~192 KiB, despreciable.
 
 #include "matmul_morton_omp.h"
 
 #include "morton.h"             /* morton_encode, is_power_of_two */
-#include "kernel_avx2_morton.h"  /* kernel_avx2_4x16, KERNEL_AVX2_MR/NR */
+#include "kernel_avx2_morton.h" /* kernel_avx2_4x16, KERNEL_AVX2_MR/NR */
 #include "matrix_utils.h"       /* xalloc_aligned, xfree */
 
 #include <assert.h>
@@ -57,9 +42,9 @@
 #define MR KERNEL_AVX2_MR   /* 4 */
 #define NR KERNEL_AVX2_NR   /* 16 */
 
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
 /* Tunables                                                            */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
 
 size_t g_recursion_threshold_omp = (size_t)64 * 64 * 128;  /* 524288 */
 size_t g_parallel_threshold_omp  = (size_t)64 * 64 * 128;  /* 524288 */
@@ -78,21 +63,16 @@ void matmul_morton_omp_set_threshold(size_t threshold)
 
 void matmul_morton_omp_set_parallel_threshold(size_t threshold)
 {
-    /* Zero is permitted here and means "always run sequentially"
-     * (every sub-problem is at or below the parallel threshold).
-     * Useful for measuring the serial baseline of this exact module
-     * without changing the binary. */
+    /* Zero esta PERMITIDO aqui y significa "siempre serial" (todo
+     * sub-problema queda <= threshold). Util para medir el baseline
+     * serial de este modulo sin cambiar el binario. */
     g_parallel_threshold_omp = threshold;
 }
 
-/* ------------------------------------------------------------------ */
-/* Leaf helpers (duplicated from matmul_morton_avx2.c on purpose)      */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* Helpers del leaf (duplicados a proposito desde matmul_morton_avx2.c)*/
+/* ================================================================== */
 
-/* Materialize the m_block x k_block panel of A from the
- * Morton-of-blocks layout into a row-major scratch buffer with row
- * stride k_block. Caller guarantees m_block and k_block are multiples
- * of MORTON_AVX2_TILE = 4. */
 static void materialize_a_panel(const scalar_t *A_morton,
                                 size_t a_morton_offset,
                                 size_t a_block_dim,
@@ -125,7 +105,7 @@ static void materialize_a_panel(const scalar_t *A_morton,
     }
 }
 
-/* ijk fallback for non-tile-aligned leaf shapes. */
+/* Camino lento para hojas con dimensiones no alineadas al tile. */
 static void kernel_base_morton_omp_ijk_fallback(
     scalar_t *C, size_t ldc,
     const scalar_t *A_local, size_t lda,
@@ -145,8 +125,8 @@ static void kernel_base_morton_omp_ijk_fallback(
     }
 }
 
-/* Overwrite-variant leaf: zero the C tile, then accumulate via the
- * microkernel; final result equals A * B exactly. */
+/* Variante overwrite del leaf: zerea C y luego deja al microkernel
+ * acumular sobre el (resultado final = A * B exactamente). */
 static void kernel_base_morton_omp(scalar_t *C,
                                    const scalar_t *A_morton,
                                    const scalar_t *B,
@@ -188,8 +168,8 @@ static void kernel_base_morton_omp(scalar_t *C,
     }
 }
 
-/* Accumulate-variant leaf: like above but does not zero C, so the
- * microkernel accumulates on top of the previous value. */
+/* Variante accumulate del leaf: no zerea C => acumula sobre el valor
+ * previo. */
 static void kernel_base_morton_omp_add(scalar_t *C,
                                        const scalar_t *A_morton,
                                        const scalar_t *B,
@@ -222,9 +202,9 @@ static void kernel_base_morton_omp_add(scalar_t *C,
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Recursion                                                           */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* Recursion                                                          */
+/* ================================================================== */
 
 static void matmul_morton_omp_inner(scalar_t *C,
                                     const scalar_t *A_morton,
@@ -246,9 +226,12 @@ static void matmul_morton_omp_inner_add(scalar_t *C,
                                         size_t ldc, size_t ldb,
                                         scalar_t **scratches);
 
-/* The two MK-split halves are pre-baked into helper routines so each
- * task body is a single statement and the task creation site stays
- * readable. */
+/*
+mk_top_pair / mk_bot_pair: Pre-empaquetan las dos secuencias del split
+MK como helpers, asi cada cuerpo de task es una sola sentencia y el
+sitio de spawn queda legible. La secuencia top es (TL overwrite, TR
+acumula sobre TL); idem bot.
+*/
 static void mk_top_pair(scalar_t *C, const scalar_t *A_morton,
                         const scalar_t *B,
                         size_t half, size_t n_block,
@@ -256,7 +239,7 @@ static void mk_top_pair(scalar_t *C, const scalar_t *A_morton,
                         size_t ldc, size_t ldb,
                         scalar_t **scratches)
 {
-    /* TL writes, TR accumulates on top of TL. Sequential. */
+    /* TL escribe, TR acumula sobre TL. Secuencial. */
     matmul_morton_omp_inner    (C, A_morton, B,
                                 half, half, n_block,
                                 a_morton_offset + (size_t)0 * quadrant_size,
@@ -284,8 +267,8 @@ static void mk_bot_pair(scalar_t *C, const scalar_t *A_morton,
                                 half, ldc, ldb, scratches);
 }
 
-/* Same two helpers but for the _add branch: every product accumulates
- * (the caller already holds a meaningful C value). */
+/* Las mismas dos helpers pero para la rama _add: cada producto
+ * acumula (el caller ya tiene un C con valor significativo). */
 static void mk_top_pair_add(scalar_t *C, const scalar_t *A_morton,
                             const scalar_t *B,
                             size_t half, size_t n_block,
@@ -340,10 +323,12 @@ static void matmul_morton_omp_inner(scalar_t *C,
         return;
     }
 
+    /* Decide spawning para este split. Sub-problemas grandes spawnean
+     * tasks; los chicos recursan inline para no pagar overhead. */
     const int spawn = (m_block * k_block * n_block
                        > g_parallel_threshold_omp);
 
-    /* Case N: split n. Both halves are fully independent. */
+    /* Caso N: dividir n. Las dos mitades son totalmente independientes. */
     if (n_block > a_block_dim && n_block >= 2) {
         size_t n_half = n_block / 2;
         if (spawn) {
@@ -375,9 +360,9 @@ static void matmul_morton_omp_inner(scalar_t *C,
         return;
     }
 
-    /* Case MK: top and bottom halves of C are independent; within
-     * each half the two products (write then accumulate) must run
-     * sequentially. */
+    /* Caso MK: top y bot de C son independientes; dentro de cada
+     * mitad los 2 productos (overwrite + accumulate) deben ir
+     * secuenciales. => 1 task top, 1 task bot, taskwait. */
     if (a_block_dim >= 2) {
         assert(m_block == k_block);
         assert(m_block == a_block_dim);
@@ -408,7 +393,7 @@ static void matmul_morton_omp_inner(scalar_t *C,
         return;
     }
 
-    /* Degenerate fallback: a_block_dim == 1 and n_block == 1. */
+    /* Fallback degenerado: a_block_dim == 1 y n_block == 1. */
     {
         int tid = omp_get_thread_num();
         kernel_base_morton_omp(C, A_morton, B,
@@ -513,14 +498,14 @@ static void matmul_morton_omp_inner_add(scalar_t *C,
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Public wrapper                                                      */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* Wrapper publico                                                    */
+/* ================================================================== */
 
-/* Round up to the next power of two that is at least 64, so scratch
- * sized at side^2 is large enough for any leaf produced by the
- * recursion under the current threshold. Mirror of the helper in
- * matmul_morton_avx2.c. */
+/* Espejo del helper de matmul_morton_avx2.c. Redondea arriba a
+ * potencia de 2 con minimo 64, asi que scratch dimensionado a side^2
+ * es suficiente para cualquier hoja que la recursion produzca con el
+ * threshold actual. */
 static size_t scratch_side_for_threshold(size_t threshold)
 {
     size_t target = threshold / (size_t)NR;
@@ -550,9 +535,9 @@ void matmul_morton_omp(scalar_t *C,
         exit(EXIT_FAILURE);
     }
 
-    /* omp_get_max_threads returns the upper bound on the team size
-     * that any subsequent parallel region in this thread can use.
-     * That is the right size for the scratch pool. */
+    /* omp_get_max_threads devuelve la cota superior del team que
+     * cualquier region paralela posterior en este thread puede usar.
+     * Ese es el tamano correcto para el pool de scratch. */
     const int max_threads = omp_get_max_threads();
 
     size_t side = scratch_side_for_threshold(g_recursion_threshold_omp);
@@ -570,6 +555,10 @@ void matmul_morton_omp(scalar_t *C,
         scratches[t] = xalloc_aligned(side * side);
     }
 
+    /* parallel crea el team UNA sola vez; single garantiza que la
+     * recursion raiz la dispara un solo thread. Los demas threads del
+     * team se quedan disponibles para ejecutar las tasks que el
+     * recursion-root va spawneando. */
     #pragma omp parallel default(shared)
     {
         #pragma omp single
@@ -588,9 +577,9 @@ void matmul_morton_omp(scalar_t *C,
     free(scratches);
 }
 
-/* ------------------------------------------------------------------ */
-/* Benchmark orchestrators                                             */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* Orquestadores de benchmark                                         */
+/* ================================================================== */
 
 void benchmark_iterations_morton_omp(scalar_t *B_out,
                                      const scalar_t *A,
