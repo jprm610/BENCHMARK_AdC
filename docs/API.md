@@ -535,7 +535,7 @@ make validate_morton            -> bin/validate_morton_O0
 make sweep_morton_run           -> bash scripts/run_sweep_morton.sh
 ```
 
-La capa de unit-tests vive en `src/tests/` (ver `docs/1.8) tests.md`). Los binarios resultantes quedan en `bin/tests/` separados de los `bench_*` y `validate_*`. `make validate_all` depende de `make tests`.
+La capa de unit-tests vive en `src/tests/` (ver `docs/1.9) tests.md`). Los binarios resultantes quedan en `bin/tests/` separados de los `bench_*` y `validate_*`. `make validate_all` depende de `make tests`.
 
 Targets de Fase 1.1 (loop-reorder):
 
