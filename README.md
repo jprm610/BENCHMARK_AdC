@@ -96,7 +96,8 @@ Diferencia clave respecto a Zen 2 (rama `main`): como L3 es **compartida** entre
 |-- scripts/
 |   |-- profile_perf_zen5.sh              Captura perf por celda (variant, m)
 |   |-- run_perf_zen5_sweep.sh            Orquesta el sweep completo
-|   `-- consolidate_perf_zen5.py          Une grupos A+B -> results/metrics.csv
+|   |-- consolidate_perf_zen5.py          Une grupos A+B -> results/metrics.csv
+|   `-- plot_metrics_perf_zen5.py         Renderiza las 4 figuras a plots/
 |-- bin/                                  Binarios compilados (gitignored)
 |   |-- bench/                            bench_<kernel>_ZEN5
 |   |-- validate/                         validate_<kernel>_O0 o _ZEN5
@@ -421,7 +422,21 @@ make profile_zen5_omp                           # morton_omp con varios threads
 
 ### 9.3 Plots
 
-El pipeline de plots para este chip esta pendiente de refinamiento y se trabajara en una sesion separada (otra rama). Por ahora la informacion consolidada vive en `results/metrics.csv`; la visualizacion vendra despues.
+`scripts/plot_metrics_perf_zen5.py` lee `results/metrics.csv` y escribe en `plots/` cuatro figuras que resumen el sweep:
+
+1. `gflops_vs_m.png` -- throughput vs $m$, ejes log-log, una linea por variante.
+2. `best_per_family.png` -- arco de optimizacion (subset curado: `naive`, `loop_ikj`, `tiled_ikj{,_avx512,_omp}`, `morton{,_avx512,_omp}`) con lineas de techo teorico single-core y all-core para el 9R45.
+3. `llc_misses_vs_m.png` -- LLC misses por kilo-instruccion vs $m$, log-log. Reemplaza la figura por niveles L1/L2/L3 del pipeline de Zen 2 porque bajo KVM AMD solo `cache-misses` esta expuesto.
+4. `omp_scaling.png` -- pares `morton_avx512` vs `morton_omp` y `tiled_ikj_avx512` vs `tiled_ikj_omp` con speedup y eficiencia anotados sobre los $m$ comunes.
+
+Estilo, paleta (verde oscuro tiled, azul oscuro morton, amarillos loops, gris naive) y marcadores (circulo plain, triangulo SIMD, estrella OMP) son los mismos que en `scripts/plot_metrics_perf_zen2.py` de la rama `main`.
+
+```bash
+source ~/venvs/matmul/bin/activate
+python3 scripts/plot_metrics_perf_zen5.py --csv results/metrics.csv --out-dir plots/
+```
+
+El header del CSV (`seconds` con BOM UTF-8 que emite el consolidador en el servidor) y el alias a `median_seconds` se manejan internamente.
 
 ---
 

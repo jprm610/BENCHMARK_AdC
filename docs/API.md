@@ -862,7 +862,7 @@ Una fila por driver. Rutas relativas a la raiz del repo tras `make build`. Targe
 
 Las variantes que requieren AVX-512 + FMA usan `_ZEN5` tambien para el `validate_*` (no `_O0`) porque los microkernels son `static inline` con intrinsics y a `-O0` no se materializan las instrucciones FMA.
 
-**Pipeline de medicion:** el unico flujo soportado es `make results` (orquesta `scripts/run_perf_zen5_sweep.sh` + `scripts/consolidate_perf_zen5.py`). Salida canonica: `results/metrics.csv`. Knobs (`VARIANTS`, `MS`, `ITERS_PER_RUN`, `RUNS`) documentados en [`docs/0.0) makefile.md`](<0.0) makefile.md>).
+**Pipeline de medicion:** el unico flujo soportado es `make results` (orquesta `scripts/run_perf_zen5_sweep.sh` + `scripts/consolidate_perf_zen5.py`). Salida canonica: `results/metrics.csv`. Knobs (`VARIANTS`, `MS`, `ITERS_PER_RUN`, `RUNS`) documentados en [`docs/0.0) makefile.md`](<0.0) makefile.md>). Las cuatro figuras (`gflops_vs_m`, `best_per_family`, `llc_misses_vs_m`, `omp_scaling`) se generan a partir de ese CSV con `scripts/plot_metrics_perf_zen5.py` (detalle en README, seccion 9.3).
 
 ---
 
