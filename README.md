@@ -88,7 +88,7 @@ Si vas a correr el proyecto en otro PC, ver [Seccion 11](#11-adaptar-el-proyecto
 |   |-- profile_perf_zen2.sh              Captura perf por celda (variant, m)
 |   |-- run_perf_zen2_sweep.sh            Orquesta el sweep completo
 |   |-- consolidate_perf_zen2.py          Une grupos A+B -> results/metrics.csv
-|   `-- plot_metrics.py                   Plots: GFLOPS vs m, arco de optimizacion, cache jerarquia, escalado OMP
+|   `-- plot_metrics_perf_zen2.py         Plots locales (Zen 2): GFLOPS vs m, arco de optimizacion, cache jerarquia, escalado OMP
 |-- bin/                                  Binarios compilados (gitignored)
 |   |-- bench/                            bench_<kernel>_O3
 |   |-- validate/                         validate_<kernel>_O0 o _O3
@@ -204,6 +204,7 @@ Desde la raiz del repositorio en WSL2:
 make build       # 1. compila los 20 binarios (8 bench + 8 validate + 4 tests)
 make validate    # 2. corre la piramide tests -> validate sobre los 8 kernels
 make results     # 3. sweep perf Zen 2 -> results/metrics.csv
+make plots       # 4. genera las 4 figuras en plots/ (opcional, requiere venv con matplotlib)
 ```
 
 Si los tres pasos terminan con `OK`, el repo esta sano y `results/metrics.csv` tiene una fila por celda `(variant, m)` con todos los contadores. El sweep completo tarda alrededor de $20$-$30$ minutos en el $4600$H; usar los knobs de la [Seccion 8.3](#83-sweep-unificado-make-results) para limitar el alcance durante desarrollo.
@@ -220,6 +221,7 @@ Si los tres pasos terminan con `OK`, el repo esta sano y `results/metrics.csv` t
 | `make tests` | Compila y corre los $4$ unit-tests en orden |
 | `make validate` | Depende de `tests`; corre los $8$ `validate_*` en orden |
 | `make results` | Compila los $8$ benches y lanza el sweep perf $\to$ `results/metrics.csv` |
+| `make plots` | Lee `results/metrics.csv` y genera $4$ figuras en `plots/` (GFLOPS vs $m$, arco de optimizacion, jerarquia de cache, escalado OMP). Requiere `matplotlib` |
 | `make clean` | Borra `bin/` y `build/` |
 | `make distclean` | `clean` + borra `results/*.csv` y `plots/*` |
 

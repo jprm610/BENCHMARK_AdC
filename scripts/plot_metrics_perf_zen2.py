@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""plot_metrics.py
+"""plot_metrics_perf_zen2.py
 
 Render the figures that summarize the matmul benchmark sweep recorded
-in results/metrics.csv.
+in results/metrics.csv (local perf Zen 2 pipeline on the Ryzen 5
+4600H). The main_server pipeline will get its own plot script later.
 
 Reads:
     results/metrics.csv     (one row per (variant, m), produced by

@@ -398,7 +398,7 @@ consolidate_zen2:
 # Render all figures from results/metrics.csv into plots/.
 # Run after `make results` (which produces results/metrics.csv).
 plots:
-	python3 scripts/plot_metrics.py
+	python3 scripts/plot_metrics_perf_zen2.py
 
 # Unit tests (build + run). Each target builds + runs a single test;
 # the aggregate target `tests` (Section 6) runs all of them in order.
