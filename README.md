@@ -3,25 +3,10 @@
 **Curso:** Arquitectura de Computadores
 **Autores:** Santiago Uribe Echavarría - Juan Pablo Robledo Meza
 **Universidad:** Universidad Nacional de Colombia, Sede Medellin
-**Fecha:**29 de Mayo 2026
+**Fecha:** 29 de Mayo 2026
 **Hardware de referencia:** Ryzen 5 4600H (Renoir, Zen 2)
 
 Repositorio que implementa y mide la recurrencia $B_{i+1} = A \cdot B_i$ sobre ocho kernels distintos (baseline, reordenamientos, tiling, vectorizacion AVX2 y paralelizacion OpenMP) y un pipeline de profiling con `perf` en hardware Zen 2.
-
-| Kernel | Fase | Tecnica principal |
-|---|---|---|
-| `matmul_naive` | Sesion 01 | Baseline ijk, $-O0$ |
-| `matmul_loops` | Fase 1.1 | Seis permutaciones del orden de bucles |
-| `matmul_tiled_ikj` | Fase 1.2 | Tiling explicito $M_c \times K_c = 256 \times 256$ apuntando a L2 |
-| `matmul_tiled_ikj_avx2` | Fase 1.6 | Microkernel BLIS-style $6 \times 16$ con AVX2 + FMA |
-| `matmul_tiled_ikj_omp` | Fase 1.6 | $6 \times 16$ + `#pragma omp parallel for` en $i_c$ |
-| `matmul_morton` | Fase 6 | Recursion cache-oblivious con $A$ en Morton fino |
-| `matmul_morton_avx2` | Sesion 03 | Morton-de-bloques + microkernel AVX2 $4 \times 16$ |
-| `matmul_morton_omp` | Sesion 03 | Morton-de-bloques + AVX2 + OpenMP tasks |
-
-El contrato publico de las funciones esta en [`docs/API.md`](docs/API.md). La rama `main_server` contiene un port a AVX-512 / Zen 5 que se editara en una siguiente fase.
-
----
 
 ## 0. Tabla de contenidos
 
