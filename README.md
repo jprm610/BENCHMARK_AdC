@@ -1,8 +1,9 @@
 # Benchmark de Multiplicacion Iterada de Matrices
 
 **Curso:** Arquitectura de Computadores
+**Autores:** Santiago Uribe Echavarría - Juan Pablo Robledo Meza
 **Universidad:** Universidad Nacional de Colombia, Sede Medellin
-**Fecha:** Mayo 2026
+**Fecha:**29 de Mayo 2026
 **Hardware de referencia:** Ryzen 5 4600H (Renoir, Zen 2)
 
 Repositorio que implementa y mide la recurrencia $B_{i+1} = A \cdot B_i$ sobre ocho kernels distintos (baseline, reordenamientos, tiling, vectorizacion AVX2 y paralelizacion OpenMP) y un pipeline de profiling con `perf` en hardware Zen 2.
