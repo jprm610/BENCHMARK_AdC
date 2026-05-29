@@ -859,6 +859,8 @@ Las variantes que requieren AVX2 + FMA usan `_O3` tambien para el `validate_*` (
 
 **Pipeline de medicion:** el unico flujo soportado es `make results` (orquesta `scripts/run_perf_zen2_sweep.sh` + `scripts/consolidate_perf_zen2.py`). Salida canonica: `results/metrics.csv`. Knobs (`VARIANTS`, `MS`, `ITERS_PER_RUN`, `RUNS`) documentados en [`docs/0.0) makefile.md`](<0.0) makefile.md>).
 
+**Pipeline de analisis:** `make plots` (corre `scripts/plot_metrics.py` sobre `results/metrics.csv`) genera $4$ figuras en `plots/`: `gflops_vs_m.png` (lineas log-log por variante), `best_per_family.png` (subconjunto curado con techos $\sim 118$ y $\sim 634$ GFLOPS), `cache_hierarchy.png` (L1D / L2 / L3 vs $m$) y `omp_scaling.png` (avx2 vs omp por par, etiquetando speedup y eficiencia paralela). El target depende solo del CSV: `make results && make plots`.
+
 ---
 
 ## 6. Capa `tests`

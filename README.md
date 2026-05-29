@@ -88,7 +88,7 @@ Si vas a correr el proyecto en otro PC, ver [Seccion 11](#11-adaptar-el-proyecto
 |   |-- profile_perf_zen2.sh              Captura perf por celda (variant, m)
 |   |-- run_perf_zen2_sweep.sh            Orquesta el sweep completo
 |   |-- consolidate_perf_zen2.py          Une grupos A+B -> results/metrics.csv
-|   `-- plot_perf_zen2.py                 Plots de IPC, FMA, cache misses, TLB walks
+|   `-- plot_metrics.py                   Plots: GFLOPS vs m, arco de optimizacion, cache jerarquia, escalado OMP
 |-- bin/                                  Binarios compilados (gitignored)
 |   |-- bench/                            bench_<kernel>_O3
 |   |-- validate/                         validate_<kernel>_O0 o _O3
@@ -158,7 +158,7 @@ En WSL2 algunos eventos PMU pueden devolver `<not supported>` (limitacion del hi
 
 ### 4.4 Python + matplotlib
 
-Para los plots (`make plot_perf_zen2`):
+Para los plots (`make plots`):
 
 ```bash
 sudo apt install -y python3 python3-pip python3-venv
@@ -236,7 +236,7 @@ Si los tres pasos terminan con `OK`, el repo esta sano y `results/metrics.csv` t
 | `morton_avx2` | `make bench_morton_avx2_O3` | `make validate_morton_avx2` |
 | `morton_omp` | `make bench_morton_omp_O3` | `make validate_morton_omp` |
 
-Referencia completa de targets, incluidos los de profiling (`profile_zen2`, `profile_zen2_one`, `profile_zen2_omp`, `consolidate_zen2`, `plot_perf_zen2`), en [`docs/0.0) makefile.md`](<docs/0.0) makefile.md>).
+Referencia completa de targets, incluidos los de profiling (`profile_zen2`, `profile_zen2_one`, `profile_zen2_omp`, `consolidate_zen2`) y los de analisis (`plots`), en [`docs/0.0) makefile.md`](<docs/0.0) makefile.md>).
 
 ### 6.3 Flags por sufijo
 
@@ -416,7 +416,24 @@ make profile_zen2_omp                           # morton_omp con varios threads
 
 ```bash
 source ~/venvs/matmul/bin/activate
-make plot_perf_zen2                             # plots/perf_zen2_breakdown.png
+make plots                                      # genera 4 figuras en plots/
+```
+
+`make plots` lee `results/metrics.csv` y deja en `plots/`:
+
+| Figura | Contenido |
+|---|---|
+| `gflops_vs_m.png` | Throughput (GFLOPS) vs $m$, una linea por variante, ejes log-log. Vista global. |
+| `best_per_family.png` | Subconjunto curado (`naive`, `loop_ikj`, familia `tiled_ikj`, familia `morton`) con techos teoricos single-core y all-core ($\sim 118$ y $\sim 634$ GFLOPS). Resume el arco de optimizacion en una sola figura. |
+| `cache_hierarchy.png` | $3$ paneles vs $m$: L1D miss rate, L2 load hit rate, L3 miss rate. Diagnostica en que nivel de cache se rompe cada variante. |
+| `omp_scaling.png` | Barras pareadas `*_avx2` vs `*_omp` para morton y tiled_ikj. Etiqueta speedup y eficiencia paralela respecto a $6$ cores. |
+
+Codigo de colores por familia: gris (`naive`), tonos calidos amarillo/marron (`loop_*`), verde oscuro (`tiled_ikj*`), azul oscuro (`morton*`). Marcador por sub-variante: circulo (plano), triangulo (AVX2), estrella (OMP).
+
+Si todavia no tienes `results/metrics.csv`, corre primero `make results`. Los targets son independientes:
+
+```bash
+make results && make plots
 ```
 
 ---

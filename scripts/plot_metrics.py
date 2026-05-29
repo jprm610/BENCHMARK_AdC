@@ -1,55 +1,36 @@
 #!/usr/bin/env python3
 """plot_metrics.py
 
-Render the full set of figures that summarize the matmul benchmark
-sweep recorded in results/metrics.csv.
+Render the figures that summarize the matmul benchmark sweep recorded
+in results/metrics.csv.
 
 Reads:
     results/metrics.csv     (one row per (variant, m), produced by
                              scripts/consolidate_perf_zen2.py)
 
 Writes (into plots/):
-    1.  gflops_vs_m.png             Lines, one per variant; log-log
-                                    axes. Shows raw throughput across
-                                    problem sizes.
-    2.  speedup_vs_naive.png        GFLOPS / GFLOPS_naive(m), per
-                                    variant; isolates the algorithmic
-                                    gain from the m effect.
-    3.  best_per_family.png         Curated subset (naive, loop_ikj,
-                                    tiled_ikj, tiled_ikj_avx2,
-                                    tiled_ikj_omp, morton, morton_avx2,
-                                    morton_omp) telling the optimization
-                                    story in one figure.
-    4.  efficiency_pct_peak.png     Achieved fp_ops_per_cycle as % of
-                                    the Zen 2 peak (16 ops/cycle/core).
-                                    Bar grouped, one cluster per m.
-    5.  perf_breakdown.png          2x2 panel: IPC, FP ops/cycle, L3
-                                    miss rate, TLB walks per kinst.
-    6.  cache_hierarchy.png         3 panels: L1D miss rate, L2 load
-                                    hit rate, L3 miss rate vs m.
-    7.  omp_scaling.png             Side-by-side bars: avx2 vs omp
-                                    counterpart for morton and
-                                    tiled_ikj; parallel efficiency
-                                    label per pair.
-    8.  roofline.png                Roofline anchored to the 4600H
-                                    (single-core compute peak,
-                                    all-core compute peak, DRAM and
-                                    cache bandwidth ceilings). Each
-                                    variant plotted at its estimated
-                                    operational intensity with the
-                                    measured GFLOPS.
+    1. gflops_vs_m.png        Lines, one per variant; log-log axes.
+                              Shows raw throughput across problem sizes.
+    2. best_per_family.png    Curated subset (naive, loop_ikj,
+                              tiled_ikj, tiled_ikj_avx2, tiled_ikj_omp,
+                              morton, morton_avx2, morton_omp) telling
+                              the optimization story in one figure,
+                              with single-core / all-core peak GFLOPS
+                              ceiling lines.
+    3. cache_hierarchy.png    3 panels: L1D miss rate, L2 load hit
+                              rate, L3 miss rate vs m.
+    4. omp_scaling.png        Side-by-side bars: avx2 vs omp counterpart
+                              for morton and tiled_ikj; parallel speedup
+                              and efficiency labeled per pair.
 
-Hardware model used for the roofline ceilings is the AMD Ryzen 5 4600H
-(Renoir, Zen 2; 6 cores; sustained AVX2 boost ~3.3 GHz all-core,
-~3.7 GHz single-core; DDR4-3200 dual channel). Operational intensities
-per variant are theoretical estimates (algorithmic reuse pattern);
-real per-variant measured intensity is not available because the
-consolidated CSV stores rates instead of raw load / l2_request counts.
+Hardware model: AMD Ryzen 5 4600H (Renoir, Zen 2; 6 cores; sustained
+AVX2 boost ~3.3 GHz all-core, ~3.7 GHz single-core; DDR4-3200 dual
+channel).
 
 Tolerant to:
     - missing m for any variant: that point is dropped, line continues.
-    - low-quality cells (min_mux_pct < 80): the marker is rendered
-      with reduced alpha (data still plotted, visually attenuated).
+    - low-quality cells (min_mux_pct < 80): not specially marked here,
+      the helper alpha_for is available if a future plot needs it.
 """
 
 from __future__ import annotations
@@ -92,8 +73,12 @@ FAMILY = {
     "morton_omp":      "morton",
 }
 
-# Variant -> color and marker. Color is by family; marker is by
-# sub-variant (plain = circle, avx2 = triangle, omp = star).
+# Palette by family:
+#   - tiled       -> dark green
+#   - morton      -> dark blue
+#   - loops       -> warm yellows / browns
+#   - baseline    -> neutral gray
+# Marker by sub-variant: plain = circle, avx2 = triangle, omp = star.
 STYLE = {
     "naive":          dict(color="#444444", marker="o", label="naive"),
     "loop_ijk":       dict(color="#e67e00", marker="o", label="loop ijk"),
@@ -102,16 +87,16 @@ STYLE = {
     "loop_jki":       dict(color="#997300", marker="v", label="loop jki"),
     "loop_kij":       dict(color="#e6b800", marker="P", label="loop kij"),
     "loop_kji":       dict(color="#b38f00", marker="X", label="loop kji"),
-    "tiled_ikj":      dict(color="#1f77b4", marker="o",
+    "tiled_ikj":      dict(color="#1b5e20", marker="o",
                            label="tiled ikj"),
-    "tiled_ikj_avx2": dict(color="#1f77b4", marker="^",
+    "tiled_ikj_avx2": dict(color="#1b5e20", marker="^",
                            label="tiled ikj + AVX2"),
-    "tiled_ikj_omp":  dict(color="#1f77b4", marker="*",
+    "tiled_ikj_omp":  dict(color="#1b5e20", marker="*",
                            label="tiled ikj + AVX2 + OMP"),
-    "morton":         dict(color="#9467bd", marker="o", label="morton"),
-    "morton_avx2":    dict(color="#9467bd", marker="^",
+    "morton":         dict(color="#0d47a1", marker="o", label="morton"),
+    "morton_avx2":    dict(color="#0d47a1", marker="^",
                            label="morton + AVX2"),
-    "morton_omp":     dict(color="#9467bd", marker="*",
+    "morton_omp":     dict(color="#0d47a1", marker="*",
                            label="morton + AVX2 + OMP"),
 }
 
@@ -135,76 +120,29 @@ BEST_PER_FAMILY = (
 
 CPU_LABEL = "AMD Ryzen 5 4600H (Renoir, Zen 2, 6 cores, DDR4-3200)"
 
-# FP32 ops per cycle per core: 2 FMA pipes x 8 SIMD lanes (AVX2) x 2
-# (FMA counted as 2 FLOPs). Zen 2 supports 256-bit AVX2.
-PEAK_FP_OPS_PER_CYCLE_PER_CORE = 16
+# FMA throughput per core. Zen 2 has 2 256-bit FMA pipes per core.
+# A 256-bit FMA on FP32 processes 8 lanes simultaneously. Counting
+# each FMA as one retired uop (AMD perf convention for
+# fp_ret_sse_avx_ops.all), the peak is:
+#     PEAK_FMA_OPS_PER_CYCLE_PER_CORE = 2 pipes x 8 lanes = 16
+# Each FMA is mul + add, so each retired op corresponds to 2 FLOPs in
+# the bench's GFLOPS convention (gflops = 2 m^2 n / time):
+#     FLOPS_PER_FMA_OP = 2
+PEAK_FMA_OPS_PER_CYCLE_PER_CORE = 16
+FLOPS_PER_FMA_OP                = 2
 
 # Sustained AVX2 clocks. Empirical figures for the 4600H.
 FREQ_SINGLE_CORE_GHZ = 3.7
 FREQ_ALL_CORE_GHZ    = 3.3
 NUM_CORES            = 6
 
-# Peak compute throughput, derived. Used as horizontal ceilings on the
-# roofline.
-PEAK_SC_GFLOPS = PEAK_FP_OPS_PER_CYCLE_PER_CORE * FREQ_SINGLE_CORE_GHZ
-PEAK_AC_GFLOPS = (PEAK_FP_OPS_PER_CYCLE_PER_CORE
-                  * FREQ_ALL_CORE_GHZ * NUM_CORES)
-
-# Bandwidths (GB/s). Sustained estimates, not headline numbers.
-# L1D: 32 B/cycle per core (one 256-bit load). L2: similar at L1
-# refill. L3: shared, conservative aggregate. DRAM: DDR4-3200 dual
-# channel theoretical = 51.2 GB/s.
-BW_L1D_SC   = 32 * FREQ_SINGLE_CORE_GHZ          # ~118 GB/s, one core
-BW_L2_SC    = 32 * FREQ_SINGLE_CORE_GHZ          # ~118 GB/s, one core
-BW_L3_AGG   = 32 * FREQ_ALL_CORE_GHZ             # ~106 GB/s, shared
-BW_DRAM     = 51.2                               # DDR4-3200 dual ch.
-
-# Theoretical operational intensity estimates per variant, in
-# FP32 FLOPs / byte transferred to/from DRAM. These are derived from
-# the algorithmic reuse pattern (not measured from perf), so they are
-# documented per family below.
-#
-# baseline / unblocked ikj / jik:
-#   Reads A row and B element / scalar in inner loop. Once matrices
-#   exceed L3 the inner loop continuously refills B from DRAM, giving
-#   intensity ~ O(1).
-# loop_jki / loop_kji:
-#   Column-major access on row-major data. TLB and cache thrash
-#   dominate; effective DRAM intensity is even worse than naive.
-# loop_ikj / loop_kij:
-#   B is streamed row by row, A[i][k] hoisted in register. Better
-#   reuse than naive but still no blocking.
-# tiled_ikj:
-#   Block reuse of A and B inside an L2-sized tile (Mc=Kc=256). Each
-#   element of A reused Kc times. Intensity ~ Mc/8 in FP32.
-# tiled_ikj_avx2:
-#   BLIS-style register tile 6x16 inside the L2 macro-tile. Effective
-#   intensity grows further because the register tile multiplies the
-#   reuse.
-# tiled_ikj_omp:
-#   Same per-thread intensity as tiled_ikj_avx2 (parallelism across
-#   the outer ic loop).
-# morton:
-#   Cache-oblivious recursion. Reuse depends on subproblem size; in
-#   practice between unblocked and tiled.
-# morton_avx2, morton_omp:
-#   Microkernel 4x16 + Morton block layout brings the effective
-#   intensity closer to tiled_ikj_avx2.
-INTENSITY_ESTIMATE = {
-    "naive":          0.25,
-    "loop_ijk":       0.25,
-    "loop_jik":       0.25,
-    "loop_jki":       0.13,
-    "loop_kji":       0.13,
-    "loop_ikj":       1.5,
-    "loop_kij":       1.5,
-    "tiled_ikj":      8.0,
-    "tiled_ikj_avx2": 32.0,
-    "tiled_ikj_omp":  32.0,
-    "morton":         3.0,
-    "morton_avx2":    20.0,
-    "morton_omp":     20.0,
-}
+# Peak GFLOPS using the bench's FMA-as-2-FLOPs convention.
+#     single core: 16 ops/cyc x 2 FLOPs/op x freq_GHz
+#     all core   : same x NUM_CORES at the lower sustained all-core clock
+PEAK_SC_GFLOPS = (PEAK_FMA_OPS_PER_CYCLE_PER_CORE
+                  * FLOPS_PER_FMA_OP * FREQ_SINGLE_CORE_GHZ)
+PEAK_AC_GFLOPS = (PEAK_FMA_OPS_PER_CYCLE_PER_CORE
+                  * FLOPS_PER_FMA_OP * FREQ_ALL_CORE_GHZ * NUM_CORES)
 
 
 # ---------------------------------------------------------------------
@@ -223,8 +161,8 @@ NUMERIC_KEYS = (
 
 def read_csv(path: Path) -> list[dict]:
     """Parse results/metrics.csv into a list of dicts, coercing every
-    numeric column to float (m to int). Missing or 'nan' values are
-    converted to math.nan so the plotting code can decide what to do.
+    numeric column to float (m to int). Missing or 'nan' values become
+    math.nan so the plotting code can decide what to do.
 
     Robust to a 'seconds' column header (legacy name): silently aliases
     it to 'median_seconds'.
@@ -255,9 +193,9 @@ def read_csv(path: Path) -> list[dict]:
 
 
 def group_by_variant(rows: list[dict]) -> dict[str, list[dict]]:
-    """Return {variant: [row, ...]} with each variant's rows sorted
-    by m ascending. Variants not in VARIANTS are still emitted (so
-    new variants in the CSV surface, just without a custom style).
+    """Return {variant: [row, ...]} with each variant's rows sorted by
+    m ascending. Variants not in VARIANTS are still emitted (so new
+    variants in the CSV surface, just without a custom style).
     """
     out: dict[str, list[dict]] = {}
     for r in rows:
@@ -268,15 +206,16 @@ def group_by_variant(rows: list[dict]) -> dict[str, list[dict]]:
 
 
 def style_for(variant: str) -> dict:
-    """Look up STYLE with a fallback that still gives the variant a
-    distinguishable color so unexpected variants do not crash."""
+    """Look up STYLE with a fallback so unexpected variants do not
+    crash the plot."""
     return STYLE.get(variant, dict(color="black", marker="x",
                                    label=variant))
 
 
 def alpha_for(row: dict) -> float:
     """Attenuate points coming from low-confidence cells (perf event
-    multiplexing < 80%)."""
+    multiplexing < 80%). Currently unused by the active plots; kept
+    available for future figures."""
     mux = row.get("min_mux_pct", math.nan)
     if isinstance(mux, float) and math.isfinite(mux) and mux < 80.0:
         return 0.35
@@ -284,7 +223,40 @@ def alpha_for(row: dict) -> float:
 
 
 # ---------------------------------------------------------------------
-# 4. Individual figures
+# 4. Helpers shared across plots
+# ---------------------------------------------------------------------
+
+def _line_per_variant(ax, by_variant, ms, key, ylabel, title,
+                      log_y: bool = False, hline=None):
+    """Draw one line per variant on `ax`, taking the value of `key`
+    from each row. Used by the cache hierarchy multi-panel figure."""
+    for variant in VARIANTS:
+        rows = by_variant.get(variant, [])
+        by_m = {r["m"]: r[key] for r in rows}
+        ys = [by_m.get(m, math.nan) for m in ms]
+        clean = [(m, y) for m, y in zip(ms, ys)
+                 if isinstance(y, float) and math.isfinite(y)]
+        if not clean:
+            continue
+        xs_clean, ys_clean = zip(*clean)
+        st = style_for(variant)
+        ax.plot(xs_clean, ys_clean,
+                color=st["color"], marker=st["marker"],
+                linewidth=1.6, markersize=6, label=st["label"])
+    ax.set_xscale("log", base=2)
+    if log_y:
+        ax.set_yscale("log")
+    if hline is not None:
+        ax.axhline(hline, color="black", linestyle=":",
+                   linewidth=1.0, alpha=0.7)
+    ax.set_xlabel("m (log2 scale)")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title, fontsize=10)
+    ax.grid(True, which="both", alpha=0.3)
+
+
+# ---------------------------------------------------------------------
+# 5. Individual figures
 # ---------------------------------------------------------------------
 
 def plot_gflops_vs_m(by_variant, ms_all, out_path):
@@ -315,55 +287,10 @@ def plot_gflops_vs_m(by_variant, ms_all, out_path):
     plt.close(fig)
 
 
-def plot_speedup_vs_naive(by_variant, ms_all, out_path):
-    """Figure 2. Speedup over naive(m), per variant. Removes the m
-    effect from the comparison so the algorithmic gain is the only
-    signal."""
-    import matplotlib.pyplot as plt
-
-    naive_by_m = {r["m"]: r["gflops"] for r in by_variant.get("naive", [])}
-
-    fig, ax = plt.subplots(figsize=(10, 6.5))
-    for variant in VARIANTS:
-        if variant == "naive":
-            continue
-        rows = by_variant.get(variant, [])
-        if not rows:
-            continue
-        xs, ys = [], []
-        for r in rows:
-            m = r["m"]
-            g = r["gflops"]
-            base = naive_by_m.get(m)
-            if base is None or not math.isfinite(base) or base == 0:
-                continue
-            if not isinstance(g, float) or not math.isfinite(g):
-                continue
-            xs.append(m)
-            ys.append(g / base)
-        if not xs:
-            continue
-        st = style_for(variant)
-        ax.plot(xs, ys, color=st["color"], marker=st["marker"],
-                linewidth=1.6, markersize=7, label=st["label"])
-
-    ax.axhline(1.0, color="black", linestyle=":", linewidth=1.2,
-               alpha=0.6, label="naive baseline")
-    ax.set_xscale("log", base=2)
-    ax.set_yscale("log")
-    ax.set_xlabel("m (log2 scale)")
-    ax.set_ylabel("Speedup over naive (log scale)")
-    ax.set_title(f"Speedup vs naive baseline  -  {CPU_LABEL}")
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(loc="upper left", ncol=2, fontsize=8)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-
 def plot_best_per_family(by_variant, ms_all, out_path):
-    """Figure 3. Executive plot: only the curated subset of variants
-    that represents the optimization arc."""
+    """Figure 2. Executive plot: only the curated subset of variants
+    that represents the optimization arc, plus the theoretical
+    single-core and all-core peak GFLOPS ceilings."""
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(10, 6.5))
@@ -377,7 +304,10 @@ def plot_best_per_family(by_variant, ms_all, out_path):
         ax.plot(xs, ys, color=st["color"], marker=st["marker"],
                 linewidth=2.0, markersize=9, label=st["label"])
 
-    # Reference ceilings.
+    # Reference ceilings: theoretical peak FP32 throughput on the
+    # 4600H, computed as (peak FMA uops/cycle) x (FLOPs per FMA) x
+    # frequency. Single-core uses the higher sustained AVX2 boost;
+    # all-core uses the lower sustained AVX2 boost x NUM_CORES.
     ax.axhline(PEAK_SC_GFLOPS, color="black", linestyle="--",
                linewidth=1.0, alpha=0.6,
                label=f"single-core peak ~{PEAK_SC_GFLOPS:.0f} GFLOPS")
@@ -397,149 +327,8 @@ def plot_best_per_family(by_variant, ms_all, out_path):
     plt.close(fig)
 
 
-def plot_efficiency_pct_peak(by_variant, ms_all, out_path):
-    """Figure 4. fp_ops_per_cycle expressed as % of the Zen 2 peak
-    (16 ops/cycle/core, single core)."""
-    import numpy as np
-    import matplotlib.pyplot as plt
-
-    ms = sorted(ms_all)
-    n_var = len(VARIANTS)
-    width = 0.8 / n_var
-    x = np.arange(len(ms))
-
-    fig, ax = plt.subplots(figsize=(13, 6))
-    for idx, variant in enumerate(VARIANTS):
-        rows = by_variant.get(variant, [])
-        by_m = {r["m"]: r["fp_ops_per_cycle"] for r in rows}
-        ys = []
-        for m in ms:
-            v = by_m.get(m, math.nan)
-            if isinstance(v, float) and math.isfinite(v):
-                # Note: fp_ops_per_cycle from perf counts SSE/AVX ops
-                # globally; for OMP variants the counter aggregates
-                # across all cores. The 'peak' here is single-core,
-                # so OMP variants legitimately can exceed 100%.
-                ys.append(100.0 * v / PEAK_FP_OPS_PER_CYCLE_PER_CORE)
-            else:
-                ys.append(math.nan)
-        offset = (idx - (n_var - 1) / 2.0) * width
-        st = style_for(variant)
-        ax.bar(x + offset, ys, width,
-               color=st["color"], label=st["label"])
-
-    ax.axhline(100.0, color="black", linestyle="--", linewidth=1.0,
-               alpha=0.7, label="single-core peak (16 ops/cyc)")
-    ax.set_xticks(x)
-    ax.set_xticklabels([str(m) for m in ms])
-    ax.set_xlabel("m")
-    ax.set_ylabel("% of single-core FP32 peak")
-    ax.set_title(f"Vector efficiency vs Zen 2 peak  -  {CPU_LABEL}")
-    ax.grid(True, axis="y", alpha=0.3)
-    ax.legend(loc="upper left", ncol=2, fontsize=8)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-
-def _bar_grouped(ax, by_variant, ms, key, ylabel, title, ylim_top=None):
-    """Grouped-bar helper used by plot_perf_breakdown."""
-    import numpy as np
-    n_var = len(VARIANTS)
-    width = 0.8 / n_var
-    x = np.arange(len(ms))
-    for idx, variant in enumerate(VARIANTS):
-        rows = by_variant.get(variant, [])
-        by_m = {r["m"]: r[key] for r in rows}
-        ys = [by_m.get(m, math.nan) for m in ms]
-        offset = (idx - (n_var - 1) / 2.0) * width
-        st = style_for(variant)
-        ax.bar(x + offset, ys, width,
-               color=st["color"], label=st["label"])
-    ax.set_xticks(x)
-    ax.set_xticklabels([str(m) for m in ms])
-    ax.set_xlabel("m")
-    ax.set_ylabel(ylabel)
-    ax.set_title(title, fontsize=10)
-    ax.grid(True, axis="y", alpha=0.3)
-    if ylim_top is not None:
-        ax.set_ylim(top=ylim_top)
-
-
-def _line_per_variant(ax, by_variant, ms, key, ylabel, title,
-                      log_y: bool = False, hline=None):
-    """Line-per-variant helper used by plot_perf_breakdown."""
-    for variant in VARIANTS:
-        rows = by_variant.get(variant, [])
-        by_m = {r["m"]: r[key] for r in rows}
-        ys = [by_m.get(m, math.nan) for m in ms]
-        clean = [(m, y) for m, y in zip(ms, ys)
-                 if isinstance(y, float) and math.isfinite(y)]
-        if not clean:
-            continue
-        xs_clean, ys_clean = zip(*clean)
-        st = style_for(variant)
-        ax.plot(xs_clean, ys_clean,
-                color=st["color"], marker=st["marker"],
-                linewidth=1.6, markersize=6, label=st["label"])
-    ax.set_xscale("log", base=2)
-    if log_y:
-        ax.set_yscale("log")
-    if hline is not None:
-        ax.axhline(hline, color="black", linestyle=":",
-                   linewidth=1.0, alpha=0.7)
-    ax.set_xlabel("m (log2 scale)")
-    ax.set_ylabel(ylabel)
-    ax.set_title(title, fontsize=10)
-    ax.grid(True, which="both", alpha=0.3)
-
-
-def plot_perf_breakdown(by_variant, ms_all, out_path):
-    """Figure 5. 2x2 panel summarizing perf counters: IPC,
-    FP ops / cycle, L3 miss rate, TLB walks per kinst."""
-    import matplotlib.pyplot as plt
-
-    ms = sorted(ms_all)
-
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    (ax_ipc, ax_fp), (ax_l3, ax_tlb) = axes
-
-    _bar_grouped(ax_ipc, by_variant, ms, "ipc",
-                 "Instructions per cycle (IPC)",
-                 "(a) IPC per variant and m")
-
-    _bar_grouped(ax_fp, by_variant, ms, "fp_ops_per_cycle",
-                 "FP ops per cycle",
-                 "(b) FMA throughput (FP32 ops / cycle)")
-    ax_fp.axhline(PEAK_FP_OPS_PER_CYCLE_PER_CORE,
-                  color="black", linestyle=":", linewidth=1.2,
-                  alpha=0.8,
-                  label=f"peak {PEAK_FP_OPS_PER_CYCLE_PER_CORE} "
-                        "(2 FMA x 8 lanes)")
-    ax_fp.legend(loc="upper left", fontsize=8)
-
-    _line_per_variant(ax_l3, by_variant, ms, "l3_miss_rate",
-                      "L3 miss rate (cache-misses / l2_request)",
-                      "(c) L3 miss rate vs m (cliff at m ~ 1024 for naive)")
-
-    _line_per_variant(ax_tlb, by_variant, ms, "tlb_walk_per_kinst",
-                      "TLB walks per 1000 instructions",
-                      "(d) TLB walks per kinst (log scale)",
-                      log_y=True)
-
-    handles, labels = ax_ipc.get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center",
-               ncol=min(len(VARIANTS), 7),
-               bbox_to_anchor=(0.5, -0.02),
-               frameon=False, fontsize=9)
-    fig.suptitle(f"Perf counter breakdown  -  {CPU_LABEL}", fontsize=12)
-    fig.tight_layout(rect=(0, 0.04, 1, 0.96))
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-
 def plot_cache_hierarchy(by_variant, ms_all, out_path):
-    """Figure 6. Three panels covering the cache hierarchy: L1D miss
+    """Figure 3. Three panels covering the cache hierarchy: L1D miss
     rate, L2 load hit rate, L3 miss rate. Each panel has one line per
     variant. Together they show at which level each variant breaks."""
     import matplotlib.pyplot as plt
@@ -572,11 +361,11 @@ def plot_cache_hierarchy(by_variant, ms_all, out_path):
 
 
 def plot_omp_scaling(by_variant, ms_all, out_path):
-    """Figure 7. Side-by-side bars comparing the single-core AVX2
+    """Figure 4. Side-by-side bars comparing the single-core AVX2
     variant against its OpenMP counterpart, for both morton and
-    tiled_ikj. Speedup vs single-thread version is annotated on top
-    of the OMP bar; parallel efficiency = speedup / NUM_CORES is
-    shown below."""
+    tiled_ikj. Speedup vs single-thread is annotated on top of the
+    OMP bar; parallel efficiency = speedup / NUM_CORES is shown
+    next to it."""
     import numpy as np
     import matplotlib.pyplot as plt
 
@@ -585,11 +374,9 @@ def plot_omp_scaling(by_variant, ms_all, out_path):
         ("tiled_ikj_avx2", "tiled_ikj_omp"),
     )
 
-    # Use only m values that have both variants in at least one pair.
     ms = sorted(ms_all)
 
-    fig, axes = plt.subplots(1, 2, figsize=(15, 6),
-                             sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(15, 6), sharey=True)
 
     for ax, (sc_var, omp_var) in zip(axes, pairs):
         sc_by_m  = {r["m"]: r["gflops"]
@@ -642,101 +429,8 @@ def plot_omp_scaling(by_variant, ms_all, out_path):
     plt.close(fig)
 
 
-def plot_roofline(by_variant, ms_all, out_path):
-    """Figure 8. Roofline anchored to the 4600H. Memory ceilings
-    (diagonal lines): L1D / L2 / L3 / DRAM bandwidth. Compute
-    ceilings (horizontal lines): single-core peak and all-core
-    peak.
-
-    Each variant is plotted at one point per m, with:
-        x = theoretical operational intensity (see INTENSITY_ESTIMATE,
-            documented above; based on algorithmic reuse, not measured
-            from perf, because the consolidated CSV stores rates
-            instead of raw load / l2_request counts).
-        y = measured GFLOPS.
-
-    Marker size encodes m (bigger m = bigger marker).
-    """
-    import numpy as np
-    import matplotlib.pyplot as plt
-
-    fig, ax = plt.subplots(figsize=(11, 7.5))
-
-    # Memory ceilings (diagonals).
-    intensity = np.logspace(-1.5, 3.5, 200)
-    ceilings = (
-        ("L1D BW (1 core)",  BW_L1D_SC,   "tab:cyan",   "-"),
-        ("L2  BW (1 core)",  BW_L2_SC,    "tab:green",  "--"),
-        ("L3  BW (shared)",  BW_L3_AGG,   "tab:olive",  "-."),
-        ("DRAM BW",          BW_DRAM,     "tab:red",    ":"),
-    )
-    for label, bw, color, ls in ceilings:
-        ax.plot(intensity, bw * intensity, color=color, linestyle=ls,
-                linewidth=1.2, alpha=0.7,
-                label=f"{label} = {bw:.0f} GB/s")
-
-    # Compute ceilings (horizontals).
-    ax.axhline(PEAK_SC_GFLOPS, color="black", linestyle="--",
-               linewidth=1.0, alpha=0.7,
-               label=f"single-core peak ~{PEAK_SC_GFLOPS:.0f} GFLOPS")
-    ax.axhline(PEAK_AC_GFLOPS, color="black", linestyle="-",
-               linewidth=1.0, alpha=0.7,
-               label=f"all-core peak ~{PEAK_AC_GFLOPS:.0f} GFLOPS")
-
-    # Each variant: one marker per m.
-    ms_sorted = sorted(ms_all)
-    ms_min, ms_max = ms_sorted[0], ms_sorted[-1]
-
-    def marker_size(m):
-        if ms_max == ms_min:
-            return 90
-        t = (math.log2(m) - math.log2(ms_min)) / (
-            math.log2(ms_max) - math.log2(ms_min))
-        return 50 + t * 250
-
-    for variant in VARIANTS:
-        rows = by_variant.get(variant, [])
-        if not rows:
-            continue
-        intensity_x = INTENSITY_ESTIMATE.get(variant)
-        if intensity_x is None:
-            continue
-        st = style_for(variant)
-        xs, ys, sizes = [], [], []
-        for r in rows:
-            g = r["gflops"]
-            if not isinstance(g, float) or not math.isfinite(g):
-                continue
-            xs.append(intensity_x)
-            ys.append(g)
-            sizes.append(marker_size(r["m"]))
-        if not xs:
-            continue
-        ax.scatter(xs, ys, s=sizes,
-                   color=st["color"], marker=st["marker"],
-                   edgecolor="black", linewidth=0.6,
-                   alpha=0.85, label=st["label"], zorder=5)
-
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.set_xlim(0.05, 2000)
-    ax.set_ylim(0.05, max(PEAK_AC_GFLOPS * 1.5, 500))
-    ax.set_xlabel("Operational intensity (FP32 FLOPs / DRAM byte, "
-                  "theoretical)")
-    ax.set_ylabel("Measured throughput (GFLOPS)")
-    ax.set_title(f"Roofline  -  {CPU_LABEL}\n"
-                 "Marker size scales with m. Intensities per variant "
-                 "are algorithmic estimates.",
-                 fontsize=10)
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(loc="lower right", fontsize=7, ncol=2)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-
 # ---------------------------------------------------------------------
-# 5. Driver
+# 6. Driver
 # ---------------------------------------------------------------------
 
 def main() -> int:
@@ -777,14 +471,10 @@ def main() -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     figures = (
-        ("gflops_vs_m.png",         plot_gflops_vs_m),
-        ("speedup_vs_naive.png",    plot_speedup_vs_naive),
-        ("best_per_family.png",     plot_best_per_family),
-        ("efficiency_pct_peak.png", plot_efficiency_pct_peak),
-        ("perf_breakdown.png",      plot_perf_breakdown),
-        ("cache_hierarchy.png",     plot_cache_hierarchy),
-        ("omp_scaling.png",         plot_omp_scaling),
-        ("roofline.png",            plot_roofline),
+        ("gflops_vs_m.png",     plot_gflops_vs_m),
+        ("best_per_family.png", plot_best_per_family),
+        ("cache_hierarchy.png", plot_cache_hierarchy),
+        ("omp_scaling.png",     plot_omp_scaling),
     )
 
     written = 0
