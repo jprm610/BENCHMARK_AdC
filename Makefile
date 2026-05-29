@@ -19,6 +19,7 @@
 #   make tests         -> build + run all unit tests (fast, run first)
 #   make validate      -> tests + run all validate_* (correctness gate)
 #   make results       -> build + perf sweep -> results/metrics.csv
+#   make plots         -> render figures from results/metrics.csv into plots/
 #   make clean         -> remove binaries and object files
 #   make distclean     -> clean + remove results/*.csv and plots/*
 #
@@ -206,7 +207,7 @@ ALL_TESTS := \
         test_matrix_utils test_morton \
         test_kernel_avx2_morton test_kernel_avx2_tiled \
         profile_zen2 profile_zen2_one profile_zen2_omp \
-        consolidate_zen2 plot_perf_zen2 \
+        consolidate_zen2 plots \
         clean distclean
 
 # ── 6. MAIN TARGETS ───────────────────────────────────────────────────
@@ -394,8 +395,10 @@ consolidate_zen2:
 
 # ── 9. ANALYSIS & AUXILIARY ───────────────────────────────────────────
 
-plot_perf_zen2:
-	python3 scripts/plot_perf_zen2.py
+# Render all figures from results/metrics.csv into plots/.
+# Run after `make results` (which produces results/metrics.csv).
+plots:
+	python3 scripts/plot_metrics.py
 
 # Unit tests (build + run). Each target builds + runs a single test;
 # the aggregate target `tests` (Section 6) runs all of them in order.
