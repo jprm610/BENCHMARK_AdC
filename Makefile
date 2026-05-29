@@ -11,15 +11,22 @@
 #     tiled_ikj/          matmul_tiled_ikj{,_avx2,_omp}.{c,h}
 #   src/drivers/bench/    bench_*.c  (one per algorithm)
 #   src/drivers/validate/ validate_*.c
-#   src/tests/            test_morton.c, test_kernel_avx2.c
+#   src/tests/            test_matrix_utils.c, test_morton.c,
+#                         test_kernel_avx2_morton.c, test_kernel_avx2_tiled.c
 #
 # Key targets:
-#   make build         -> compile all bench + validate binaries
-#   make validate_all  -> build + run all validate_* (correctness gate)
+#   make build         -> compile all bench + validate + test binaries
+#   make tests         -> build + run all unit tests (fast, run first)
+#   make validate      -> tests + run all validate_* (correctness gate)
 #   make results       -> build + perf sweep -> results/metrics.csv
 #   make plots         -> render figures from results/metrics.csv into plots/
 #   make clean         -> remove binaries and object files
 #   make distclean     -> clean + remove results/*.csv and plots/*
+#
+# Binary layout under bin/:
+#   bin/bench/      bench_*_O3      (benchmark drivers, -O3)
+#   bin/validate/   validate_*_O0   (correctness drivers, mostly -O0 for clarity)
+#   bin/tests/      test_*          (unit tests for core/ and microkernels/)
 #
 # Sweep knobs (pass on the command line):
 #   MS=<sizes>   size list for run_perf_zen2_sweep.sh  (e.g. MS="1024 4096")
@@ -46,8 +53,11 @@ BENCH_DIR    := $(SRC_DIR)/drivers/bench
 VALIDATE_DIR := $(SRC_DIR)/drivers/validate
 TESTS_DIR    := $(SRC_DIR)/tests
 
-BIN_DIR := bin
-OBJ_DIR := build
+BIN_DIR          := bin
+BIN_BENCH_DIR    := $(BIN_DIR)/bench
+BIN_VALIDATE_DIR := $(BIN_DIR)/validate
+BIN_TESTS_DIR    := $(BIN_DIR)/tests
+OBJ_DIR          := build
 
 INCS := -I$(CORE_DIR) -I$(MK_DIR) \
         -I$(NAIVE_DIR) -I$(LOOPS_DIR) -I$(MORTON_DIR) -I$(TILED_DIR)
@@ -74,24 +84,24 @@ KERNEL_TILED_H  := $(MK_DIR)/kernel_avx2_tiled.h
 # --- naive ---
 BENCH_NAIVE_SRCS    := $(COMMON_SRCS) $(BENCH_DIR)/bench_naive.c
 VALIDATE_NAIVE_SRCS := $(COMMON_SRCS) $(VALIDATE_DIR)/validate_naive.c
-BENCH_NAIVE_O3    := $(BIN_DIR)/bench_naive_O3
-VALIDATE_NAIVE_O0 := $(BIN_DIR)/validate_naive_O0
+BENCH_NAIVE_O3    := $(BIN_BENCH_DIR)/bench_naive_O3
+VALIDATE_NAIVE_O0 := $(BIN_VALIDATE_DIR)/validate_naive_O0
 
 # --- loops ---
 BENCH_LOOPS_SRCS    := $(COMMON_SRCS) $(LOOPS_DIR)/matmul_loops.c \
                        $(BENCH_DIR)/bench_loops.c
 VALIDATE_LOOPS_SRCS := $(COMMON_SRCS) $(LOOPS_DIR)/matmul_loops.c \
                        $(VALIDATE_DIR)/validate_loops.c
-BENCH_LOOPS_O3    := $(BIN_DIR)/bench_loops_O3
-VALIDATE_LOOPS_O0 := $(BIN_DIR)/validate_loops_O0
+BENCH_LOOPS_O3    := $(BIN_BENCH_DIR)/bench_loops_O3
+VALIDATE_LOOPS_O0 := $(BIN_VALIDATE_DIR)/validate_loops_O0
 
 # --- morton ---
 BENCH_MORTON_SRCS    := $(COMMON_SRCS) $(MORTON_DIR)/matmul_morton.c \
                         $(CORE_DIR)/morton.c $(BENCH_DIR)/bench_morton.c
 VALIDATE_MORTON_SRCS := $(COMMON_SRCS) $(MORTON_DIR)/matmul_morton.c \
                         $(CORE_DIR)/morton.c $(VALIDATE_DIR)/validate_morton.c
-BENCH_MORTON_O3    := $(BIN_DIR)/bench_morton_O3
-VALIDATE_MORTON_O0 := $(BIN_DIR)/validate_morton_O0
+BENCH_MORTON_O3    := $(BIN_BENCH_DIR)/bench_morton_O3
+VALIDATE_MORTON_O0 := $(BIN_VALIDATE_DIR)/validate_morton_O0
 
 # --- morton_avx2 ---
 MORTON_AVX2_BASE_SRCS := $(MORTON_DIR)/matmul_morton_avx2.c \
@@ -102,8 +112,8 @@ BENCH_MORTON_AVX2_SRCS    := $(MORTON_AVX2_BASE_SRCS) \
 VALIDATE_MORTON_AVX2_SRCS := $(MORTON_AVX2_BASE_SRCS) \
                               $(MORTON_DIR)/matmul_morton.c \
                               $(VALIDATE_DIR)/validate_morton_avx2.c
-BENCH_MORTON_AVX2_O3    := $(BIN_DIR)/bench_morton_avx2_O3
-VALIDATE_MORTON_AVX2_O3 := $(BIN_DIR)/validate_morton_avx2_O3
+BENCH_MORTON_AVX2_O3    := $(BIN_BENCH_DIR)/bench_morton_avx2_O3
+VALIDATE_MORTON_AVX2_O3 := $(BIN_VALIDATE_DIR)/validate_morton_avx2_O3
 
 # --- morton_omp ---
 MORTON_OMP_BASE_SRCS := $(MORTON_DIR)/matmul_morton_omp.c \
@@ -115,40 +125,49 @@ BENCH_MORTON_OMP_SRCS    := $(MORTON_OMP_BASE_SRCS) \
 VALIDATE_MORTON_OMP_SRCS := $(MORTON_OMP_BASE_SRCS) \
                              $(MORTON_DIR)/matmul_morton.c \
                              $(VALIDATE_DIR)/validate_morton_omp.c
-BENCH_MORTON_OMP_O3    := $(BIN_DIR)/bench_morton_omp_O3
-VALIDATE_MORTON_OMP_O3 := $(BIN_DIR)/validate_morton_omp_O3
+BENCH_MORTON_OMP_O3    := $(BIN_BENCH_DIR)/bench_morton_omp_O3
+VALIDATE_MORTON_OMP_O3 := $(BIN_VALIDATE_DIR)/validate_morton_omp_O3
 
 # --- tiled_ikj ---
 BENCH_TILED_IKJ_SRCS    := $(COMMON_SRCS) $(TILED_DIR)/matmul_tiled_ikj.c \
                             $(BENCH_DIR)/bench_tiled_ikj.c
 VALIDATE_TILED_IKJ_SRCS := $(COMMON_SRCS) $(TILED_DIR)/matmul_tiled_ikj.c \
                             $(VALIDATE_DIR)/validate_tiled_ikj.c
-BENCH_TILED_IKJ_O3    := $(BIN_DIR)/bench_tiled_ikj_O3
-VALIDATE_TILED_IKJ_O0 := $(BIN_DIR)/validate_tiled_ikj_O0
+BENCH_TILED_IKJ_O3    := $(BIN_BENCH_DIR)/bench_tiled_ikj_O3
+VALIDATE_TILED_IKJ_O0 := $(BIN_VALIDATE_DIR)/validate_tiled_ikj_O0
 
 # --- tiled_ikj_avx2 ---
 BENCH_TILED_IKJ_AVX2_SRCS    := $(COMMON_SRCS) $(TILED_DIR)/matmul_tiled_ikj_avx2.c \
                                  $(BENCH_DIR)/bench_tiled_ikj_avx2.c
 VALIDATE_TILED_IKJ_AVX2_SRCS := $(COMMON_SRCS) $(TILED_DIR)/matmul_tiled_ikj_avx2.c \
                                  $(VALIDATE_DIR)/validate_tiled_ikj_avx2.c
-BENCH_TILED_IKJ_AVX2_O3    := $(BIN_DIR)/bench_tiled_ikj_avx2_O3
-VALIDATE_TILED_IKJ_AVX2_O3 := $(BIN_DIR)/validate_tiled_ikj_avx2_O3
+BENCH_TILED_IKJ_AVX2_O3    := $(BIN_BENCH_DIR)/bench_tiled_ikj_avx2_O3
+VALIDATE_TILED_IKJ_AVX2_O3 := $(BIN_VALIDATE_DIR)/validate_tiled_ikj_avx2_O3
 
 # --- tiled_ikj_omp ---
 BENCH_TILED_IKJ_OMP_SRCS    := $(COMMON_SRCS) $(TILED_DIR)/matmul_tiled_ikj_omp.c \
                                 $(BENCH_DIR)/bench_tiled_ikj_omp.c
 VALIDATE_TILED_IKJ_OMP_SRCS := $(COMMON_SRCS) $(TILED_DIR)/matmul_tiled_ikj_omp.c \
                                 $(VALIDATE_DIR)/validate_tiled_ikj_omp.c
-BENCH_TILED_IKJ_OMP_O3    := $(BIN_DIR)/bench_tiled_ikj_omp_O3
-VALIDATE_TILED_IKJ_OMP_O3 := $(BIN_DIR)/validate_tiled_ikj_omp_O3
+BENCH_TILED_IKJ_OMP_O3    := $(BIN_BENCH_DIR)/bench_tiled_ikj_omp_O3
+VALIDATE_TILED_IKJ_OMP_O3 := $(BIN_VALIDATE_DIR)/validate_tiled_ikj_omp_O3
 
 # --- tests ---
+# Unit tests for the building blocks (core/, microkernels/). Output goes
+# to bin/tests/, parallel to bin/bench/ and bin/validate/ so each binary
+# family lives in its own subdirectory.
+TEST_MATRIX_UTILS_SRCS := $(CORE_DIR)/matrix_utils.c \
+                          $(TESTS_DIR)/test_matrix_utils.c
+TEST_MATRIX_UTILS      := $(BIN_TESTS_DIR)/test_matrix_utils
+
 TEST_MORTON_SRCS := $(CORE_DIR)/morton.c $(CORE_DIR)/matrix_utils.c \
                     $(TESTS_DIR)/test_morton.c
-TEST_MORTON      := $(BIN_DIR)/test_morton
-TEST_KERNEL_AVX2 := $(BIN_DIR)/test_kernel_avx2
+TEST_MORTON      := $(BIN_TESTS_DIR)/test_morton
 
-# Aggregate lists used by build / validate_all / results.
+TEST_KERNEL_AVX2_MORTON := $(BIN_TESTS_DIR)/test_kernel_avx2_morton
+TEST_KERNEL_AVX2_TILED  := $(BIN_TESTS_DIR)/test_kernel_avx2_tiled
+
+# Aggregate lists used by build / validate / results.
 ALL_BENCH := \
     $(BENCH_NAIVE_O3) \
     $(BENCH_LOOPS_O3) \
@@ -169,8 +188,14 @@ ALL_VALIDATE := \
     $(VALIDATE_TILED_IKJ_AVX2_O3) \
     $(VALIDATE_TILED_IKJ_OMP_O3)
 
+ALL_TESTS := \
+    $(TEST_MATRIX_UTILS) \
+    $(TEST_MORTON) \
+    $(TEST_KERNEL_AVX2_MORTON) \
+    $(TEST_KERNEL_AVX2_TILED)
+
 # ── 5. .PHONY ─────────────────────────────────────────────────────────
-.PHONY: all build validate_all results \
+.PHONY: all build tests validate results \
         bench_naive_O3 validate_naive \
         bench_loops_O3 validate_loops \
         bench_morton_O3 validate_morton \
@@ -179,20 +204,38 @@ ALL_VALIDATE := \
         bench_tiled_ikj_O3 validate_tiled_ikj \
         bench_tiled_ikj_avx2_O3 validate_tiled_ikj_avx2 \
         bench_tiled_ikj_omp_O3 validate_tiled_ikj_omp \
-        test_morton test_kernel_avx2 \
+        test_matrix_utils test_morton \
+        test_kernel_avx2_morton test_kernel_avx2_tiled \
         profile_zen2 profile_zen2_one profile_zen2_omp \
         consolidate_zen2 plots \
         clean distclean
 
 # ── 6. MAIN TARGETS ───────────────────────────────────────────────────
 
-# Compile all bench + validate binaries without running anything.
-build: $(ALL_BENCH) $(ALL_VALIDATE)
+# Compile all bench + validate + test binaries without running anything.
+build: $(ALL_BENCH) $(ALL_VALIDATE) $(ALL_TESTS)
 
 all: build
 
+# Build and run all unit tests in sequence; stops on first failure.
+# The unit tests guard the building blocks (matrix_utils, morton, the
+# two AVX2 microkernels) in isolation. They are cheap, so they run
+# before validate as a fast pre-flight check.
+tests: $(ALL_TESTS)
+	@echo "=== test_matrix_utils ==="
+	./$(TEST_MATRIX_UTILS)
+	@echo "=== test_morton ==="
+	./$(TEST_MORTON)
+	@echo "=== test_kernel_avx2_morton ==="
+	./$(TEST_KERNEL_AVX2_MORTON)
+	@echo "=== test_kernel_avx2_tiled ==="
+	./$(TEST_KERNEL_AVX2_TILED)
+	@echo "All unit tests passed."
+
 # Build and run all validate_* in sequence; stops on first failure.
-validate_all: $(ALL_VALIDATE)
+# Depends on tests: if the building blocks are broken there is no point
+# in running the algebraic invariants.
+validate: tests $(ALL_VALIDATE)
 	@echo "=== validate_naive ==="
 	./$(VALIDATE_NAIVE_O0)
 	@echo "=== validate_loops ==="
@@ -231,6 +274,15 @@ distclean: clean
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
+$(BIN_BENCH_DIR): | $(BIN_DIR)
+	mkdir -p $(BIN_BENCH_DIR)
+
+$(BIN_VALIDATE_DIR): | $(BIN_DIR)
+	mkdir -p $(BIN_VALIDATE_DIR)
+
+$(BIN_TESTS_DIR): | $(BIN_DIR)
+	mkdir -p $(BIN_TESTS_DIR)
+
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)
 
@@ -238,80 +290,80 @@ $(OBJ_DIR):
 bench_naive_O3: $(BENCH_NAIVE_O3)
 validate_naive:  $(VALIDATE_NAIVE_O0)
 
-$(BENCH_NAIVE_O3): $(BENCH_NAIVE_SRCS) | $(BIN_DIR)
+$(BENCH_NAIVE_O3): $(BENCH_NAIVE_SRCS) | $(BIN_BENCH_DIR)
 	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_NAIVE_SRCS) -o $@ $(LIBS)
 
-$(VALIDATE_NAIVE_O0): $(VALIDATE_NAIVE_SRCS) | $(BIN_DIR)
+$(VALIDATE_NAIVE_O0): $(VALIDATE_NAIVE_SRCS) | $(BIN_VALIDATE_DIR)
 	$(CC) $(BASE_CFLAGS) $(VALIDATE_NAIVE_SRCS) -o $@ $(LIBS)
 
 # loops
 bench_loops_O3: $(BENCH_LOOPS_O3)
 validate_loops:  $(VALIDATE_LOOPS_O0)
 
-$(BENCH_LOOPS_O3): $(BENCH_LOOPS_SRCS) | $(BIN_DIR)
+$(BENCH_LOOPS_O3): $(BENCH_LOOPS_SRCS) | $(BIN_BENCH_DIR)
 	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_LOOPS_SRCS) -o $@ $(LIBS)
 
-$(VALIDATE_LOOPS_O0): $(VALIDATE_LOOPS_SRCS) | $(BIN_DIR)
+$(VALIDATE_LOOPS_O0): $(VALIDATE_LOOPS_SRCS) | $(BIN_VALIDATE_DIR)
 	$(CC) $(BASE_CFLAGS) $(VALIDATE_LOOPS_SRCS) -o $@ $(LIBS)
 
 # morton
 bench_morton_O3: $(BENCH_MORTON_O3)
 validate_morton:  $(VALIDATE_MORTON_O0)
 
-$(BENCH_MORTON_O3): $(BENCH_MORTON_SRCS) | $(BIN_DIR)
+$(BENCH_MORTON_O3): $(BENCH_MORTON_SRCS) | $(BIN_BENCH_DIR)
 	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_MORTON_SRCS) -o $@ $(LIBS)
 
-$(VALIDATE_MORTON_O0): $(VALIDATE_MORTON_SRCS) | $(BIN_DIR)
+$(VALIDATE_MORTON_O0): $(VALIDATE_MORTON_SRCS) | $(BIN_VALIDATE_DIR)
 	$(CC) $(BASE_CFLAGS) $(VALIDATE_MORTON_SRCS) -o $@ $(LIBS)
 
 # morton_avx2
 bench_morton_avx2_O3: $(BENCH_MORTON_AVX2_O3)
 validate_morton_avx2:  $(VALIDATE_MORTON_AVX2_O3)
 
-$(BENCH_MORTON_AVX2_O3): $(BENCH_MORTON_AVX2_SRCS) $(KERNEL_MORTON_H) | $(BIN_DIR)
+$(BENCH_MORTON_AVX2_O3): $(BENCH_MORTON_AVX2_SRCS) $(KERNEL_MORTON_H) | $(BIN_BENCH_DIR)
 	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_MORTON_AVX2_SRCS) -o $@ $(LIBS)
 
-$(VALIDATE_MORTON_AVX2_O3): $(VALIDATE_MORTON_AVX2_SRCS) $(KERNEL_MORTON_H) | $(BIN_DIR)
+$(VALIDATE_MORTON_AVX2_O3): $(VALIDATE_MORTON_AVX2_SRCS) $(KERNEL_MORTON_H) | $(BIN_VALIDATE_DIR)
 	$(CC) $(CFLAGS_O3_ZEN2) $(VALIDATE_MORTON_AVX2_SRCS) -o $@ $(LIBS)
 
 # morton_omp
 bench_morton_omp_O3: $(BENCH_MORTON_OMP_O3)
 validate_morton_omp:  $(VALIDATE_MORTON_OMP_O3)
 
-$(BENCH_MORTON_OMP_O3): $(BENCH_MORTON_OMP_SRCS) $(KERNEL_MORTON_H) | $(BIN_DIR)
+$(BENCH_MORTON_OMP_O3): $(BENCH_MORTON_OMP_SRCS) $(KERNEL_MORTON_H) | $(BIN_BENCH_DIR)
 	$(CC) $(CFLAGS_OMP_ZEN2) $(BENCH_MORTON_OMP_SRCS) -o $@ $(LIBS)
 
-$(VALIDATE_MORTON_OMP_O3): $(VALIDATE_MORTON_OMP_SRCS) $(KERNEL_MORTON_H) | $(BIN_DIR)
+$(VALIDATE_MORTON_OMP_O3): $(VALIDATE_MORTON_OMP_SRCS) $(KERNEL_MORTON_H) | $(BIN_VALIDATE_DIR)
 	$(CC) $(CFLAGS_OMP_ZEN2) $(VALIDATE_MORTON_OMP_SRCS) -o $@ $(LIBS)
 
 # tiled_ikj
 bench_tiled_ikj_O3: $(BENCH_TILED_IKJ_O3)
 validate_tiled_ikj:  $(VALIDATE_TILED_IKJ_O0)
 
-$(BENCH_TILED_IKJ_O3): $(BENCH_TILED_IKJ_SRCS) | $(BIN_DIR)
+$(BENCH_TILED_IKJ_O3): $(BENCH_TILED_IKJ_SRCS) | $(BIN_BENCH_DIR)
 	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_TILED_IKJ_SRCS) -o $@ $(LIBS)
 
-$(VALIDATE_TILED_IKJ_O0): $(VALIDATE_TILED_IKJ_SRCS) | $(BIN_DIR)
+$(VALIDATE_TILED_IKJ_O0): $(VALIDATE_TILED_IKJ_SRCS) | $(BIN_VALIDATE_DIR)
 	$(CC) $(BASE_CFLAGS) $(VALIDATE_TILED_IKJ_SRCS) -o $@ $(LIBS)
 
 # tiled_ikj_avx2
 bench_tiled_ikj_avx2_O3: $(BENCH_TILED_IKJ_AVX2_O3)
 validate_tiled_ikj_avx2:  $(VALIDATE_TILED_IKJ_AVX2_O3)
 
-$(BENCH_TILED_IKJ_AVX2_O3): $(BENCH_TILED_IKJ_AVX2_SRCS) $(KERNEL_TILED_H) | $(BIN_DIR)
+$(BENCH_TILED_IKJ_AVX2_O3): $(BENCH_TILED_IKJ_AVX2_SRCS) $(KERNEL_TILED_H) | $(BIN_BENCH_DIR)
 	$(CC) $(CFLAGS_O3_ZEN2) $(BENCH_TILED_IKJ_AVX2_SRCS) -o $@ $(LIBS)
 
-$(VALIDATE_TILED_IKJ_AVX2_O3): $(VALIDATE_TILED_IKJ_AVX2_SRCS) $(KERNEL_TILED_H) | $(BIN_DIR)
+$(VALIDATE_TILED_IKJ_AVX2_O3): $(VALIDATE_TILED_IKJ_AVX2_SRCS) $(KERNEL_TILED_H) | $(BIN_VALIDATE_DIR)
 	$(CC) $(CFLAGS_O3_ZEN2) $(VALIDATE_TILED_IKJ_AVX2_SRCS) -o $@ $(LIBS)
 
 # tiled_ikj_omp
 bench_tiled_ikj_omp_O3: $(BENCH_TILED_IKJ_OMP_O3)
 validate_tiled_ikj_omp:  $(VALIDATE_TILED_IKJ_OMP_O3)
 
-$(BENCH_TILED_IKJ_OMP_O3): $(BENCH_TILED_IKJ_OMP_SRCS) $(KERNEL_TILED_H) | $(BIN_DIR)
+$(BENCH_TILED_IKJ_OMP_O3): $(BENCH_TILED_IKJ_OMP_SRCS) $(KERNEL_TILED_H) | $(BIN_BENCH_DIR)
 	$(CC) $(CFLAGS_OMP_ZEN2) $(BENCH_TILED_IKJ_OMP_SRCS) -o $@ $(LIBS)
 
-$(VALIDATE_TILED_IKJ_OMP_O3): $(VALIDATE_TILED_IKJ_OMP_SRCS) $(KERNEL_TILED_H) | $(BIN_DIR)
+$(VALIDATE_TILED_IKJ_OMP_O3): $(VALIDATE_TILED_IKJ_OMP_SRCS) $(KERNEL_TILED_H) | $(BIN_VALIDATE_DIR)
 	$(CC) $(CFLAGS_OMP_ZEN2) $(VALIDATE_TILED_IKJ_OMP_SRCS) -o $@ $(LIBS)
 
 # ── 8. PROFILE / SWEEP ────────────────────────────────────────────────
@@ -348,21 +400,42 @@ consolidate_zen2:
 plots:
 	python3 scripts/plot_metrics.py
 
-# Unit tests (build + run).
+# Unit tests (build + run). Each target builds + runs a single test;
+# the aggregate target `tests` (Section 6) runs all of them in order.
+# Test binaries live in bin/tests/, parallel to bin/bench/ and
+# bin/validate/.
+test_matrix_utils: $(TEST_MATRIX_UTILS)
+	./$(TEST_MATRIX_UTILS)
+
+$(TEST_MATRIX_UTILS): $(TEST_MATRIX_UTILS_SRCS) | $(BIN_TESTS_DIR)
+	$(CC) $(BASE_CFLAGS) $(TEST_MATRIX_UTILS_SRCS) -o $@ $(LIBS)
+
 test_morton: $(TEST_MORTON)
 	./$(TEST_MORTON)
 
-$(TEST_MORTON): $(TEST_MORTON_SRCS) | $(BIN_DIR)
+$(TEST_MORTON): $(TEST_MORTON_SRCS) | $(BIN_TESTS_DIR)
 	$(CC) $(BASE_CFLAGS) $(TEST_MORTON_SRCS) -o $@ $(LIBS)
 
-test_kernel_avx2: $(TEST_KERNEL_AVX2)
-	./$(TEST_KERNEL_AVX2)
+test_kernel_avx2_morton: $(TEST_KERNEL_AVX2_MORTON)
+	./$(TEST_KERNEL_AVX2_MORTON)
 
-$(TEST_KERNEL_AVX2): $(TESTS_DIR)/test_kernel_avx2.c \
-                     $(KERNEL_MORTON_H) \
-                     $(CORE_DIR)/matrix_utils.c $(CORE_DIR)/matrix_utils.h \
-                     $(NAIVE_DIR)/matmul_naive.h | $(BIN_DIR)
+$(TEST_KERNEL_AVX2_MORTON): $(TESTS_DIR)/test_kernel_avx2_morton.c \
+                            $(KERNEL_MORTON_H) \
+                            $(CORE_DIR)/matrix_utils.c \
+                            $(CORE_DIR)/matrix_utils.h | $(BIN_TESTS_DIR)
 	$(CC) $(CFLAGS_O3_ZEN2) \
-	      $(TESTS_DIR)/test_kernel_avx2.c \
+	      $(TESTS_DIR)/test_kernel_avx2_morton.c \
+	      $(CORE_DIR)/matrix_utils.c \
+	      -o $@ $(LIBS)
+
+test_kernel_avx2_tiled: $(TEST_KERNEL_AVX2_TILED)
+	./$(TEST_KERNEL_AVX2_TILED)
+
+$(TEST_KERNEL_AVX2_TILED): $(TESTS_DIR)/test_kernel_avx2_tiled.c \
+                           $(KERNEL_TILED_H) \
+                           $(CORE_DIR)/matrix_utils.c \
+                           $(CORE_DIR)/matrix_utils.h | $(BIN_TESTS_DIR)
+	$(CC) $(CFLAGS_O3_ZEN2) \
+	      $(TESTS_DIR)/test_kernel_avx2_tiled.c \
 	      $(CORE_DIR)/matrix_utils.c \
 	      -o $@ $(LIBS)

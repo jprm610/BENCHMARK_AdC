@@ -2,9 +2,39 @@
 
 **Proyecto:** Benchmark de Multiplicacion Iterada de Matrices
 **Curso:** Arquitectura de Computadores - UNAL Medellin
-**Estado:** Version inicial (Fase 1: baseline + profiling + escalamiento con $m$)
+**Hardware de referencia:** Ryzen 5 4600H (Renoir, Zen 2)
 
-Este documento describe el contrato publico de las funciones implementadas en `src/`. Las firmas estan en C (codigo y nombres en ingles). Las versiones futuras (transposicion, tiling, vectorizacion, OpenMP) **deben respetar las mismas firmas** para que el sistema de validacion siga funcionando sin modificacion.
+Este documento describe el contrato publico de las funciones expuestas en `src/`. Firmas en C, nombres y comentarios en ingles. La organizacion del documento sigue las capas del proyecto: `core`, `microkernels`, `algorithms`, `drivers`, `tests`.
+
+El estado consolidado por fase del proyecto (que kernels existen, que sesion los cerro) vive en la seccion 9 del [`README.md`](../README.md). Aqui solo se documenta el contrato API.
+
+---
+
+## 0. Tabla de contenidos
+
+1. [Convenciones generales](#1-convenciones-generales)
+2. [Capa `core`](#2-capa-core)
+   - 2.1 [`matrix_utils`](#21-matrix_utils)
+   - 2.2 [`timing`](#22-timing)
+   - 2.3 [`morton`](#23-morton)
+3. [Capa `microkernels`](#3-capa-microkernels)
+   - 3.1 [`kernel_avx2_morton`](#31-kernel_avx2_morton)
+   - 3.2 [`kernel_avx2_tiled`](#32-kernel_avx2_tiled)
+4. [Capa `algorithms`](#4-capa-algorithms)
+   - 4.1 [`matmul_naive`](#41-matmul_naive)
+   - 4.2 [`matmul_loops`](#42-matmul_loops)
+   - 4.3 [`matmul_tiled_ikj`](#43-matmul_tiled_ikj)
+   - 4.4 [`matmul_tiled_ikj_avx2`](#44-matmul_tiled_ikj_avx2)
+   - 4.5 [`matmul_tiled_ikj_omp`](#45-matmul_tiled_ikj_omp)
+   - 4.6 [`matmul_morton`](#46-matmul_morton)
+   - 4.7 [`matmul_morton_avx2`](#47-matmul_morton_avx2)
+   - 4.8 [`matmul_morton_omp`](#48-matmul_morton_omp)
+5. [Capa `drivers`](#5-capa-drivers)
+   - 5.1 [Convencion comun de los `bench_*`](#51-convencion-comun-de-los-bench_)
+   - 5.2 [Convencion comun de los `validate_*`](#52-convencion-comun-de-los-validate_)
+   - 5.3 [Tabla unificada de binarios](#53-tabla-unificada-de-binarios)
+6. [Capa `tests`](#6-capa-tests)
+7. [Versionado del documento](#7-versionado-del-documento)
 
 ---
 
@@ -12,129 +42,70 @@ Este documento describe el contrato publico de las funciones implementadas en `s
 
 ### 1.1 Tipo escalar
 
-Toda la implementacion usa `float` (IEEE 754 binary32, 4 bytes). Se centraliza con un `typedef`:
+Toda la implementacion usa `float` (IEEE 754 binary32, 4 bytes). El tipo se centraliza con un `typedef` en [`src/core/matrix_utils.h`](../src/core/matrix_utils.h):
 
 ```c
 typedef float scalar_t;
 ```
 
-Definido en [`src/core/matrix_utils.h`](../src/core/matrix_utils.h). Cambiar a `double` requeriria reemplazar este `typedef` y revisar tolerancias en `src/drivers/validate/validate_naive.c`.
+Cambiar a `double` requeriria reemplazar el `typedef` y revisar tolerancias en todos los [`src/drivers/validate/`](../src/drivers/validate).
 
 ### 1.2 Tipos enteros
 
-Todos los tamanos, conteos e indices usan `size_t` (entero sin signo, ancho de palabra del sistema). Para $m = 2^{20}$, $m \cdot m = 2^{40}$ desborda un `int` de 32 bits, por lo que el uso de `size_t` es obligatorio.
+Todos los tamanos, conteos e indices usan `size_t`. Para $m = 2^{20}$, $m \cdot m = 2^{40}$ desborda un `int` de 32 bits, por lo que `size_t` es obligatorio.
 
 ### 1.3 Layout de matrices
 
-Todas las matrices estan en **row-major** y se almacenan en buffers planos de tipo `scalar_t *`. Una matriz $M \in \mathbb{R}^{r \times c}$ ocupa `r * c` elementos contiguos. El elemento $M_{ij}$ se accede como:
+Por defecto **row-major** en buffers planos `scalar_t *`. Una matriz $M \in \mathbb{R}^{r \times c}$ ocupa `r * c` elementos contiguos:
 
 ```c
 M[(size_t)i * c + j]
 ```
 
-Si una version futura introduce padding ("leading dimension" $> c$) o un layout distinto (Morton, column-major), debera exponer una nueva firma; no se modificara la firma de las funciones aqui descritas.
+La familia Morton (Secciones 2.3, 4.6, 4.7, 4.8) introduce un layout alternativo para $A$; en ese caso el caller usa un buffer producido por `reorganize_to_morton*`. $B$ y $C$ siempre son row-major.
 
 ### 1.4 Alineacion
 
-Toda la memoria para matrices se aloja con alineacion de **64 bytes** (linea de cache en x86_64) usando `posix_memalign`. El allocador `xalloc_aligned` se encarga.
+Toda matriz se aloja con alineacion de **64 bytes** (linea de cache en x86_64) via `posix_memalign`. El allocador centralizado es `xalloc_aligned` (Seccion 2.1).
 
-### 1.5 Estilo de comentarios
+### 1.5 Contrato comun de firma
 
-Comentarios y nombres en ingles, sin emojis ni caracteres no ASCII (compatibilidad con teclado en espanol y portabilidad de fuentes).
+Todo kernel principal expone exactamente esta firma:
+
+```c
+void mm(scalar_t *C,
+        const scalar_t *A,
+        const scalar_t *B,
+        size_t m, size_t k, size_t n);
+```
+
+con $C$ de salida ($m \times n$, sobrescrito), $A$ de entrada ($m \times k$), $B$ de entrada ($k \times n$), sin aliasing entre los tres. Las variantes que requieren $A$ en un layout distinto (Morton) reciben el buffer ya convertido pero conservan la misma firma. Esta uniformidad permite que el sistema de validacion compare cualquier kernel nuevo contra `matmul_naive` sin cambios estructurales.
+
+### 1.6 Estilo de comentarios y nombres
+
+Comentarios y nombres en ingles, sin emojis ni caracteres no ASCII. Codigo `-Wall -Wextra -Wpedantic` limpio bajo `-std=c11`.
 
 ---
 
-## 2. Modulo `matmul_naive`
+## 2. Capa `core`
 
-**Archivo:** [`src/algorithms/naive/matmul_naive.h`](../src/algorithms/naive/matmul_naive.h), [`src/algorithms/naive/matmul_naive.c`](../src/algorithms/naive/matmul_naive.c).
+Modulos compartidos por todos los algoritmos. No dependen de ningun kernel; los kernels dependen de ellos.
 
-Contiene el kernel ingenuo $C = A \cdot B$ y el orquestador de la recurrencia $B_{i+1} = A \cdot B_i$.
+### 2.1 `matrix_utils`
 
-### 2.1 `matmul_naive`
+**Archivos:** [`src/core/matrix_utils.h`](../src/core/matrix_utils.h), [`src/core/matrix_utils.c`](../src/core/matrix_utils.c).
 
-```c
-void matmul_naive(scalar_t *C,
-                  const scalar_t *A,
-                  const scalar_t *B,
-                  size_t m, size_t k, size_t n);
-```
+Alocacion alineada, inicializacion y comparacion. Define el `typedef scalar_t` de la Seccion 1.1.
 
-**Computa** $C = A \cdot B$ con tres bucles anidados en orden `ijk`.
-
-**Parametros:**
-
-- `C` *(out)*: matriz de salida, tamano $m \times n$, row-major. El contenido previo se sobrescribe.
-- `A` *(in)*: matriz de entrada, tamano $m \times k$.
-- `B` *(in)*: matriz de entrada, tamano $k \times n$.
-- `m, k, n`: dimensiones de las matrices.
-
-**Precondiciones:**
-
-- Los tres punteros son no nulos y referencian buffers correctamente alojados.
-- $C$ no aliasa con $A$ ni con $B$.
-- Los buffers tienen suficiente memoria (`m * n`, `m * k`, `k * n` elementos respectivamente).
-
-**Postcondiciones:**
-
-- $C_{ij} = \sum_{p=0}^{k-1} A_{ip} B_{pj}$ para todo $(i, j)$.
-- $A$ y $B$ no son modificados.
-
-**Complejidad:** $2 \cdot m \cdot k \cdot n$ flops. Sin optimizacion de localidad (orden `ijk` produce stride $n$ al acceder a $B$).
-
-**Notas:** esta funcion es el baseline obligatorio del proyecto. **No** debe modificarse para introducir optimizaciones; las versiones optimizadas iran en nuevos modulos (`matmul_reordered.c`, `matmul_tiled_ikj.c`, etc.) con firmas analogas.
-
-### 2.2 `benchmark_iterations`
-
-```c
-void benchmark_iterations(scalar_t *B_out,
-                          const scalar_t *A,
-                          const scalar_t *Z,
-                          size_t m, size_t n,
-                          size_t num_iters);
-```
-
-**Computa** la recurrencia $B_{i+1} = A \cdot B_i$ con $B_0 = Z$, almacenando las primeras $n$ filas de cada $B_{i+1}$ en el buffer de salida.
-
-**Parametros:**
-
-- `B_out` *(out)*: buffer plano de tamano `num_iters * n * n` elementos. Los primeros $n^2$ elementos contienen las $n$ primeras filas de $B_1$ en row-major, los siguientes $n^2$ las de $B_2$, etc.
-- `A` *(in)*: matriz cuadrada $m \times m$, constante durante toda la ejecucion.
-- `Z` *(in)*: matriz inicial $m \times n$ ($B_0 = Z$).
-- `m, n`: dimensiones del benchmark. $n$ es el tamano del bloque (tipicamente 128).
-- `num_iters`: numero de iteraciones $I$ a ejecutar. Tipicamente $I = 2m/n$, pero se acepta cualquier valor positivo para permitir mediciones rapidas.
-
-**Implementacion interna:** usa dos buffers `B_curr` y `B_next` de tamano $m \times n$ con swap de punteros para evitar copias entre iteraciones. Aloja y libera ambos buffers internamente.
-
-**Precondiciones:**
-
-- $n \leq m$ (no se valida; el caller es responsable).
-- `B_out` tiene espacio para `num_iters * n * n` elementos.
-
-**Postcondiciones:**
-
-- Para cada `iter` en $[0, \text{num\_iters})$: `B_out[iter * n * n + i * n + j]` contiene $B_{\text{iter}+1}[i, j]$ para $0 \leq i < n$, $0 \leq j < n$.
-
-**Complejidad:** $2 m^2 n \cdot$ `num_iters` flops, mas $O(mn)$ copia de salida por iteracion.
-
----
-
-## 3. Modulo `matrix_utils`
-
-**Archivo:** [`src/core/matrix_utils.h`](../src/core/matrix_utils.h), [`src/core/matrix_utils.c`](../src/core/matrix_utils.c).
-
-Utilidades de alocacion, inicializacion y comparacion. Independiente de la implementacion del kernel.
-
-### 3.1 `xalloc_aligned`
+#### `xalloc_aligned`
 
 ```c
 scalar_t *xalloc_aligned(size_t num_elements);
 ```
 
-Aloja `num_elements * sizeof(scalar_t)` bytes con alineacion de 64 bytes via `posix_memalign`. Si la alocacion falla, imprime un mensaje a `stderr` y llama a `exit(EXIT_FAILURE)`. El bloque devuelto **no** esta inicializado.
+Aloja `num_elements * sizeof(scalar_t)` bytes con alineacion de 64 bytes via `posix_memalign`. Si la alocacion falla, imprime mensaje a `stderr` y llama a `exit(EXIT_FAILURE)`. El bloque devuelto **no** esta inicializado. El caller libera con `xfree` o `free`.
 
-El caller libera con `free(ptr)`.
-
-### 3.2 `xfree`
+#### `xfree`
 
 ```c
 void xfree(scalar_t *ptr);
@@ -142,7 +113,7 @@ void xfree(scalar_t *ptr);
 
 Wrapper sobre `free` que tolera `NULL`. Sirve para uniformizar el ciclo de vida.
 
-### 3.3 `init_matrix_random`
+#### `init_matrix_random`
 
 ```c
 void init_matrix_random(scalar_t *M,
@@ -150,27 +121,25 @@ void init_matrix_random(scalar_t *M,
                         unsigned int seed);
 ```
 
-Llena `M` con valores pseudoaleatorios en $[-1/\sqrt{\text{rows}}, +1/\sqrt{\text{rows}}]$. La escala $1/\sqrt{\text{rows}}$ acota la norma espectral de $A$ en $\Theta(1)$ y evita overflow al iterar $B_{i+1} = A \cdot B_i$ muchas veces.
+Llena `M` con valores pseudoaleatorios en $[-1/\sqrt{\text{rows}}, +1/\sqrt{\text{rows}}]$. La escala $1/\sqrt{\text{rows}}$ acota la norma espectral de $A$ en $\Theta(1)$ y evita overflow al iterar $B_{i+1} = A \cdot B_i$ muchas veces. Generador lineal congruencial reproducible: la misma `seed` produce siempre los mismos valores. Semillas convencionales del proyecto: $42$ para $A$, $43$ para $Z$.
 
-Usa un generador lineal congruencial con semilla `seed` para que la inicializacion sea **reproducible**: la misma semilla produce siempre los mismos valores, independientemente del compilador y la plataforma.
-
-### 3.4 `init_matrix_zero`
+#### `init_matrix_zero`
 
 ```c
 void init_matrix_zero(scalar_t *M, size_t rows, size_t cols);
 ```
 
-Pone `rows * cols` ceros en `M`. Util para validacion (multiplicacion por matriz cero).
+Pone `rows * cols` ceros en `M`. Usado por los kernels que acumulan en $C$ (`tiled_ikj`, las variantes `loops` `ikj/jki/kij/kji`) y por la validacion.
 
-### 3.5 `init_matrix_identity`
+#### `init_matrix_identity`
 
 ```c
 void init_matrix_identity(scalar_t *M, size_t n);
 ```
 
-Llena `M` ($n \times n$) con la matriz identidad. Util para validacion (multiplicacion por identidad).
+Llena `M` ($n \times n$) con la identidad. Util para el invariante $I \cdot Z = Z$ de los validates.
 
-### 3.6 `matrices_close`
+#### `matrices_close`
 
 ```c
 int matrices_close(const scalar_t *A_ref,
@@ -183,117 +152,233 @@ int matrices_close(const scalar_t *A_ref,
                    scalar_t *bad_test);
 ```
 
-Compara dos buffers elemento a elemento usando una tolerancia mixta:
+Compara dos buffers usando tolerancia mixta:
 
 $$
-|A_{\text{ref}}[i] - A_{\text{test}}[i]| \leq \max(\text{abs\_tol}, \text{rel\_tol} \cdot |A_{\text{ref}}[i]|)
+|A_{\text{ref}}[i] - A_{\text{test}}[i]| \leq \max(\text{abs\_tol},\ \text{rel\_tol} \cdot |A_{\text{ref}}[i]|)
 $$
 
-**Devuelve** 1 si todos los elementos pasan la prueba, 0 en caso contrario. Si se devuelve 0 y los punteros opcionales (`first_bad_index`, `bad_ref`, `bad_test`) son no nulos, escribe el primer indice fallido y los valores correspondientes (para diagnostico).
+Devuelve `1` si todos los elementos pasan, `0` en caso contrario. Si devuelve `0` y los punteros `first_bad_index`/`bad_ref`/`bad_test` son no nulos, escribe el primer indice fallido y los dos valores correspondientes para diagnostico.
 
-**Tolerancias recomendadas para `float`:**
+Las tolerancias concretas con que se invoca `matrices_close` desde cada `validate_*` viven en la Seccion 5.2.
 
-- `abs_tol = 1e-5`
-- `rel_tol = 1e-4`
-
-Despues de varias iteraciones la suma de errores de redondeo crece como $\sqrt{m} \cdot \epsilon_{\text{mach}}$. Con $\epsilon_{\text{mach}} \approx 6 \cdot 10^{-8}$ y $m = 4096$, el error esperado es $\sim 4 \cdot 10^{-6}$. Las tolerancias dejan margen para variaciones de orden de operaciones.
-
----
-
-## 4. Modulo `timing`
+### 2.2 `timing`
 
 **Archivo:** [`src/core/timing.h`](../src/core/timing.h) (solo cabecera, sin `.c`).
 
-### 4.1 `now_seconds`
+#### `now_seconds`
 
 ```c
 static inline double now_seconds(void);
 ```
 
-Devuelve el tiempo actual en segundos como `double`, usando `clock_gettime(CLOCK_MONOTONIC, ...)`. `CLOCK_MONOTONIC` es inmune a ajustes de hora del sistema y tiene resolucion de nanosegundos en Linux moderno.
-
-**Uso tipico:**
+Devuelve el tiempo actual en segundos via `clock_gettime(CLOCK_MONOTONIC, ...)`. `CLOCK_MONOTONIC` es inmune a ajustes de hora del sistema y tiene resolucion de nanosegundos en Linux moderno. Uso tipico:
 
 ```c
 double t0 = now_seconds();
 benchmark_iterations(B_out, A, Z, m, n, I);
-double t1 = now_seconds();
-double elapsed = t1 - t0;
+double elapsed = now_seconds() - t0;
 ```
+
+### 2.3 `morton`
+
+**Archivos:** [`src/core/morton.h`](../src/core/morton.h), [`src/core/morton.c`](../src/core/morton.c).
+
+Bit-interleaving Z-order y conversion entre row-major y Morton para matrices cuadradas. Implementacion portatil con magic constants (sin BMI2 `pdep`/`pext`).
+
+**Convencion de bits.** Para $(i, j)$ con representaciones binarias $i_{p-1} \ldots i_0$ y $j_{p-1} \ldots j_0$:
+
+$$
+\text{morton}(i, j) = i_{p-1} j_{p-1} \ldots i_1 j_1 i_0 j_0
+$$
+
+$j$ contribuye a los bits pares, $i$ a los impares. Esta eleccion produce la tabla canonica para un sub-bloque $2 \times 2$:
+
+| $(i, j)$ | codigo | cuadrante |
+|----------|--------|-----------|
+| (0, 0)   | 0      | TL |
+| (0, 1)   | 1      | TR |
+| (1, 0)   | 2      | BL |
+| (1, 1)   | 3      | BR |
+
+**Propiedad de contiguidad de cuadrantes.** Al dividir un sub-bloque cuadrado de lado $2h$ en sus cuatro cuadrantes de lado $h$, los cuatro segmentos Morton ocupan offsets $\{0, 1, 2, 3\} \cdot h^2$ desde el padre, todos **contiguos en memoria**. Esta es la propiedad clave que explotan los kernels `matmul_morton*` (Secciones 4.6 a 4.8).
+
+#### `morton_encode`
+
+```c
+uint64_t morton_encode(uint32_t i, uint32_t j);
+```
+
+Intercala los bits de $i$ y $j$ segun la convencion anterior.
+
+#### `morton_decode`
+
+```c
+void morton_decode(uint64_t code, uint32_t *i, uint32_t *j);
+```
+
+Inverso de `morton_encode`. Solo se usa en tests.
+
+#### `reorganize_to_morton` / `reorganize_from_morton`
+
+```c
+void reorganize_to_morton  (const scalar_t *A_row,    scalar_t *A_morton, size_t m);
+void reorganize_from_morton(const scalar_t *A_morton, scalar_t *A_row,    size_t m);
+```
+
+Copian elemento a elemento entre row-major y Morton para una matriz cuadrada $m \times m$. **Precondicion:** $m$ potencia de 2. Aborta con mensaje a `stderr` + `exit(EXIT_FAILURE)` si no se cumple. Complejidad: $O(m^2)$.
+
+En el contexto del benchmark, `reorganize_to_morton` se ejecuta **una sola vez** antes de la recurrencia $B_{i+1} = A \cdot B_i$, por lo que su costo amortizado es despreciable ($O(1/I)$ del trabajo total).
+
+#### `is_power_of_two`
+
+```c
+int is_power_of_two(size_t m);
+```
+
+Devuelve `1` si `m > 0 && (m & (m - 1)) == 0`, `0` en otro caso.
 
 ---
 
-## 5. Binarios producidos
+## 3. Capa `microkernels`
 
-### 5.1 `bin/bench_naive_O0`
+Microkernels AVX2 + FMA, header-only `static inline`. Ningun `.o` separado: el cuerpo se inline en cada TU que los incluye y se compila con `-O3 -march=znver2 -mavx2 -mfma`.
 
-Compilado con `gcc -O0 -g`. Es el baseline obligatorio del proyecto.
+Cada microkernel tiene la responsabilidad de mantener su tile de $C$ en registros YMM durante toda la pasada $k_c$; el caller garantiza la geometria $(M_R \times N_R)$ y `restrict` no-aliasing.
 
-**Uso:**
+### 3.1 `kernel_avx2_morton`
 
-```
-./bin/bench_naive_O0 <m> [num_iters] [num_runs]
-```
+**Archivo:** [`src/microkernels/kernel_avx2_morton.h`](../src/microkernels/kernel_avx2_morton.h).
 
-- `<m>`: tamano del problema (entero positivo).
-- `[num_iters]`: opcional. Iteraciones del benchmark dentro de cada corrida medida. Por defecto se usa $I_{\text{meas}} = \min(2m/n, 4)$ para mantener tiempos de medicion razonables durante el desarrollo.
-- `[num_runs]`: opcional. Numero de corridas medidas para la mediana. Por defecto 5 (estabilidad estadistica). Los scripts de profiling usan 1 (una corrida determinista basta, ya que `gprof`/`perf` cuentan eventos absolutos, no estiman distribuciones).
+Microkernel $4 \times 16$ usado por la familia Morton-de-bloques (Secciones 4.7 y 4.8). Los $64$ elementos del tile $C$ caben en $8$ registros YMM (4 filas $\times$ 2 vectores de 8 lanes FP32); $4$ YMM extra para los broadcasts de $A$ y $2$ para $B$ totalizan $14$ de $16$ YMMs vivos en estado estable.
 
-**Salida:** una linea CSV en `stdout`:
+#### Geometria
 
-```
-kernel,m,n,num_iters,median_seconds,gflops
+```c
+#define KERNEL_AVX2_MR 4    /* filas por tile */
+#define KERNEL_AVX2_NR 16   /* columnas por tile */
 ```
 
-Internamente ejecuta una corrida de warm-up (no medida) y luego `num_runs` corridas medidas, reportando la mediana de los tiempos. Cuando `num_runs == 1` la "mediana" es trivialmente esa unica muestra.
+#### `kernel_avx2_4x16`
 
-### 5.2 `bin/validate_naive_O0`
-
-Valida la implementacion sobre tres invariantes algebraicos: $A \cdot 0 = 0$, $I \cdot Z = Z$, $A \cdot (Z_1 + Z_2) = A \cdot Z_1 + A \cdot Z_2$. Imprime `VALIDATION OK` y retorna 0 si todas pasan; imprime detalles del fallo y retorna 1 en caso contrario.
-
-**Uso:**
-
-```
-./bin/validate_naive_O0 [m]
+```c
+static inline void
+kernel_avx2_4x16(scalar_t       *restrict C, size_t ldc,
+                 const scalar_t *restrict A, size_t lda,
+                 const scalar_t *restrict B, size_t ldb,
+                 size_t kc);
 ```
 
-Por defecto $m = 256$.
+**Computa** $C \mathrel{+}= A \cdot B$ sobre el tile $4 \times 16$ (**acumulacion**, no asignacion). Caller debe zerar $C$ antes si necesita reset.
 
-### 5.3 Sweep unificado: `make results`
+**Precondiciones:**
+- `kc >= 1`, `lda >= kc`, `ldb >= 16`, `ldc >= 16`.
+- `C`, `A`, `B` no aliasan (`restrict`).
+- Alineacion preferida pero no obligatoria (usa `_mm256_loadu_ps`/`_mm256_storeu_ps`); la penalizacion de loadu sobre datos accidentalmente alineados es 0 ciclos en Zen 2.
 
-El flujo unico de medicion vive en `make results`, que orquesta `scripts/run_perf_zen2_sweep.sh` (un sweep de hardware counters por celda `(variant, m)`) y `scripts/consolidate_perf_zen2.py` (union de los grupos A+B de eventos perf en una sola fila por celda). Salida canonica: `results/metrics.csv`.
+**Postcondiciones:**
+- $C[r, c] \mathrel{+}= \sum_{p=0}^{kc-1} A[r, p] \cdot B[p, c]$ para $r \in [0, 4)$, $c \in [0, 16)$.
+- $A$ y $B$ no se modifican.
 
-Knobs (variables de entorno o argumentos del target):
+### 3.2 `kernel_avx2_tiled`
 
-| Variable | Default | Descripcion |
-|----------|---------|-------------|
-| `VARIANTS` | todas las activas | Lista separada por espacios; subconjunto de `naive`, `loop_ijk..kji`, `morton{,_avx2,_omp}`, `tiled_ikj{,_avx2,_omp}`. |
-| `MS` | `1024 2048 4096 8192 16384 32768` | Tamanos de matriz. |
-| `ITERS_PER_RUN` | `1` | Iteraciones por run. `0` activa `I_full = 2m/n`. |
-| `RUNS` | `3` (o `1` si `ITERS_PER_RUN=0`) | Runs medidos para la mediana. |
+**Archivo:** [`src/microkernels/kernel_avx2_tiled.h`](../src/microkernels/kernel_avx2_tiled.h).
 
-Para profiling de una sola celda usar `make profile_zen2_one VARIANT=<v> M=<m>` (alias de `scripts/profile_perf_zen2.sh <v> <m>`).
+Microkernel BLIS-style $6 \times 16$ usado por la familia `tiled_ikj` (Secciones 4.4 y 4.5). Los $96$ elementos del tile $C$ caben en $12$ registros YMM (6 filas $\times$ 2 vectores de 8 lanes); $2$ YMM para $B$ y $1$ YMM rotativo para los broadcasts de $A$ totalizan $15$ de $16$ YMMs vivos.
+
+#### Geometria
+
+```c
+#define KERNEL_AVX2_TILED_MR 6u    /* filas por tile */
+#define KERNEL_AVX2_TILED_NR 16u   /* columnas por tile */
+```
+
+Estas constantes coexisten con las del modulo de algoritmo (`TILED_IKJ_AVX2_MR`, `TILED_IKJ_OMP_MR`, etc.) que son numericamente iguales. La duplicacion es deliberada: el microkernel publica las suyas en el header del propio microkernel, y cada modulo de algoritmo publica las suyas en su propio header para que sus callers no tengan que incluir el del microkernel.
+
+#### `kernel_avx2_tiled_6x16`
+
+```c
+static inline void
+kernel_avx2_tiled_6x16(scalar_t       *restrict C, size_t ldc,
+                       const scalar_t *restrict A, size_t lda,
+                       const scalar_t *restrict B, size_t ldb,
+                       size_t kc);
+```
+
+**Computa** $C \mathrel{+}= A \cdot B$ sobre el tile $6 \times 16$ (**acumulacion**). Mismo contrato de pre/postcondiciones que `kernel_avx2_4x16`, escalado a $M_R = 6$, $N_R = 16$.
 
 ---
 
-## 6. Modulo `matmul_loops` (Fase 1.1 — cache-aware)
+## 4. Capa `algorithms`
 
-**Archivo:** [`src/algorithms/loops/matmul_loops.h`](../src/algorithms/loops/matmul_loops.h), [`src/algorithms/loops/matmul_loops.c`](../src/algorithms/loops/matmul_loops.c).
+Cada modulo de esta capa expone un kernel principal con la firma de la Seccion 1.5 y un orquestador `benchmark_iterations_<variant>` que corre la recurrencia $B_{i+1} = A \cdot B_i$ usando doble buffer + swap de punteros.
 
-Las seis variantes de orden de bucles de $C = A \cdot B$. Misma firma que `matmul_naive`.
+Los modulos estan ordenados por familia (`naive`, `loops`, `tiled_ikj*`, `morton*`) y, dentro de cada familia, por nivel de optimizacion (escalar $\to$ AVX2 $\to$ OpenMP).
 
-### 6.1 Tipo funcion-puntero
+### 4.1 `matmul_naive`
+
+**Archivos:** [`src/algorithms/naive/matmul_naive.h`](../src/algorithms/naive/matmul_naive.h), [`src/algorithms/naive/matmul_naive.c`](../src/algorithms/naive/matmul_naive.c).
+**Estado:** baseline obligatorio del proyecto. **No** se modifica: las variantes optimizadas viven en modulos separados con firmas analogas.
+
+#### `matmul_naive`
+
+```c
+void matmul_naive(scalar_t *C,
+                  const scalar_t *A,
+                  const scalar_t *B,
+                  size_t m, size_t k, size_t n);
+```
+
+**Computa** $C = A \cdot B$ con tres bucles anidados en orden `ijk` (sin optimizacion de localidad: stride $n$ al acceder a $B$). $C$ se **sobrescribe** (no acumula): el orden `ijk` deja la dimension de reduccion en el bucle interno, por lo que cada $C_{ij}$ se completa antes de pasar al siguiente.
+
+**Precondiciones:**
+- Los tres punteros son no nulos.
+- $C$ no aliasa con $A$ ni con $B$.
+- Buffers de tamano suficiente (`m*n`, `m*k`, `k*n`).
+
+**Postcondiciones:**
+- $C_{ij} = \sum_{p=0}^{k-1} A_{ip} B_{pj}$ para todo $(i, j)$.
+- $A$ y $B$ no se modifican.
+
+**Complejidad:** $2 \cdot m \cdot k \cdot n$ flops.
+
+#### `benchmark_iterations`
+
+```c
+void benchmark_iterations(scalar_t *B_out,
+                          const scalar_t *A,
+                          const scalar_t *Z,
+                          size_t m, size_t n,
+                          size_t num_iters);
+```
+
+**Computa** la recurrencia $B_{i+1} = A \cdot B_i$ con $B_0 = Z$, guardando las primeras $n$ filas de cada $B_{i+1}$ en `B_out`.
+
+**Parametros clave:**
+- `B_out` *(out)*: buffer de `num_iters * n * n` elementos. Bloque `iter` ocupa offsets $[\text{iter} \cdot n^2, (\text{iter}+1) \cdot n^2)$.
+- `A` *(in)*: matriz cuadrada $m \times m$.
+- `Z` *(in)*: matriz $m \times n$, estado inicial $B_0$.
+- `num_iters`: tipicamente $I = 2m/n$, pero se acepta cualquier valor positivo.
+
+**Implementacion interna:** doble buffer `B_curr` / `B_next` de tamano $m \times n$ con swap de punteros para evitar copias. Aloja y libera ambos buffers internamente.
+
+**Complejidad:** $2 m^2 n \cdot \text{num\_iters}$ flops, mas $O(mn)$ de copia de salida por iteracion.
+
+### 4.2 `matmul_loops`
+
+**Archivos:** [`src/algorithms/loops/matmul_loops.h`](../src/algorithms/loops/matmul_loops.h), [`src/algorithms/loops/matmul_loops.c`](../src/algorithms/loops/matmul_loops.c).
+**Estado:** Fase 1.1 (cache-aware loop reorder).
+
+Las seis permutaciones del orden de bucles para $C = A \cdot B$, expuestas individualmente y via lookup por nombre.
+
+#### Tipo y kernels
 
 ```c
 typedef void (*matmul_fn_t)(scalar_t *C,
-                             const scalar_t *A,
-                             const scalar_t *B,
-                             size_t m, size_t k, size_t n);
-```
+                            const scalar_t *A,
+                            const scalar_t *B,
+                            size_t m, size_t k, size_t n);
 
-### 6.2 Seis kernels
-
-```c
 void matmul_ijk(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, size_t k, size_t n);
 void matmul_ikj(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, size_t k, size_t n);
 void matmul_jik(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, size_t k, size_t n);
@@ -302,136 +387,182 @@ void matmul_kij(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, siz
 void matmul_kji(scalar_t *C, const scalar_t *A, const scalar_t *B, size_t m, size_t k, size_t n);
 ```
 
-Precondiciones y postcondiciones identicas a `matmul_naive`. Las variantes con la dimension de reduccion no en el bucle interno (ikj, jki, kij, kji) hacen `memset(C, 0, ...)` internamente antes de acumular.
+Pre/postcondiciones identicas a `matmul_naive`. Las variantes con la dimension de reduccion fuera del bucle interno (`ikj`, `jki`, `kij`, `kji`) llaman a `init_matrix_zero(C, m, n)` internamente antes de acumular; `ijk` y `jik` sobrescriben directamente.
 
-### 6.3 `matmul_loops_lookup`
+#### `matmul_loops_lookup`
 
 ```c
 matmul_fn_t matmul_loops_lookup(const char *name);
 ```
 
-Devuelve el puntero de funcion para el nombre dado (`"ijk"`, `"ikj"`, `"jik"`, `"jki"`, `"kij"`, `"kji"`), o `NULL` si el nombre no es reconocido.
+Devuelve el puntero de funcion para los nombres `"ijk"`, `"ikj"`, `"jik"`, `"jki"`, `"kij"`, `"kji"`, o `NULL` si el nombre no es reconocido.
 
-### 6.4 `benchmark_iterations_loops`
+#### `benchmark_iterations_loops`
 
 ```c
 void benchmark_iterations_loops(scalar_t *B_out,
-                                 const scalar_t *A,
-                                 const scalar_t *Z,
-                                 size_t m, size_t n,
-                                 size_t num_iters,
-                                 matmul_fn_t kernel);
+                                const scalar_t *A,
+                                const scalar_t *Z,
+                                size_t m, size_t n,
+                                size_t num_iters,
+                                matmul_fn_t kernel);
 ```
 
-Misma semantica que `benchmark_iterations` (Seccion 2.2) pero delegando cada paso $A \cdot B$ al `kernel` suministrado. Doble buffer + swap de punteros; aloja y libera los buffers internamente.
+Misma semantica que `benchmark_iterations` (Seccion 4.1), pero delegando cada paso $A \cdot B$ al `kernel` suministrado.
 
-### 6.5 Binarios
+### 4.3 `matmul_tiled_ikj`
 
-| Binario | CLI | Salida |
-|---------|-----|--------|
-| `bin/bench_loops_O3` | `<order> <m> [num_iters] [num_runs]` | `kernel,m,n,num_iters,median_seconds,gflops` |
-| `bin/validate_loops_O0` | `[m]` (default 256) | 4 tests por variante (3 invariantes + cross-val vs naive) |
+**Archivos:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj.h`](../src/algorithms/tiled_ikj/matmul_tiled_ikj.h), [`src/algorithms/tiled_ikj/matmul_tiled_ikj.c`](../src/algorithms/tiled_ikj/matmul_tiled_ikj.c).
+**Estado:** Fase 1.2 (tiling explicito apuntando a L2).
 
-Para medir los seis ordenes en el sweep unificado: `make results VARIANTS="loop_ijk loop_ikj loop_jik loop_jki loop_kij loop_kji"`. Cada celda corre en un proceso separado, evitando contaminacion de cache entre ordenes.
+Tiling explicito $M_c \times K_c$ sobre el orden `ikj`. Apunta al L2 de $512$ KB del $4600$H.
 
----
-
-## 6.5 Roadmap de modulos por fase
-
-A medida que se avanzan las fases del proyecto se anaden modulos manteniendo el mismo estilo. El estado consolidado y actualizado de cada fase vive en la seccion 9 del [`README.md`](../README.md); aqui se documenta el contrato de firma que todo nuevo kernel debe respetar:
-
-Cada nuevo kernel debe exponer la firma:
+#### Constantes publicas
 
 ```c
-void mm(scalar_t *C,
-        const scalar_t *A,
-        const scalar_t *B,
-        size_t m, size_t k, size_t n);
+#define TILED_IKJ_MC_DEFAULT 256u
+#define TILED_IKJ_KC_DEFAULT 256u
 ```
 
-para que los binarios `validate_*` puedan compararlo contra `matmul_naive` sin cambios estructurales. Las precondiciones y postcondiciones son las de la Seccion 2.1.
+A $M_c = K_c = 256$, los tres paneles activos ($A$: $256$ KB, $B$: $128$ KB, $C$: $128$ KB en el bloque vivo) llenan exactamente el L2 del $4600$H. Compile-time fijos: no hay setter runtime para esta variante.
 
----
-
-## 8. Modulo `morton` (Fase 6, Etapa A3 - support)
-
-**Archivo:** [`src/core/morton.h`](../src/core/morton.h), [`src/core/morton.c`](../src/core/morton.c).
-
-Bit-interleaving Z-order y conversion entre layout row-major y Morton para matrices cuadradas. Implementacion Nivel 1 portatil (magic constants y shifts; sin BMI2 `pdep`/`pext`).
-
-### 8.1 Convencion de bits
-
-Para $(i, j)$ con representaciones binarias $i_{p-1} \ldots i_1 i_0$ y $j_{p-1} \ldots j_1 j_0$, el codigo Morton es:
-
-$$
-\text{morton}(i, j) = i_{p-1} j_{p-1} \ldots i_1 j_1 i_0 j_0
-$$
-
-**$j$ contribuye a los bits pares** (posiciones 0, 2, 4, ...) y **$i$ a los impares** (1, 3, 5, ...). Esta eleccion produce la tabla canonica para un sub-bloque 2x2:
-
-| $(i, j)$ | codigo | cuadrante |
-|---------|--------|-----------|
-| (0, 0) | 0 | top-left (TL) |
-| (0, 1) | 1 | top-right (TR) |
-| (1, 0) | 2 | bottom-left (BL) |
-| (1, 1) | 3 | bottom-right (BR) |
-
-Esta es la **propiedad de contiguidad de cuadrantes** que el kernel `matmul_morton` (Seccion 9) explota: cuando un sub-bloque cuadrado de $A$ de lado `a_block_dim = 2 h` se divide en cuatro cuadrantes de lado $h$, los cuatro segmentos Morton respectivos ocupan posiciones $\{0, 1, 2, 3\} \cdot h^2$ a partir del offset del bloque padre, todas **contiguas en memoria**. No hay strides al recurrir.
-
-### 8.2 `morton_encode`
+#### `matmul_tiled_ikj`
 
 ```c
-uint64_t morton_encode(uint32_t i, uint32_t j);
+void matmul_tiled_ikj(scalar_t *C,
+                      const scalar_t *A,
+                      const scalar_t *B,
+                      size_t m, size_t k_dim, size_t n);
 ```
 
-Intercala los bits de $i$ y $j$ segun la convencion anterior. Internamente usa `spread_bits_32_to_64`, un spread con magic constants de 5 pasos:
+**Computa** $C = A \cdot B$ con tiling explicito. Llama internamente a `init_matrix_zero(C, m, n)` antes de acumular las contribuciones por tile. Misma firma efectiva que `matmul_naive` (el parametro se llama `k_dim` en este modulo).
+
+#### `benchmark_iterations_tiled_ikj`
 
 ```c
-y = (y | (y << 16)) & 0x0000FFFF0000FFFFULL;
-y = (y | (y <<  8)) & 0x00FF00FF00FF00FFULL;
-y = (y | (y <<  4)) & 0x0F0F0F0F0F0F0F0FULL;
-y = (y | (y <<  2)) & 0x3333333333333333ULL;
-y = (y | (y <<  1)) & 0x5555555555555555ULL;
+void benchmark_iterations_tiled_ikj(scalar_t *B_out,
+                                    const scalar_t *A,
+                                    const scalar_t *Z,
+                                    size_t m, size_t n,
+                                    size_t num_iters);
 ```
 
-El resultado es `spread(j) | (spread(i) << 1)`.
+Misma semantica que `benchmark_iterations` con doble buffer; invoca `matmul_tiled_ikj` en cada iteracion.
 
-### 8.3 `morton_decode`
+### 4.4 `matmul_tiled_ikj_avx2`
+
+**Archivos:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.h`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.h), [`src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.c`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.c). Usa [`kernel_avx2_tiled.h`](../src/microkernels/kernel_avx2_tiled.h) (Seccion 3.2).
+**Estado:** Fase 1.6 (microkernel BLIS-style $6 \times 16$ register-blocked).
+
+Loop nest Goto-style $p_c \to i_c \to j_r \to i_r$ con microkernel $6 \times 16$ en el centro. $C$ se zera con `memset` al inicio para que cada pasada $p_c$ pueda cargar / acumular / guardar.
+
+#### Constantes publicas
 
 ```c
-void morton_decode(uint64_t code, uint32_t *i, uint32_t *j);
+#define TILED_IKJ_AVX2_MR 6u
+#define TILED_IKJ_AVX2_NR 16u
+#define TILED_IKJ_AVX2_MC 192u
+#define TILED_IKJ_AVX2_BS_DEFAULT 384u
+extern size_t g_tiled_ikj_avx2_bs;
 ```
 
-Inverso por compactacion de bits (mascaras y shifts en orden inverso). Solo para validacion.
+- $M_R = 6$, $N_R = 16$: tile registrado fijo (compile-time).
+- $M_C = 192$: tamano del bloque sobre $m$ (multiplo de $M_R$). Panel $A$ activo de $M_C \times k_c$ a $k_c = 384$ ocupa $288$ KiB y cabe en el L2 de $512$ KB.
+- $k_c$ (alias `bs`): default $384$, configurable runtime (ver setter abajo). El panel $B$ activo $k_c \times N_R$ a $k_c = 384$ ocupa $24$ KiB y cabe en el L1d.
 
-### 8.4 `reorganize_to_morton` / `reorganize_from_morton`
+#### `matmul_tiled_ikj_avx2_set_bs`
 
 ```c
-void reorganize_to_morton  (const scalar_t *A_row,   scalar_t *A_morton, size_t m);
-void reorganize_from_morton(const scalar_t *A_morton, scalar_t *A_row,   size_t m);
+void matmul_tiled_ikj_avx2_set_bs(size_t bs);
 ```
 
-Copian elemento a elemento entre row-major y Morton para una matriz cuadrada $m \times m$. El caller aloja el buffer destino con `xalloc_aligned(m * m)`. Ambas funciones llaman a `is_power_of_two(m)` y abortan con `fprintf(stderr, ...) + exit(EXIT_FAILURE)` si la pre-condicion no se cumple.
+Cambia $k_c$ en runtime. Cualquier valor positivo es valido (el microkernel itera $p$ uno a la vez, no requiere $k_c$ multiplo de $8$). Pasar $0$ es invalido y se rechaza.
 
-Complejidad: $O(m^2)$. En el contexto del benchmark, `reorganize_to_morton` se ejecuta **una sola vez** antes de la recurrencia $B_{i+1} = A \cdot B_i$ (que tiene $I = 2m/n$ iteraciones de $O(m^2 n)$ flops cada una), por lo que el costo amortizado es $O(1/I)$ del trabajo total y se considera despreciable.
-
-### 8.5 `is_power_of_two`
+#### `matmul_tiled_ikj_avx2`
 
 ```c
-int is_power_of_two(size_t m);
+void matmul_tiled_ikj_avx2(scalar_t *C,
+                           const scalar_t *A,
+                           const scalar_t *B,
+                           size_t m, size_t k, size_t n);
 ```
 
-Returns 1 if `m > 0 && (m & (m - 1)) == 0`, 0 otherwise.
+**Computa** $C = A \cdot B$. $A$ y $B$ row-major estandar (no requieren reorganizacion previa, a diferencia de la familia Morton).
 
----
+**Precondiciones:** mismas que `matmul_naive`. Bordes en $m$ y $n$ que no son multiplos del tile caen a un fallback escalar AVX2 sin registrar.
 
-## 9. Modulo `matmul_morton` (Fase 6, Etapa A3 - kernel)
+**Compilacion:** requiere `-O3 -march=znver2 -mavx2 -mfma` para que `_mm256_fmadd_ps` emita la instruccion FMA real.
 
-**Archivo:** [`src/algorithms/morton/matmul_morton.h`](../src/algorithms/morton/matmul_morton.h), [`src/algorithms/morton/matmul_morton.c`](../src/algorithms/morton/matmul_morton.c).
+#### `benchmark_iterations_tiled_ikj_avx2`
 
-Kernel recursivo donde $A$ esta en layout Morton (Z-order) y $B$, $C$ siguen en row-major. La recursion sobre $A$ se hace via offsets Morton en lugar de via `(puntero, leading dimension)`.
+```c
+void benchmark_iterations_tiled_ikj_avx2(scalar_t *B_out,
+                                         const scalar_t *A,
+                                         const scalar_t *Z,
+                                         size_t m, size_t n,
+                                         size_t num_iters);
+```
 
-### 9.1 `matmul_morton`
+Mismo patron de doble buffer.
+
+### 4.5 `matmul_tiled_ikj_omp`
+
+**Archivos:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.h`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.h), [`src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.c`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.c). Usa [`kernel_avx2_tiled.h`](../src/microkernels/kernel_avx2_tiled.h) (Seccion 3.2).
+**Estado:** Fase 1.6 (microkernel $6 \times 16$ + `#pragma omp parallel for schedule(static)` en el bucle $i_c$).
+
+Hermano paralelo de `matmul_tiled_ikj_avx2`. Mismo loop nest y mismo microkernel; lo unico que cambia es que el bucle $i_c$ se distribuye entre threads. Cada thread escribe exclusivamente las filas $[i_c, i_c + M_C)$ de $C$, sin conflictos. La region paralela se abre una sola vez por invocacion.
+
+#### Constantes publicas
+
+```c
+#define TILED_IKJ_OMP_MR 6u
+#define TILED_IKJ_OMP_NR 16u
+#define TILED_IKJ_OMP_MC 192u
+#define TILED_IKJ_OMP_BS_DEFAULT 384u
+extern size_t g_tiled_ikj_omp_bs;
+```
+
+Misma geometria que la version serial; el knob `bs` es independiente para permitir tunear por separado.
+
+#### `matmul_tiled_ikj_omp_set_bs`
+
+```c
+void matmul_tiled_ikj_omp_set_bs(size_t bs);
+```
+
+Equivalente al de la version serial.
+
+#### `matmul_tiled_ikj_omp`
+
+```c
+void matmul_tiled_ikj_omp(scalar_t *C,
+                          const scalar_t *A,
+                          const scalar_t *B,
+                          size_t m, size_t k, size_t n);
+```
+
+Mismo contrato externo que `matmul_tiled_ikj_avx2`. El numero de threads lo fija `OMP_NUM_THREADS` antes de invocar el binario (sin override en codigo). **Compilacion:** requiere ademas `-fopenmp`.
+
+#### `benchmark_iterations_tiled_ikj_omp`
+
+```c
+void benchmark_iterations_tiled_ikj_omp(scalar_t *B_out,
+                                        const scalar_t *A,
+                                        const scalar_t *Z,
+                                        size_t m, size_t n,
+                                        size_t num_iters);
+```
+
+Mismo patron de doble buffer.
+
+### 4.6 `matmul_morton`
+
+**Archivos:** [`src/algorithms/morton/matmul_morton.h`](../src/algorithms/morton/matmul_morton.h), [`src/algorithms/morton/matmul_morton.c`](../src/algorithms/morton/matmul_morton.c). Depende del modulo `core/morton` (Seccion 2.3).
+**Estado:** Fase 6 / Sesion 02 (Morton fino, cache-oblivious).
+
+Kernel recursivo donde $A$ esta en layout Morton-de-elementos (cada $A[i, j]$ va a la posicion `morton_encode(i, j)`) y $B$, $C$ siguen en row-major. La recursion sobre $A$ se hace via offsets Morton en lugar de via `(puntero, leading dimension)`.
+
+#### `matmul_morton`
 
 ```c
 void matmul_morton(scalar_t *C,
@@ -440,34 +571,32 @@ void matmul_morton(scalar_t *C,
                    size_t m, size_t k, size_t n);
 ```
 
-**Preconditciones.** $m == k$ ($A$ debe ser cuadrada) y `is_power_of_two(m)` (el indexing Z-order requiere subdivisiones exactas en mitades). Cualquier violacion produce abort con mensaje claro a stderr + `exit(EXIT_FAILURE)`. $A\_morton$ debe haber sido producido por `reorganize_to_morton(A, A_morton, m)`.
+**Precondiciones:**
+- $m = k$ ($A$ cuadrada).
+- `is_power_of_two(m)`.
+- `A_morton` producido por `reorganize_to_morton(A, A_morton, m)`.
+- `C` no aliasa con `A_morton` ni con $B$.
 
-**Casos de recursion.** Sea `m_block`, `k_block`, `n_block` las dimensiones del sub-problema actual y `a_block_dim` el lado del sub-bloque cuadrado actual de $A$ (invariante: `m_block == k_block == a_block_dim`).
+Cualquier violacion produce abort con mensaje a `stderr` + `exit(EXIT_FAILURE)`.
 
-1. **Hoja.** $m\_block \cdot k\_block \cdot n\_block \leq$ `RECURSION_THRESHOLD`: kernel base con indexing Morton.
-2. **Caso N.** $n\_block > a\_block\_dim$ y $n\_block \geq 2$: dividir $n$. Las dos sub-llamadas comparten $A$ (mismo `a_morton_offset`); las regiones de $C$ y $B$ son disjuntas, ambas sobreescriben.
-3. **Caso MK.** $a\_block\_dim \geq 2$: dividir $m$ y $k$ simultaneamente. Cuatro productos sobre los cuadrantes Morton de $A$:
+**Casos de recursion** (sea `m_block == k_block == a_block_dim` el invariante del cuadrante actual):
+1. **Hoja:** `m_block * k_block * n_block <= g_recursion_threshold` $\to$ kernel base ijk escalar con indexing Morton.
+2. **Caso N:** $n\_block > a\_block\_dim$ y $n\_block \geq 2$ $\to$ dividir $n$ en mitades. Las dos sub-llamadas comparten $A$; las regiones de $C$ y $B$ son disjuntas.
+3. **Caso MK:** $a\_block\_dim \geq 2$ $\to$ dividir $m$ y $k$ simultaneamente en cuatro cuadrantes. Los offsets de los cuatro cuadrantes de $A$ son `a_morton_offset + {0, 1, 2, 3} * half * half`, contiguos en memoria gracias a la propiedad de la Seccion 2.3.
+4. **Fallback degenerado:** $a\_block\_dim = 1$ y $n\_block = 1$ $\to$ kernel base.
 
-   $$
-   C_{\text{top}} = A_{TL} B_{\text{top}} + A_{TR} B_{\text{bot}}, \qquad
-   C_{\text{bot}} = A_{BL} B_{\text{top}} + A_{BR} B_{BR}
-   $$
+**Complejidad:** $2mkn$ flops (igual al baseline). La ganancia es de **localidad**, no de operaciones.
 
-   Implementado como: TL sobreescribe $C_{\text{top}}$, TR acumula sobre $C_{\text{top}}$, BL sobreescribe $C_{\text{bot}}$, BR acumula sobre $C_{\text{bot}}$. Los offsets de los cuatro cuadrantes son `a_morton_offset + {0, 1, 2, 3} \cdot (\text{half} \cdot \text{half})`, todos contiguos en memoria por la propiedad de contiguidad de la Seccion 8.1.
+#### Constantes y setter
 
-4. **Fallback degenerado.** $a\_block\_dim = 1$ y $n\_block = 1$: kernel base.
+```c
+extern size_t g_recursion_threshold;
+void matmul_morton_set_threshold(size_t threshold);
+```
 
-**Indexing del kernel base.** El kernel hoja, para indices locales $(i, k)$ dentro del sub-bloque:
+`g_recursion_threshold` default $= 32 \cdot 32 \cdot 128 = 131072$ flops elementales. A esa profundidad el panel $A$ activo es $\sim 4$ KiB (cabe en L1d de $32$ KiB). Pasar `threshold = 0` al setter imprime warning y mantiene el default.
 
-$$
-A\_idx = a\_morton\_offset + \text{morton\_encode}(i, k)
-$$
-
-El invariante `m_block == k_block == a_block_dim` garantiza que `morton_encode(i, k)` se mantiene dentro de $[0, a\_block\_dim^2)$, por lo que `A_idx` queda dentro del segmento del sub-bloque.
-
-**Complejidad.** $2 \cdot m \cdot k \cdot n$ flops (igual al baseline). La ganancia respecto a `matmul_naive` viene de **localidad** (no de operaciones): los cuatro cuadrantes del sub-bloque cuadrado de $A$ son contiguos en memoria gracias a la propiedad de la Seccion 8.1, eliminando los strides que un layout row-major produciria al dividir por $m$ y $k$ cuando los sub-bloques son mas anchos que la linea de cache. El esquema cache-oblivious recursivo alcanza asintoticamente $\Omega(n^3 / \sqrt{M})$ transferencias (Hong y Kung, 1981) **sin** conocer el tamano de cache $M$.
-
-### 9.2 `benchmark_iterations_morton`
+#### Orquestadores
 
 ```c
 void benchmark_iterations_morton(scalar_t *B_out,
@@ -475,13 +604,7 @@ void benchmark_iterations_morton(scalar_t *B_out,
                                  const scalar_t *Z,
                                  size_t m, size_t n,
                                  size_t num_iters);
-```
 
-Misma semantica que `benchmark_iterations` pero usando `matmul_morton` como kernel. Internamente reorganiza $A$ a Morton una vez (cuenta dentro del tiempo total) y delega en `benchmark_iterations_morton_preorganized`. Util cuando la conversion es parte de la medicion.
-
-### 9.3 `benchmark_iterations_morton_preorganized`
-
-```c
 void benchmark_iterations_morton_preorganized(scalar_t *B_out,
                                               const scalar_t *A_morton,
                                               const scalar_t *Z,
@@ -489,127 +612,40 @@ void benchmark_iterations_morton_preorganized(scalar_t *B_out,
                                               size_t num_iters);
 ```
 
-Misma logica que la anterior pero recibiendo $A$ **ya en Morton**. Usada por `bench_morton_O0` para que la reorganizacion no entre en el tiempo medido.
+`benchmark_iterations_morton` reorganiza $A$ a Morton **internamente en cada llamada** (el costo entra en el tiempo medido). `benchmark_iterations_morton_preorganized` recibe $A$ ya en Morton y es la que usa `bench_morton_O3` para que la reorganizacion no entre en el tiempo cronometrado.
 
----
+### 4.7 `matmul_morton_avx2`
 
-## 10. Binarios y scripts nuevos de la Fase 6
+**Archivos:** [`src/algorithms/morton/matmul_morton_avx2.h`](../src/algorithms/morton/matmul_morton_avx2.h), [`src/algorithms/morton/matmul_morton_avx2.c`](../src/algorithms/morton/matmul_morton_avx2.c). Usa [`kernel_avx2_morton.h`](../src/microkernels/kernel_avx2_morton.h) (Seccion 3.1).
+**Estado:** Sesion 03.
 
-### 10.1 Binarios
+Variante de `matmul_morton` con leaf vectorizado. Misma estructura recursiva, pero cambia el layout de $A$ y el indexing en la hoja.
 
-| Binario | Archivo fuente | CLI | Salida |
-|---------|----------------|-----|--------|
-| `bin/bench_morton_O0`       | `bench_morton.c`       | `<m> [num_iters] [num_runs]`           | linea CSV `morton,m,n,num_iters,median_seconds,gflops`; aborta si $m$ no es potencia de 2 |
-| `bin/validate_morton_O0`    | `validate_morton.c`    | `[m]` (default 256, potencia de 2)     | 7 tests: 3 invariantes + 4 cross-validation contra `matmul_naive` (en $m \in \{4, 16, 64, 256\}$) |
-| `bin/test_morton`           | `test_morton.c`        | sin args                               | 4 grupos: tabla 4x4, round-trip encode/decode (4096 pares), contiguidad de cuadrantes para $m=8$, round-trip de reorganizacion para $m \in \{16, 64, 256\}$ |
-
-Los binarios de bench reusan el patron del baseline: 1 warm-up + `num_runs` corridas medidas con mediana, `num_iters` default = $\min(2m/n, 4)$, semillas 42 ($A$) y 43 ($Z$). En `bench_morton_O0` la reorganizacion a Morton se ejecuta una sola vez **antes** del warm-up para que el tiempo cronometrado sea solo el del kernel.
-
-### 10.2 Profiling con perf
-
-Para comparaciones entre kernels usar el pipeline unificado: `make profile_zen2` (o `make results`) corre `scripts/run_perf_zen2_sweep.sh` sobre las variantes activas y el consolidador `scripts/consolidate_perf_zen2.py` produce `results/metrics.csv`.
-
-Si `perf_event_paranoid` esta demasiado restrictivo, el script aborta con mensaje claro indicando el comando exacto para arreglarlo y la referencia a la seccion 3.3 del `README.md`.
-
-### 10.3 Targets de Makefile
-
-```
-make test_morton                -> bin/test_morton
-make bench_morton_O3            -> bin/bench_morton_O3
-make validate_morton            -> bin/validate_morton_O0
-```
-
-Targets de Fase 1.1 (loop-reorder):
-
-```
-make bench_loops_O3             -> bin/bench_loops_O3
-make validate_loops             -> bin/validate_loops_O0
-```
-
-Targets de Fase 1.3 (tiled_ikj_avx2):
-
-```
-make bench_tiled_ikj_avx2_O3        -> bin/bench_tiled_ikj_avx2_O3
-make validate_tiled_ikj_avx2        -> bin/validate_tiled_ikj_avx2_O3
-```
-
-Todos se compilan con `CFLAGS_O3_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma`), que es obligatorio para que `_mm256_fmadd_ps` emita la instruccion FMA real. El `make results` incluye los binarios `bench_*_O3` como dependencia y `run_perf_zen2_sweep.sh` incluye todas las variantes activas en su lista por defecto.
-
----
-
-## 11. Modulo `kernel_avx2` (Sesion 03, Etapa A4)
-
-**Archivo:** [`src/microkernels/kernel_avx2_morton.h`](../src/microkernels/kernel_avx2_morton.h) (header-only, `static inline`). Renombrado desde `kernel_avx2.{h,c}` y consolidado en un unico header cuando se introdujo el microkernel 6x16 `kernel_avx2_tiled.h` para la familia tiled. La conversion a header-only sigue el patron de `kernel_avx512.h` de `opt_zen5` (un solo header con todos los microkernels como `static inline`).
-
-Microkernel AVX2 + FMA que acumula un tile fijo de $4 \times 16$ de $C$. Los $4 \times 16 = 64$ elementos del tile viven en $8$ registros YMM (4 filas $\times$ 2 vectores de 8 lanes FP32). Queda mitad del banco de YMM libre para los broadcasts de $A$ y los loads de $B$, condicion necesaria para mantener los dos pipes FMA del Zen 2 saturados sin spill.
-
-### 11.1 `kernel_avx2_4x16`
-
-```c
-void kernel_avx2_4x16(scalar_t       *restrict C, size_t ldc,
-                      const scalar_t *restrict A, size_t lda,
-                      const scalar_t *restrict B, size_t ldb,
-                      size_t kc);
-```
-
-**Computa** $C \mathrel{+}= A \cdot B$ sobre el tile fijo $4 \times 16$. La semantica es de **acumulacion**: el caller que necesite un $C$ limpio debe inicializarlo en cero antes de la invocacion.
-
-**Parametros:**
-
-- `C` *(in / out)*: matriz destino, $4$ filas $\times \geq 16$ columnas, row-major. Acumulado en sitio.
-- `lda`, `ldb`, `ldc`: leading dimensions de $A$, $B$, $C$ en sus buffers originales (numero de columnas por fila).
-- `A` *(in)*: panel de $4 \times kc$. Acceso interno solo a `A[r * lda + p]` con $r \in [0, 4)$ y $p \in [0, kc)$.
-- `B` *(in)*: panel de $kc \times 16$.
-- `kc`: longitud de la dimension contraida ($kc \geq 1$).
-
-**Precondiciones:**
-
-- `kc >= 1`, `lda >= kc`, `ldb >= 16`, `ldc >= 16`.
-- `C`, `A`, `B` no aliasan (`restrict`).
-- Alineacion a $32$ bytes es preferida pero **no obligatoria**: la implementacion usa `_mm256_loadu_ps` / `_mm256_storeu_ps`. El caller que pueda garantizar alineacion paga menos en el front-end.
-
-**Postcondiciones:**
-
-- $C[r, c] \mathrel{+}= \sum_{p=0}^{kc-1} A[r, p] \cdot B[p, c]$ para todo $(r, c)$ con $r \in [0, 4)$ y $c \in [0, 16)$. $A$ y $B$ no se modifican.
-
-**Compilacion.** No hay `.o` separado: el header se incluye en cada `.c` que lo necesita (`matmul_morton_avx2.c`, `matmul_morton_omp.c`, `tests/test_kernel_avx2.c`) y se inline bajo `-O3`. Las TU que lo incluyen son compiladas con los flags Zen 2 estandar del proyecto:
-
-```
--O3 -march=znver2 -mavx2 -mfma -D_POSIX_C_SOURCE=200809L
-```
-
-`-Wpedantic` se admite porque las TU ya pasaban con el bench/validate; los tipos `__m256` no disparan warnings al estar marcados como GCC extensions. `-ffast-math` no se aplica globalmente al bench (rompia validaciones del kernel naive), pero no es necesario para emitir FMAs cuando el codigo ya esta escrito con intrinsics explicitos (`_mm256_fmadd_ps`).
-
-**Performance esperada.** El techo single-core del Zen 2 es $2$ FMA $\times$ $8$ lanes $\times$ $2$ flops/op $\times$ $4.0$ GHz $= 128$ GFLOPS en FP32. En hojas cuyo working set cabe en L1d ($\leq 32$ KiB) el microkernel toca $\sim 8$–$10$ FMA-ops por ciclo (medido `fp_ret_sse_avx_ops.all`/cycle en Prompt 7), lo que se traduce en $\sim 80$ a $90$ GFLOPS sostenidos a la frecuencia turbo bajo carga AVX2. Es el techo computacional real para una sola hoja; el throughput de `matmul_morton_avx2` sobre la matriz completa es menor por el costo de materializacion de paneles y el trafico de $B$ desde L2/L3.
-
-### 11.2 Constantes de geometria
-
-```c
-#define KERNEL_AVX2_MR 4    /* filas por tile */
-#define KERNEL_AVX2_NR 16   /* columnas por tile */
-```
-
-Expuestas para que `matmul_morton_avx2` y el test de unidad calcen sus bloques al tile sin redeclarar las magic numbers.
-
----
-
-## 12. Modulo `matmul_morton_avx2` (Sesion 03, Etapa A4 integracion)
-
-**Archivo:** [`src/algorithms/morton/matmul_morton_avx2.h`](../src/algorithms/morton/matmul_morton_avx2.h), [`src/algorithms/morton/matmul_morton_avx2.c`](../src/algorithms/morton/matmul_morton_avx2.c).
-
-Variante de `matmul_morton` cuyo leaf invoca el microkernel AVX2 de la Seccion 11. La recursion sigue la misma estructura cache-oblivious (Caso N independiente, Caso MK acoplado en cuatro cuadrantes) pero el layout de $A$ cambia.
-
-### 12.1 Layout Morton-de-bloques (tile = 4)
-
-Sesion 02 (Morton "fino"): cada elemento $A[i, j]$ ocupa la posicion `morton_encode(i, j)`. Sesion 03 (Morton "de bloques"): $A$ se particiona en sub-bloques $\text{MR} \times \text{MR}$ con $\text{MR} = 4$; los sub-bloques se Z-ordenan entre si, y los $16$ elementos de cada sub-bloque quedan en row-major. La posicion de $A[i, j]$ es:
+**Layout Morton-de-bloques** (tile $= M_R = 4$). $A$ se particiona en sub-bloques $4 \times 4$; los sub-bloques se Z-ordenan entre si y los $16$ elementos de cada sub-bloque viven en row-major. La posicion de $A[i, j]$ es:
 
 $$
-A\_idx = \text{morton\_encode}(i / \text{MR}, j / \text{MR}) \cdot \text{MR}^2 + (i \bmod \text{MR}) \cdot \text{MR} + (j \bmod \text{MR})
+A\_idx = \text{morton\_encode}(i / M_R,\ j / M_R) \cdot M_R^2 + (i \bmod M_R) \cdot M_R + (j \bmod M_R)
 $$
 
-La **propiedad de contiguidad** (Seccion 8.1) se preserva: cuatro cuadrantes de lado $h$ siguen ocupando offsets $\{0, 1, 2, 3\} \cdot h^2$ desde el padre. Solo cambia el significado del nivel hoja: bloque $4 \times 4$ de floats en lugar de un solo float. El layout fino y el de bloques **coexisten**; `matmul_morton.{c,h}` queda intacto.
+La propiedad de contiguidad de cuadrantes se preserva: lo unico que cambia es el significado del nivel mas bajo (un "elemento" Morton es un tile $4 \times 4$ de floats, no un float suelto). Los layouts fino y de bloques coexisten; `matmul_morton.{c,h}` queda intacto.
 
-### 12.2 `matmul_morton_avx2`
+#### Constante de tile
+
+```c
+#define MORTON_AVX2_TILE KERNEL_AVX2_MR    /* = 4 */
+```
+
+#### `reorganize_to_morton_blocks`
+
+```c
+void reorganize_to_morton_blocks(const scalar_t *A_row,
+                                 scalar_t *A_morton,
+                                 size_t m);
+```
+
+Empaqueta $A$ row-major al layout Morton-de-bloques. **Precondiciones:** `m % MORTON_AVX2_TILE == 0` y `is_power_of_two(m / MORTON_AVX2_TILE)`. Aborta si no se cumplen. Complejidad: $O(m^2)$.
+
+#### `matmul_morton_avx2`
 
 ```c
 void matmul_morton_avx2(scalar_t *C,
@@ -618,42 +654,21 @@ void matmul_morton_avx2(scalar_t *C,
                         size_t m, size_t k, size_t n);
 ```
 
-**Computa** $C = A_{\text{morton}} \cdot B$ donde `A_morton` esta en Morton-de-bloques (Seccion 12.1). Misma forma que `matmul_naive`: $C$ es $m \times n$ (out), $A$ es $m \times k$ (in, Morton-de-bloques), $B$ es $k \times n$ (in, row-major).
-
 **Precondiciones:**
+- $m = k$ y $m$ potencia de $2$, con $m \geq M_R = 4$.
+- $n \geq N_R = 16$. Recomendado $n$ multiplo de $N_R$; trozos no alineados caen a un fallback `ijk` sin vectorizar.
+- `A_morton` producido por `reorganize_to_morton_blocks`.
 
-- $m = k$ (matriz cuadrada).
-- $m$ potencia de $2$ y $m \geq \text{MR} = 4$.
-- $n \geq \text{NR} = 16$ (recomendado: $n$ multiplo de $\text{NR}$; las trozas no alineadas caen al fallback `ijk` sin vectorizar).
-- `A_morton` producido por `reorganize_to_morton_blocks` (Seccion 12.4).
-- `C` no aliasa con `A_morton` ni con $B$.
-
-Cualquier violacion de los chequeos sobre $m$ y $k$ aborta con `fprintf(stderr, ...) + exit(EXIT_FAILURE)`, igual que `matmul_morton`.
-
-**Tolerancia de validacion.** $\text{abs\_tol} = 10^{-3}$ relativo (contra $10^{-4}$ del Morton fino). El relajamiento es necesario porque `-ffast-math` autoriza reasociacion de suma FP en el kernel, acumulando mas error.
-
-### 12.3 Threshold de hoja y ajuste empirico
+#### Constantes y setter
 
 ```c
 extern size_t g_recursion_threshold_avx2;
 void matmul_morton_avx2_set_threshold(size_t threshold);
 ```
 
-Variable global con default $64 \cdot 64 \cdot 128 = 524288$ flops elementales, equivalente a una hoja de $64 \times 64$ floats por panel de $A$ (working set $\sim 16$ KiB, mitad de L1d en el $4600$H). El setter acepta cualquier valor positivo; pasar $0$ imprime un warning y deja el default. La constante esta separada de `g_recursion_threshold` (Sesion 02) porque los regimenes son distintos: el microkernel AVX2 amortiza una hoja mucho mas grande que el `ijk + morton_encode` ingenuo, asi que el threshold optimo es mayor.
+`g_recursion_threshold_avx2` default $= 64 \cdot 64 \cdot 128 = 524288$ flops elementales (panel $A$ activo $\sim 16$ KiB, mitad de L1d). Separado de `g_recursion_threshold` (Seccion 4.6) porque el leaf AVX2 amortiza una hoja mayor.
 
-### 12.4 `reorganize_to_morton_blocks`
-
-```c
-void reorganize_to_morton_blocks(const scalar_t *A_row,
-                                 scalar_t *A_morton,
-                                 size_t m);
-```
-
-Reorganiza una matriz row-major $m \times m$ al layout Morton-de-bloques consumido por `matmul_morton_avx2`. Aborta si $m$ no es multiplo de $\text{MR}$ o si $m / \text{MR}$ no es potencia de $2$. El caller aloja `A_morton` con capacidad para $m^2$ elementos (tipicamente `xalloc_aligned`).
-
-Complejidad: $O(m^2)$. Se ejecuta una sola vez antes de la recurrencia $B_{i+1} = A \cdot B_i$, igual que en Sesion 02.
-
-### 12.5 Orquestadores
+#### Orquestadores
 
 ```c
 void benchmark_iterations_morton_avx2(scalar_t *B_out,
@@ -669,17 +684,16 @@ void benchmark_iterations_morton_avx2_preorganized(scalar_t *B_out,
                                                    size_t num_iters);
 ```
 
-Misma semantica que sus contrapartes en `matmul_morton`. El primero reorganiza $A$ internamente (la conversion entra en el tiempo medido); el segundo recibe $A$ ya reorganizado y es el que usa `bench_morton_avx2_O3`.
+Misma convencion que en `matmul_morton`: la `_preorganized` es la que usa `bench_morton_avx2_O3`.
 
----
+### 4.8 `matmul_morton_omp`
 
-## 13. Modulo `matmul_morton_omp` (Sesion 03, Etapa A5)
+**Archivos:** [`src/algorithms/morton/matmul_morton_omp.h`](../src/algorithms/morton/matmul_morton_omp.h), [`src/algorithms/morton/matmul_morton_omp.c`](../src/algorithms/morton/matmul_morton_omp.c). Reusa [`kernel_avx2_morton.h`](../src/microkernels/kernel_avx2_morton.h) (Seccion 3.1) y `reorganize_to_morton_blocks` de la Seccion 4.7.
+**Estado:** Sesion 03.
 
-**Archivo:** [`src/algorithms/morton/matmul_morton_omp.h`](../src/algorithms/morton/matmul_morton_omp.h), [`src/algorithms/morton/matmul_morton_omp.c`](../src/algorithms/morton/matmul_morton_omp.c).
+Variante paralela de `matmul_morton_avx2`. Misma estructura recursiva y mismo microkernel; agrega `#pragma omp parallel single` en el wrapper publico y emite `omp task` en cada subdivision por encima del threshold de paralelizacion. El scratch buffer del leaf es un pool por-thread indexado por `omp_get_thread_num()` para evitar comparticion entre tasks.
 
-Variante paralela de `matmul_morton_avx2`. Reusa el microkernel AVX2 y el layout Morton-de-bloques; agrega `#pragma omp parallel single` en el wrapper publico y emite OpenMP tasks en cada subdivision recursiva por encima del threshold de paralelizacion. El scratch buffer del leaf pasa a ser un pool por-thread indexado por `omp_get_thread_num()` para que las hojas paralelas no compartan memoria intermedia.
-
-### 13.1 `matmul_morton_omp`
+#### `matmul_morton_omp`
 
 ```c
 void matmul_morton_omp(scalar_t *C,
@@ -688,41 +702,23 @@ void matmul_morton_omp(scalar_t *C,
                        size_t m, size_t k, size_t n);
 ```
 
-**Contrato de forma** identico a `matmul_morton_avx2`: $C$ es $m \times n$ (out), `A_morton` es $m \times k$ en Morton-de-bloques, $B$ es $k \times n$ row-major, mismas precondiciones ($m = k$ potencia de $2$, $m \geq \text{MR}$).
+Mismas precondiciones que `matmul_morton_avx2` (Seccion 4.7). **Compilacion:** requiere ademas `-fopenmp`. El numero de threads lo fija `OMP_NUM_THREADS`.
 
-### 13.2 Thresholds (dos knobs independientes)
+#### Thresholds (dos knobs independientes)
 
 ```c
-extern size_t g_recursion_threshold_omp;
-extern size_t g_parallel_threshold_omp;
+extern size_t g_recursion_threshold_omp;       /* default 524288 */
+extern size_t g_parallel_threshold_omp;        /* default 524288 */
 void matmul_morton_omp_set_threshold         (size_t threshold);
 void matmul_morton_omp_set_parallel_threshold(size_t threshold);
 ```
 
-- `g_recursion_threshold_omp` (default $524288$): tamano del sub-problema en que la recursion cae al leaf kernel. Mismo rol que `g_recursion_threshold_avx2`.
-- `g_parallel_threshold_omp` (default $524288$): tamano por debajo del cual la recursion deja de emitir `omp task` y corre inline. Con el default igual al leaf threshold, las tasks disparan en cada nivel sobre la hoja y nunca dentro de ella.
+- `g_recursion_threshold_omp`: tamano del sub-problema en que la recursion cae al leaf. Mismo rol que `g_recursion_threshold_avx2`.
+- `g_parallel_threshold_omp`: tamano por debajo del cual la recursion deja de emitir `omp task` y corre inline. Default igual al leaf threshold $\to$ tasks en cada nivel sobre la hoja y ninguna dentro de ella. Pasar `0` permite serializar para aislar el costo del scaffolding OMP.
 
-Las globals se mantienen separadas de las de `matmul_morton_avx2` para poder tunear la variante paralela sin alterar las mediciones del modulo serial.
+Las globals son independientes de las de `matmul_morton_avx2` para tunear la paralela sin alterar las mediciones de la serial.
 
-### 13.3 Variables de entorno relevantes
-
-| Variable | Efecto | Default usado en el bench |
-|----------|--------|---------------------------|
-| `OMP_NUM_THREADS` | Numero de threads. Si se omite, OpenMP usa todos los logicos (12 en el 4600H con SMT). | 6 (un thread por core fisico). |
-| `OMP_PROC_BIND`   | `close` mantiene threads en el mismo CCX (3 cores + L3 4 MiB privada). `spread` los reparte entre los 2 CCXs. | Ver Seccion 13.4. |
-| `OMP_PLACES`      | `cores` une cada thread a un core fisico (evita migracion entre core y SMT sibling). | `cores`. |
-
-### 13.4 Recomendacion para el Ryzen 5 4600H
-
-El chip Renoir tiene **2 CCX de 3 cores cada uno**, con L3 de $4$ MiB privada por CCX. Threads que cruzan CCX pierden la coherencia de L3 y pagan trafico por el Infinity Fabric. Esto define dos regimenes:
-
-- **`OMP_NUM_THREADS=3 OMP_PROC_BIND=close`**: la opcion mas limpia para validaciones single-CCX y para diagnostico de scaling intra-cluster. Speedup cercano a lineal hasta $3$ threads; mas alla mete trafico cross-CCX y no escala.
-- **`OMP_NUM_THREADS=6 OMP_PROC_BIND=close`**: usa los $6$ cores fisicos repartidos entre los dos CCXs respetando la afinidad de cada thread a su core. Es el **default recomendado**: en mediciones empiricas presenta picos cercanos a este modo a $m = 8192$.
-- **`OMP_NUM_THREADS=6 OMP_PROC_BIND=spread`**: distribuye los threads para maximizar L3 compartido por thread, util cuando el working set por thread es grande. Comparable a `close` en GFLOPS sostenidos para $m \geq 4096$.
-
-El SMT a $12$ threads aporta poco en este kernel: AVX2 + FMA ya satura los recursos de retirement; los hilos SMT extra se traducen en `cycles` mayores con la misma `fp_ops_per_cycle`.
-
-### 13.5 Orquestadores
+#### Orquestadores
 
 ```c
 void benchmark_iterations_morton_omp(scalar_t *B_out,
@@ -738,176 +734,148 @@ void benchmark_iterations_morton_omp_preorganized(scalar_t *B_out,
                                                   size_t num_iters);
 ```
 
-Misma estructura que en los modulos anteriores: el primero reorganiza $A$ internamente y la conversion entra en el tiempo medido; el segundo recibe $A$ ya en Morton-de-bloques y es el que usa `bench_morton_omp_O3`.
+Misma convencion: la `_preorganized` es la que usa `bench_morton_omp_O3`.
 
 ---
 
-## 14. Modulo `matmul_tiled_ikj_avx2` (Fase 1.6 — BLIS-style 6x16 register-blocked)
+## 5. Capa `drivers`
 
-**Archivo:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.h`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.h), [`src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.c`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_avx2.c). El microkernel inline 6x16 vive en [`src/microkernels/kernel_avx2_tiled.h`](../src/microkernels/kernel_avx2_tiled.h) (header-only `static inline`, compartido con `matmul_tiled_ikj_omp`).
+Programas `main` en [`src/drivers/`](../src/drivers): un `bench_<variant>.c` y un `validate_<variant>.c` por cada modulo de la capa `algorithms`. Todos siguen una convencion comun documentada aqui.
 
-Kernel BLIS-style con micropanel registrado $6 \times 16$, especificamente afinado para el Ryzen $5$ $4600$H. Reemplaza la version anterior (`load`/`FMA`/`store` por $(i, p)$) por un microkernel inline que mantiene un sub-tile $6 \times 16$ de $C$ en $12$ registros YMM durante toda la pasada $k_c$; $C$ toca memoria solo dos veces por micro-tile (load al entrar, store al salir).
+### 5.1 Convencion comun de los `bench_*`
 
-### 14.1 Geometria del microkernel (compile-time)
+**Proposito:** medir tiempo de pared del kernel y reportar GFLOP/s.
 
-```c
-#define TILED_IKJ_AVX2_MR 6u
-#define TILED_IKJ_AVX2_NR 16u
-#define TILED_IKJ_AVX2_MC 192u
-#define TILED_IKJ_AVX2_BS_DEFAULT 384u
-extern size_t g_tiled_ikj_avx2_bs;
-```
-
-- $\text{MR} = 6$, $\text{NR} = 16$: filas y columnas del tile registrado. Activan $15$ de los $16$ registros YMM arquitecturales ($12$ acumuladores $C$ + $2$ vectores $B$ + $1$ broadcast $A$ reusado entre filas). El renombrador fisico del Zen 2 ($168$ entradas) resuelve la dependencia WAW sobre el broadcast sin stall.
-- $\text{MC} = 192$: tamano del bloque sobre $m$ (multiplo de $\text{MR}$). El panel $A$ activo $\text{MC} \times k_c$ a $k_c = 384$ ocupa $288$ KiB y cabe en el L2 de $512$ KiB.
-- $\text{BS}$ (sinonimo `kc`): tamano del bloque sobre $k$. Default $384$, configurable runtime via `matmul_tiled_ikj_avx2_set_bs(bs)`. La idea es que el panel $B$ activo $k_c \times \text{NR}$ a $k_c = 384$ ocupa $24$ KiB, que cabe en el L1d de $32$ KiB con margen para los $12$ floats de $C$ vivos.
-
-### 14.2 `matmul_tiled_ikj_avx2_set_bs`
-
-```c
-void matmul_tiled_ikj_avx2_set_bs(size_t bs);
-```
-
-Cambia $k_c$ en runtime. Solo se rechaza `bs == 0` (cualquier valor positivo es valido; no se requiere multiplo de $8$ porque el microkernel itera $p$ uno a la vez). Util para barrido manual del bs.
-
-### 14.3 `matmul_tiled_ikj_avx2`
-
-```c
-void matmul_tiled_ikj_avx2(scalar_t *C,
-                       const scalar_t *A,
-                       const scalar_t *B,
-                       size_t m, size_t k, size_t n);
-```
-
-**Computa** $C = A \cdot B$ usando el loop nest BLIS Goto-style:
+**CLI (estandar):**
 
 ```
-pc  loop  step kc  (= g_tiled_ikj_avx2_bs, default 384)
-  ic loop step mc  (= TILED_IKJ_AVX2_MC, fixed 192)
-    jr loop step nr (= TILED_IKJ_AVX2_NR, fixed 16)
-      ir loop step mr (= TILED_IKJ_AVX2_MR, fixed 6)
-        microkernel_6x16: kc FMAs accumulating in 12 YMM registers
+bench_<variant> <m> [num_iters] [num_runs]
 ```
 
-**Parametros y precondiciones.** Identicos a `matmul_naive` (Seccion 2.1): $C$ es $m \times n$ (out, sobrescrito), $A$ es $m \times k$, $B$ es $k \times n$, todos row-major, sin aliasing. El kernel maneja bordes en $m$ y $n$ con un fallback vectorizado AVX2 que no registra $C$ (descrito en `accumulate_residual_rows` en el .c).
+Las variantes con knob de tile-size adicional (`tiled_ikj_avx2`, `tiled_ikj_omp`) aceptan un cuarto argumento:
 
-**Postcondiciones.** $C_{ij} = \sum_{p=0}^{k-1} A_{ip} B_{pj}$ para todo $(i, j)$.
-
-**Microkernel inline** (esquema, $15$ YMM vivos por iteracion del bucle $p$):
-
-```c
-// 12 acumuladores de C cargados una sola vez por (ir, jr) micro-tile
-__m256 c00, c01, c10, c11, c20, c21, c30, c31, c40, c41, c50, c51;
-for (size_t p = 0; p < kc; ++p) {
-    __m256 b0 = _mm256_loadu_ps(&B[p*ldb + 0]);
-    __m256 b1 = _mm256_loadu_ps(&B[p*ldb + 8]);
-    __m256 a  = _mm256_broadcast_ss(&A[0*lda + p]);
-    c00 = _mm256_fmadd_ps(a, b0, c00);
-    c01 = _mm256_fmadd_ps(a, b1, c01);
-    // ... idem para filas 1..5 ...
-}
-// store de los 12 acumuladores una sola vez
+```
+bench_tiled_ikj_avx2 <m> [num_iters] [num_runs] [bs]
+bench_tiled_ikj_omp  <m> [num_iters] [num_runs] [bs]
 ```
 
-`memset(C, 0, m*n*sizeof(scalar_t))` al inicio permite que cada iteracion del bucle `pc` cargue $C$, acumule sobre el, y lo escriba de vuelta — agregando consistentemente las contribuciones parciales de cada panel $k_c$.
+La variante `bench_loops` recibe el orden como primer argumento:
 
-**Compilacion.** Requiere `-O3 -march=znver2 -mavx2 -mfma`. Verificado con `objdump`: GCC inline-a el microkernel y mantiene los $12$ acumuladores en YMMs sin spilling al stack.
-
-**Complejidad.** $2 \cdot m \cdot k \cdot n$ flops (identica al baseline). La ganancia frente a la version $6$-loop simple es de **densidad aritmetica**: por iteracion del bucle interno $p$ se hacen $12$ FMAs (retire $6$ ciclos en los dos pipes FMA del Zen 2) contra $2$ loads + $6$ broadcasts (no en el camino critico). En el techo single-core medido a $\sim 70$ GFLOPS sobre $m = 4096$ con $k_c = 512$ ($55\%$ del pico Zen 2 de $128$ GFLOPS a $4.0$ GHz turbo), por encima del $\sim 29$ GFLOPS de la version previa.
-
-### 14.4 `benchmark_iterations_tiled_ikj_avx2`
-
-```c
-void benchmark_iterations_tiled_ikj_avx2(scalar_t *B_out,
-                                          const scalar_t *A,
-                                          const scalar_t *Z,
-                                          size_t m, size_t n,
-                                          size_t num_iters);
+```
+bench_loops <order> <m> [num_iters] [num_runs]      # order = ijk | ikj | jik | jki | kij | kji
 ```
 
-Mismo patron que `benchmark_iterations` (Seccion 2.2): doble buffer + swap de punteros, aloja y libera internamente. Invoca `matmul_tiled_ikj_avx2` en cada iteracion de la recurrencia.
+**Defaults:**
+- `num_iters`: $\min(2m/n, 4)$ por defecto. Knob `--iters-per-run` desde el sweep (`ITERS_PER_RUN=0` activa $I_{\text{full}} = 2m/n$).
+- `num_runs`: `5` para corridas standalone, `1`-`3` para `make results`.
 
-### 14.5 Binarios
+**Protocolo de medicion:** una **corrida de warm-up no medida** seguida de `num_runs` corridas medidas. Se reporta la **mediana** de los tiempos.
 
-| Binario | CLI | Salida CSV |
-|---------|-----|------------|
-| `bin/bench_tiled_ikj_avx2_O3` | `<m> [num_iters] [num_runs] [bs]` | `tiled_ikj_avx2,m,n,num_iters,bs,median_seconds,gflops` (7 columnas) |
-| `bin/validate_tiled_ikj_avx2_O3` | `[m] [bs]` (defaults: m=256, bs=384) | 4 tests: `A*0==0`, `I*Z==Z`, linealidad, cross contra naive |
+**Salida (una linea CSV en `stdout`):**
 
-El cuarto argumento opcional `[bs]` llama a `matmul_tiled_ikj_avx2_set_bs(bs)` antes de las corridas. La columna `bs` del CSV preserva el formato de 7 columnas que ya manejaba el consolidador `consolidate_perf_zen2.py` (rama `len(parts) >= 7`).
+```
+<kernel>,m,n,num_iters,median_seconds,gflops
+```
 
-**Tolerancias de validacion:** `ABS_TOL = 1e-4f`, `REL_TOL = 1e-3f`.
+Para `tiled_ikj_avx2` y `tiled_ikj_omp` se inserta una columna `bs` (formato de 7 columnas):
+
+```
+<kernel>,m,n,num_iters,bs,median_seconds,gflops
+```
+
+Los benches de la familia Morton (`bench_morton_O3`, `bench_morton_avx2_O3`, `bench_morton_omp_O3`) **abortan** si $m$ no es potencia de 2; la reorganizacion a Morton se ejecuta **una sola vez antes del warm-up**, fuera del tiempo cronometrado.
+
+### 5.2 Convencion comun de los `validate_*`
+
+**Proposito:** verificar correctitud del kernel sobre invariantes algebraicos.
+
+**CLI:**
+
+```
+validate_<variant> [m]
+```
+
+Las variantes con knob de bs aceptan un segundo argumento:
+
+```
+validate_tiled_ikj_avx2 [m] [bs]
+validate_tiled_ikj_omp  [m] [bs]
+```
+
+Default: $m = 256$.
+
+**Invariantes basicos (todos los validates):**
+
+1. $A \cdot 0 = 0$
+2. $I \cdot Z = Z$
+3. $A \cdot (Z_1 + Z_2) = A \cdot Z_1 + A \cdot Z_2$
+
+Algunos validates anaden tests adicionales:
+
+- `validate_loops`: 4 tests por variante (3 invariantes + cross-validation contra `matmul_naive`), barrido sobre los 6 ordenes.
+- `validate_morton`: 3 invariantes + cross-validation contra `matmul_naive` en $m \in \{4, 16, 64, 256\}$ (7 tests totales).
+- `validate_morton_avx2`, `validate_morton_omp`: 3 invariantes + cross-validation contra `matmul_naive` y contra `matmul_morton`.
+- `validate_tiled_ikj{,_avx2,_omp}`: 3 invariantes + cross-validation contra `matmul_naive`.
+
+**Tolerancias (`matrices_close`):**
+
+| Validate | `ABS_TOL` | `REL_TOL` |
+|----------|-----------|-----------|
+| `validate_naive` | $10^{-4}$ | $10^{-3}$ |
+| `validate_loops` | $10^{-4}$ | $10^{-3}$ |
+| `validate_tiled_ikj` | $10^{-4}$ | $10^{-3}$ |
+| `validate_tiled_ikj_avx2` | $10^{-4}$ | $10^{-3}$ |
+| `validate_tiled_ikj_omp` | $10^{-4}$ | $10^{-3}$ |
+| `validate_morton` | $10^{-5}$ | $10^{-4}$ |
+| `validate_morton_avx2` | $10^{-4}$ | $10^{-3}$ |
+| `validate_morton_omp` | $10^{-4}$ | $10^{-3}$ |
+
+`validate_morton` mantiene tolerancia mas estricta porque el kernel escalar Morton fino no reasocia la suma FP; los demas relajan a $10^{-4} / 10^{-3}$ por el reorden inducido por AVX2 (`-O3`, intrinsics FMA) y por OpenMP.
+
+**Salida:** mensajes por test (`[OK]` / `[FAIL]`) y, al cierre, `VALIDATION OK` o `VALIDATION FAILED`. Codigo de salida: `0` en exito, `1` si algun test falla. Cuando falla, se reporta el primer indice fallido y los dos valores (`A_ref`, `A_test`) para diagnostico.
+
+### 5.3 Tabla unificada de binarios
+
+Una fila por driver. Rutas relativas a la raiz del repo tras `make build`. Targets de compilacion individuales documentados en [`docs/0.0) makefile.md`](<0.0) makefile.md>).
+
+| Familia | Bench | Validate |
+|---------|-------|----------|
+| `naive` (Sesion 01) | `bin/bench/bench_naive_O3` | `bin/validate/validate_naive_O0` |
+| `loops` (Fase 1.1) | `bin/bench/bench_loops_O3` | `bin/validate/validate_loops_O0` |
+| `tiled_ikj` (Fase 1.2) | `bin/bench/bench_tiled_ikj_O3` | `bin/validate/validate_tiled_ikj_O0` |
+| `tiled_ikj_avx2` (Fase 1.6) | `bin/bench/bench_tiled_ikj_avx2_O3` | `bin/validate/validate_tiled_ikj_avx2_O3` |
+| `tiled_ikj_omp` (Fase 1.6) | `bin/bench/bench_tiled_ikj_omp_O3` | `bin/validate/validate_tiled_ikj_omp_O3` |
+| `morton` (Fase 6) | `bin/bench/bench_morton_O3` | `bin/validate/validate_morton_O0` |
+| `morton_avx2` (Sesion 03) | `bin/bench/bench_morton_avx2_O3` | `bin/validate/validate_morton_avx2_O3` |
+| `morton_omp` (Sesion 03) | `bin/bench/bench_morton_omp_O3` | `bin/validate/validate_morton_omp_O3` |
+
+**Flags de compilacion por sufijo:**
+
+- `_O0`: `-std=c11 -Wall -Wextra -Wpedantic -O0 -g -fno-omit-frame-pointer -D_POSIX_C_SOURCE=200809L`.
+- `_O3`: igual al anterior pero con `-O3 -march=znver2 -mavx2 -mfma`.
+- `_O3` ademas con `-fopenmp` para las variantes `_omp`.
+
+Las variantes que requieren AVX2 + FMA usan `_O3` tambien para el `validate_*` (no `_O0`) porque los microkernels son `static inline` con intrinsics y a `-O0` no se materializan las instrucciones FMA.
+
+**Pipeline de medicion:** el unico flujo soportado es `make results` (orquesta `scripts/run_perf_zen2_sweep.sh` + `scripts/consolidate_perf_zen2.py`). Salida canonica: `results/metrics.csv`. Knobs (`VARIANTS`, `MS`, `ITERS_PER_RUN`, `RUNS`) documentados en [`docs/0.0) makefile.md`](<0.0) makefile.md>).
 
 ---
 
-## 15. Modulo `matmul_tiled_ikj_omp` (Fase 1.6 — kernel 6x16 + OpenMP `parallel for` en `ic`)
+## 6. Capa `tests`
 
-**Archivo header:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.h`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.h)
-**Implementacion:** [`src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.c`](../src/algorithms/tiled_ikj/matmul_tiled_ikj_omp.c) (microkernel compartido en [`src/microkernels/kernel_avx2_tiled.h`](../src/microkernels/kernel_avx2_tiled.h))
-**Compilacion requerida:** `-O3 -march=znver2 -mavx2 -mfma -fopenmp`
+Tests unitarios standalone para las primitivas de [`src/core/`](../src/core) y los microkernels de [`src/microkernels/`](../src/microkernels). Binarios en `bin/tests/`. Documentacion detallada (estructura de cada test, casos cubiertos, contrato de exit code) en [`docs/1.9) tests.md`](<1.9) tests.md>).
 
-Hermano paralelo de `matmul_tiled_ikj_avx2` (Modulo 14). Mismo microkernel registrado $6 \times 16$, mismo loop nest, **pero el bucle externo $i_c$ esta distribuido entre threads** con `#pragma omp for schedule(static)`. La region `omp parallel` se abre una sola vez por invocacion y abarca el bucle $p_c$ entero; el barrier implicito al final de cada `omp for` sincroniza las pasadas $p_c$ (necesario porque $C$ se acumula entre pasadas).
+| Binario | Cubre |
+|---------|-------|
+| `bin/tests/test_matrix_utils` | `xalloc_aligned`, `init_matrix_zero/identity/random`, `matrices_close` |
+| `bin/tests/test_morton` | `morton_encode`, `morton_decode`, `reorganize_to_morton`, `reorganize_from_morton` |
+| `bin/tests/test_kernel_avx2_morton` | Microkernel $4 \times 16$ de [`kernel_avx2_morton.h`](../src/microkernels/kernel_avx2_morton.h) |
+| `bin/tests/test_kernel_avx2_tiled` | Microkernel $6 \times 16$ de [`kernel_avx2_tiled.h`](../src/microkernels/kernel_avx2_tiled.h) |
 
-### 15.1 Constantes y global
-
-```c
-#define TILED_IKJ_OMP_MR 6u
-#define TILED_IKJ_OMP_NR 16u
-#define TILED_IKJ_OMP_MC 192u
-#define TILED_IKJ_OMP_BS_DEFAULT 384u
-extern size_t g_tiled_ikj_omp_bs;
-```
-
-Misma geometria que `matmul_tiled_ikj_avx2`. El microkernel esta duplicado adrede en el `.c` (no factorizado a un header compartido) para garantizar que GCC lo inline en cada unidad de compilacion sin spilling de los $12$ acumuladores YMM; explico la razon en el comentario de `matmul_tiled_ikj_omp.c`.
-
-### 15.2 Funciones publicas
-
-```c
-void matmul_tiled_ikj_omp_set_bs(size_t bs);
-
-void matmul_tiled_ikj_omp(scalar_t *C,
-                      const scalar_t *A,
-                      const scalar_t *B,
-                      size_t m, size_t k, size_t n);
-
-void benchmark_iterations_tiled_ikj_omp(scalar_t *B_out,
-                                    const scalar_t *A,
-                                    const scalar_t *Z,
-                                    size_t m, size_t n,
-                                    size_t num_iters);
-```
-
-Mismo contrato externo que las contrapartes seriales:
-
-- $C$ ($m \times n$) se inicializa con `memset` a cero secuencialmente (fuera del region paralelo).
-- $A$ ($m \times k$) y $B$ ($k \times n$) son solo lectura, compartidas entre threads.
-- Cada thread procesa un rango disjunto del loop $i_c$, escribiendo exclusivamente en filas $[i_c, i_c + m_c)$ de $C$ — sin conflictos de escritura ni false sharing entre tiles diferentes ($\text{MC} \cdot n \cdot 4 = 192 \cdot 128 \cdot 4 = 96$ KiB por bloque, varios ordenes de magnitud por encima de la linea de cache).
-- El numero de threads lo fija `OMP_NUM_THREADS` antes de invocar el binario.
-
-### 15.3 Recomendacion para el Ryzen $5$ $4600$H
-
-Configuracion empiricamente mejor en el sweep del Modulo 14: **`OMP_NUM_THREADS=6 OMP_PLACES=cores OMP_PROC_BIND=close`**. Un thread por core fisico (los $6$ cores fisicos del Renoir), evitando los hilos SMT que comparten las unidades FMA con sus siblings. `bind=close` mantiene los threads pegados a un CCX cuando hay $\leq 3$, y se reparte entre los dos cuando hay $\geq 4$.
-
-SMT a $12$ threads degrada el rendimiento $\sim 60\%$ porque los pares de hilos compiten por las dos pipas FMA de cada core fisico.
-
-### 15.4 Binarios
-
-| Binario | Target make | Flags |
-|---------|-------------|-------|
-| `bin/bench_tiled_ikj_omp_O3`    | `bench_tiled_ikj_omp`    | `CFLAGS_OMP_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma -fopenmp`) |
-| `bin/validate_tiled_ikj_omp_O3` | `validate_tiled_ikj_omp` | idem |
-
-**CLI bench:** `bench_tiled_ikj_omp_O3 <m> [num_iters] [num_runs] [bs]`
-
-**Salida CSV** (7 columnas, identica a `tiled_ikj_avx2`):
-```
-tiled_ikj_omp,m,n,num_iters,bs,median_seconds,gflops
-```
-
-**Integracion en el pipeline perf:** `profile_perf_zen2.sh` fija `OMP_NUM_THREADS=6 OMP_PLACES=cores OMP_PROC_BIND=close` cuando `VARIANT=tiled_ikj_omp` (cambiado en Fase 1.6 desde $8/$close, que era subOptimo para el microkernel FMA-bound). `run_perf_zen2_sweep.sh` incluye `tiled_ikj_omp` en su array `VARIANTS` por defecto. `consolidate_perf_zen2.py` no requiere cambios.
+La piramide completa de verificacion es `tests` $\to$ `validate` $\to$ `bench`. `make validate` depende de `make tests`: un fallo en los unit-tests aborta antes de correr los `validate_*`.
 
 ---
 
-## 16. Cambios y versionado
+## 7. Versionado del documento
 
-Este documento se actualiza con cada PR que toque la API publica. La regla es: **si una firma de funcion cambia, este documento debe cambiar en el mismo commit**.
+Este documento se actualiza con cada PR que toque la API publica. La regla es: **si una firma de funcion, una constante publica o un binario cambia, este documento debe cambiar en el mismo commit**.

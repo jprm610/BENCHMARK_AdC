@@ -1,43 +1,10 @@
-/*
- * kernel_avx2_morton.h - AVX2 + FMA microkernel for a fixed 4x16 tile
- *                       of C, used by the Morton-blocked family
- *                       (matmul_morton_avx2 and matmul_morton_omp).
- *
- * Sesion 03 / Prompt 3 (Stage A4 of the technical plan). Originally
- * shipped as kernel_avx2.{h,c} (a separately compiled .o linked into
- * the morton binaries). Renamed to kernel_avx2_morton.h when the src/
- * tree was reorganized and the sibling header kernel_avx2_tiled.h was
- * added for the 6x16 tile used by the tiled_ikj family. Converted to
- * header-only `static inline` at the same time, for consistency with
- * kernel_avx2_tiled.h and with the unified AVX-512 layout that
- * Juan Pablo introduced in opt_zen5 (kernel_avx512.h exposes both the
- * 6x32 and 4x32 kernels as `static inline` in a single header).
- *
- * Computes C[4 x 16] += A[4 x kc] * B[kc x 16] where kc is a runtime
- * parameter. The 4 x 16 geometry holds the entire C tile in 8 YMM
- * registers (4 rows x 2 vectors of 8 floats each), leaving 8 of the
- * 16 architectural YMM registers free for A broadcasts and B loads.
- * No element of C is written back to memory during the inner loop,
- * which lets the two Zen 2 FMA pipes stay saturated on every cycle
- * that the upstream loads can keep up.
- *
- * Caller responsibilities (the kernel itself checks nothing):
- *   - kc >= 1.
- *   - lda, ldb, ldc are the leading dimensions of A, B, C in their
- *     original allocations (number of columns per row, row-major).
- *   - ldb >= 16 and ldc >= 16. A is accessed only at positions
- *     A[r*lda + p] for r in [0,4) and p in [0,kc), so lda >= kc.
- *   - C, A, B are non-aliasing (restrict).
- *   - 32-byte alignment is preferred but not required; the
- *     implementation uses _mm256_loadu_ps / _mm256_storeu_ps so
- *     unaligned access is correct, just marginally slower.
- *
- * Semantics: the kernel ACCUMULATES into C. Callers that want a fresh
- * C must zero it before invocation.
- *
- * Requires: -mavx2 -mfma at the call site (CFLAGS_O3_ZEN2 or
- * CFLAGS_OMP_ZEN2).
- */
+// kernel_avx2_morton.h - Microkernel AVX2 + FMA para un tile fijo
+// 4x16 de C, usado por la familia Morton-blocked
+// (matmul_morton_avx2 y matmul_morton_omp).
+//
+// Header-only `static inline`: el cuerpo se pega en el call site, asi
+// los 8 acumuladores YMM viven en registros durante todo el loop kc y
+// nunca se spillean al stack.
 
 #ifndef KERNEL_AVX2_MORTON_H
 #define KERNEL_AVX2_MORTON_H
@@ -48,45 +15,82 @@
 
 #include "matrix_utils.h"  /* scalar_t */
 
-/* Compile-time geometry constants, exposed so callers (e.g. the
- * matmul_morton_avx2 leaf kernel) can align their block sizes to the
- * tile without re-declaring the magic numbers. KERNEL_AVX2_MR is the
- * row count handled per call; KERNEL_AVX2_NR the column count. */
+/*
+Geometria del microkernel:
+- KERNEL_AVX2_MR = 4 filas por invocacion.
+- KERNEL_AVX2_NR = 16 columnas por invocacion.
+
+Balance de registros (Zen 2 tiene 16 YMM nombrados):
+    c00..c31  -> 8 YMMs  (acumuladores de C, viven todo el loop kc)
+    b0, b1    -> 2 YMMs  (fila p de B, se renuevan en cada iteracion)
+    a0..a3    -> 4 YMMs  (broadcasts de A[r,p] para r en 0..3)
+    -----------------
+                14 de 16 registros YMM usados.
+
+Computa C[4 x 16] += A[4 x kc] * B[kc x 16] con kc parametro runtime.
+*/
 #define KERNEL_AVX2_MR 4
 #define KERNEL_AVX2_NR 16
 
 /*
- * kernel_avx2_4x16: 4x16 AVX2 + FMA tile kernel for FP32 matmul.
- *
- * Layout of the eight C accumulators across the 16 architectural YMM
- * registers (Zen 2 has 16 named ymm registers and renames out of a
- * 168-entry physical register file, so we can assume no spill if we
- * use 16 or fewer at once):
- *
- *   row 0:  c00  c01      (cols  0..7   cols  8..15)
- *   row 1:  c10  c11
- *   row 2:  c20  c21
- *   row 3:  c30  c31
- *
- * Each iteration of the kc loop reads:
- *   - two 256-bit B vectors (b0, b1) covering 16 floats of row p of B,
- *   - four broadcasts (a0..a3) of A[r,p] for r in 0..3,
- * and issues 8 vfmadd231ps. Zen 2 retires up to two FMA ops per cycle,
- * so 8 FMAs are 4 cycles of compute per kc iteration. The two
- * vmovups + four vbroadcastss provide the operands; in steady state
- * the bottleneck is the FMA throughput, not the loads.
- */
+Responsabilidades del caller (el kernel no verifica nada):
+- kc >= 1.
+- lda, ldb, ldc son las leading dimensions en las allocations
+  ORIGINALES (numero de columnas por fila, row-major).
+- ldb >= 16 y ldc >= 16. A se accede solo en A[r*lda + p] para r en
+  [0,4) y p en [0,kc), asi que lda >= kc.
+- C, A, B no aliasing (restrict).
+- Alineacion a 32 bytes preferible pero NO requerida: la implementacion
+  usa _mm256_loadu_ps / _mm256_storeu_ps. Las hojas Morton no aterrizan
+  siempre en multiplos de 32 bytes porque los offsets navegan a
+  posiciones de elemento, no de linea de cache. La penalizacion de
+  loadu sobre datos accidentalmente alineados es 0 ciclos en Zen 2.
+
+Semantica: el kernel ACUMULA en C. Callers que quieran C limpio deben
+zerarlo antes.
+
+Requiere: -mavx2 -mfma en el call site (CFLAGS_O3_ZEN2 o CFLAGS_OMP_ZEN2).
+*/
+
+/*
+kernel_avx2_4x16: Microkernel 4x16 AVX2 + FMA para FP32 matmul.
+    INPUTS:
+    - C: Puntero al tile de C[4 x 16] a actualizar (in/out).
+    - ldc: Leading dimension de C en su allocation original.
+    - A: Puntero al panel A[4 x kc] con stride lda entre filas.
+    - lda: Leading dimension de A.
+    - B: Puntero al panel B[kc x 16] con stride ldb entre filas.
+    - ldb: Leading dimension de B.
+    - kc: Profundidad del producto.
+    OUTPUTS:
+    - Ninguno (void). C queda actualizado con C += A * B.
+
+Layout de los 8 acumuladores en YMM:
+
+    row 0:  c00  c01      (cols  0..7   cols  8..15)
+    row 1:  c10  c11
+    row 2:  c20  c21
+    row 3:  c30  c31
+
+Cada iteracion del loop kc:
+- 2 loads de 256 bits para B (b0, b1) = 16 floats de la fila p de B.
+- 4 broadcasts (a0..a3) de A[r, p] para r en 0..3.
+- 8 FMAs (8 acumuladores * 1 actualizacion cada uno).
+
+Zen 2 retira hasta 2 FMA ops/ciclo => 8 FMAs son 4 ciclos de compute
+por iteracion. Los loads + broadcasts proveen operandos en paralelo
+desde la otra ventana de issue. En estado estable el bottleneck es el
+FMA throughput, no los loads.
+*/
 static inline void
 kernel_avx2_4x16(scalar_t       *restrict C, size_t ldc,
                  const scalar_t *restrict A, size_t lda,
                  const scalar_t *restrict B, size_t ldb,
                  size_t kc)
 {
-    /* Load the current C tile into eight YMM accumulators. Using
-     * loadu / storeu so the kernel works for any leading dimension
-     * (the leaves of matmul_morton_avx2 will not always be 32-byte
-     * aligned because the Morton offsets land on element boundaries,
-     * not on cache-line boundaries). */
+    /* ===== Fase 1: cargar el tile de C en los 8 acumuladores ===== */
+    /* loadu (no load) porque las hojas Morton no garantizan
+     * alineacion a 32 bytes; ver comentario arriba del header. */
     __m256 c00 = _mm256_loadu_ps(&C[0 * ldc + 0]);
     __m256 c01 = _mm256_loadu_ps(&C[0 * ldc + 8]);
     __m256 c10 = _mm256_loadu_ps(&C[1 * ldc + 0]);
@@ -96,24 +100,24 @@ kernel_avx2_4x16(scalar_t       *restrict C, size_t ldc,
     __m256 c30 = _mm256_loadu_ps(&C[3 * ldc + 0]);
     __m256 c31 = _mm256_loadu_ps(&C[3 * ldc + 8]);
 
+    /* ===== Fase 2: loop kc (el trabajo real) ===== */
     for (size_t p = 0; p < kc; ++p) {
-        /* One row of B at depth p, split into the low and high halves
-         * of the 16-column tile. */
+        /* Una fila de B a profundidad p, partida en las mitades
+         * baja y alta del tile de 16 columnas. */
         __m256 b0 = _mm256_loadu_ps(&B[p * ldb + 0]);
         __m256 b1 = _mm256_loadu_ps(&B[p * ldb + 8]);
 
-        /* Broadcast a single A element per row of the tile. Each
-         * broadcast replicates A[r,p] across all 8 lanes of the YMM
-         * register, so the FMA below applies that scalar to every
-         * column of the tile in a single instruction. */
+        /* Broadcast: replica A[r, p] en las 8 lanes del YMM, asi el
+         * FMA siguiente aplica ese escalar a las 8 columnas del tile
+         * en una sola instruccion. */
         __m256 a0 = _mm256_broadcast_ss(&A[0 * lda + p]);
         __m256 a1 = _mm256_broadcast_ss(&A[1 * lda + p]);
         __m256 a2 = _mm256_broadcast_ss(&A[2 * lda + p]);
         __m256 a3 = _mm256_broadcast_ss(&A[3 * lda + p]);
 
-        /* Eight independent FMAs per kc step. Independent meaning no
-         * RAW dependency between them within this iteration, so they
-         * pipeline through the two FMA units without stalls. */
+        /* 8 FMAs independientes (sin dependencia RAW entre si dentro
+         * de esta iteracion) => las 2 unidades FMA del Zen 2 las
+         * pipelinean sin stalls. */
         c00 = _mm256_fmadd_ps(a0, b0, c00);
         c01 = _mm256_fmadd_ps(a0, b1, c01);
         c10 = _mm256_fmadd_ps(a1, b0, c10);
@@ -124,7 +128,7 @@ kernel_avx2_4x16(scalar_t       *restrict C, size_t ldc,
         c31 = _mm256_fmadd_ps(a3, b1, c31);
     }
 
-    /* Spill the accumulators back to memory. */
+    /* ===== Fase 3: guardar los acumuladores de vuelta a memoria ===== */
     _mm256_storeu_ps(&C[0 * ldc + 0], c00);
     _mm256_storeu_ps(&C[0 * ldc + 8], c01);
     _mm256_storeu_ps(&C[1 * ldc + 0], c10);

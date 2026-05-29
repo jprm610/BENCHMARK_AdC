@@ -1,36 +1,6 @@
-/*
- * matmul_morton.c - Recursive matmul with A in Morton layout.
- *
- * Invariants threaded through the recursion:
- *   - A is a square sub-block of side a_block_dim (a power of 2),
- *     occupying the contiguous segment
- *         A_morton[a_morton_offset .. a_morton_offset + a_block_dim^2).
- *   - The current sub-problem operates on m_block rows and k_block
- *     columns of that sub-block; we keep m_block == k_block ==
- *     a_block_dim at every recursive call.
- *   - B and C are row-major sub-blocks with leading dimensions ldb and
- *     ldc (the leading dimensions of the *original* matrices, never the
- *     sub-blocks).
- *
- * The recursion has two productive cases plus a leaf:
- *   - Case N (split n): when n_block > a_block_dim, halve n_block; A is
- *     shared between the two recursive calls. Two regions of C are
- *     disjoint, both overwrite.
- *   - Case MK (split m and k together): when a_block_dim >= 2, halve A
- *     into its four quadrants TL/TR/BL/BR. The Z-order encoding maps
- *     them to four consecutive segments of A_morton at offsets
- *         a_morton_offset + {0, 1, 2, 3} * (half * half).
- *     C splits into its top and bottom halves; B splits into top and
- *     bottom halves; four sub-matrix products combine into the result.
- *   - Leaf: m_block*k_block*n_block <= g_recursion_threshold, or the
- *     degenerate a_block_dim == 1 and n_block == 1 case.
- *
- * Two parallel variants exist for the recursion and the leaf kernel:
- *   - plain (matmul_morton_inner, kernel_base_morton): overwrites C.
- *   - _add (matmul_morton_inner_add, kernel_base_morton_add):
- *     accumulates into C. Used by the second/third/fourth product in
- *     the MK split and by every call inside the _add branch.
- */
+// matmul_morton.c - Implementacion del matmul recursivo con A en
+// layout Morton. Dos ramas paralelas (overwrite y _add) y un leaf
+// escalar ijk.
 
 #include "matmul_morton.h"
 #include "morton.h"
@@ -43,23 +13,41 @@
 #include <string.h>
 
 /*
- * Recursion threshold: tunable at run time so that Prompt 2 of Sesion 03
- * can sweep it without recompiling. The default mirrors the Sesion 02
- * value (32 * 32 * 128 = 131072 element products), keeping behaviour
- * unchanged for every caller that does not call the setter. Reads from
- * within the recursion are unsynchronized; in practice the variable is
- * set once before benchmark_iterations_morton_preorganized is invoked,
- * so no fence is needed.
- */
-size_t g_recursion_threshold = (size_t)32 * 32 * 128;
+Invariantes que sostiene la recursion:
+- A es un sub-bloque cuadrado de lado a_block_dim (potencia de 2) que
+  ocupa el segmento contiguo
+      A_morton[a_morton_offset .. a_morton_offset + a_block_dim^2).
+- El sub-problema actual opera sobre m_block filas y k_block columnas
+  de ese sub-bloque. Se mantiene m_block == k_block == a_block_dim en
+  cada llamada productiva (las division por 2 mantienen la igualdad).
+- B y C son sub-bloques row-major con leading dimensions ldb y ldc
+  (las leading dimensions de las matrices ORIGINALES, no de los
+  sub-bloques).
+
+Casos:
+- Caso N: cuando n_block > a_block_dim, se divide n. A es compartida.
+- Caso MK: cuando a_block_dim >= 2, se divide A en sus 4 cuadrantes
+  Morton; sus offsets son a_morton_offset + {0,1,2,3} * (half*half).
+- Leaf: m_block * k_block * n_block <= g_recursion_threshold, o el
+  caso degenerado a_block_dim == 1 con n_block == 1.
+
+Ramas:
+- plain (matmul_morton_inner, kernel_base_morton): sobrescribe C.
+- _add (matmul_morton_inner_add, kernel_base_morton_add): acumula
+  en C. La usa el segundo, tercer y cuarto producto del split MK, y
+  cada llamada dentro de la rama _add propaga _add a sus hijos.
+*/
+
+size_t g_recursion_threshold = (size_t)32 * 32 * 128;   /* = 131072 */
 
 void matmul_morton_set_threshold(size_t threshold)
 {
-    /* Guard against zero: a zero threshold would mean "never recurse",
-     * which makes the whole problem fall into the leaf kernel with the
-     * full m,k,n dimensions and defeats the purpose of the routine.
-     * Treat zero as a request for the default, with a warning so the
-     * caller does not silently get unexpected behaviour. */
+    /*
+    Guard contra threshold == 0: un threshold cero significa "nunca
+    recursar", lo que tira el problema entero al leaf con las
+    dimensiones globales y derrota el proposito de la rutina. Se trata
+    como un bug del caller => warning + mantener el valor previo.
+    */
     if (threshold == 0) {
         fprintf(stderr,
                 "Warning: matmul_morton_set_threshold(0) ignored; "
@@ -70,7 +58,7 @@ void matmul_morton_set_threshold(size_t threshold)
     g_recursion_threshold = threshold;
 }
 
-/* Forward declarations of the internal helpers. */
+/* Forward declarations de las funciones internas. */
 static void matmul_morton_inner(scalar_t *C,
                                 const scalar_t *A_morton,
                                 const scalar_t *B,
@@ -103,9 +91,9 @@ static void kernel_base_morton_add(scalar_t *C,
                                    size_t a_block_dim,
                                    size_t ldc, size_t ldb);
 
-/* ------------------------------------------------------------------ */
-/* Public wrapper                                                      */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* Wrapper publico                                                    */
+/* ================================================================== */
 
 void matmul_morton(scalar_t *C,
                    const scalar_t *A_morton,
@@ -125,6 +113,7 @@ void matmul_morton(scalar_t *C,
         exit(EXIT_FAILURE);
     }
 
+    /* Lanzar la recursion con offset 0 y a_block_dim = m. */
     matmul_morton_inner(C, A_morton, B,
                         m, k, n,
                         /* a_morton_offset = */ 0,
@@ -133,9 +122,9 @@ void matmul_morton(scalar_t *C,
                         /* ldb = */ n);
 }
 
-/* ------------------------------------------------------------------ */
-/* Overwrite branch of the recursion                                   */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* Rama overwrite                                                     */
+/* ================================================================== */
 
 static void matmul_morton_inner(scalar_t *C,
                                 const scalar_t *A_morton,
@@ -153,9 +142,8 @@ static void matmul_morton_inner(scalar_t *C,
         return;
     }
 
-    /* Case N: n is strictly the largest dimension. A is shared between
-     * the two recursive calls; B and C halve along the n axis. The two
-     * halves of C are disjoint, so both calls overwrite. */
+    /* Caso N: dividir n. A es compartida; las dos mitades de C son
+     * disjuntas, asi que ambas pueden sobrescribir sin colisionar. */
     if (n_block > a_block_dim && n_block >= 2) {
         size_t n_half = n_block / 2;
         matmul_morton_inner(C,          A_morton, B,
@@ -169,9 +157,9 @@ static void matmul_morton_inner(scalar_t *C,
         return;
     }
 
-    /* Case MK: split A into its four Morton quadrants. The recursion
-     * keeps m_block == k_block == a_block_dim, so the next level still
-     * sees a square sub-block. */
+    /* Caso MK: dividir A en sus 4 cuadrantes Morton. m_block == k_block
+     * == a_block_dim se mantiene porque la division es exacta (potencia
+     * de 2). */
     if (a_block_dim >= 2) {
         assert(m_block == k_block);
         assert(m_block == a_block_dim);
@@ -180,28 +168,28 @@ static void matmul_morton_inner(scalar_t *C,
         size_t quadrant_size = half * half;
 
         /* C_top = A_TL * B_top  (overwrite)
-         * Offset 0 selects the top-left Morton quadrant. */
+         * Offset 0 = cuadrante top-left por la convencion Morton. */
         matmul_morton_inner(C, A_morton, B,
                             half, half, n_block,
                             a_morton_offset + (size_t)0 * quadrant_size,
                             half, ldc, ldb);
 
-        /* C_top += A_TR * B_bot (accumulate over what TL just wrote)
-         * Offset 1 selects the top-right quadrant; B_bot = B + half*ldb. */
+        /* C_top += A_TR * B_bot (accumulate sobre lo que escribio TL)
+         * Offset 1 = top-right; B_bot = B + half*ldb. */
         matmul_morton_inner_add(C, A_morton, B + half * ldb,
                                 half, half, n_block,
                                 a_morton_offset + (size_t)1 * quadrant_size,
                                 half, ldc, ldb);
 
-        /* C_bot = A_BL * B_top  (overwrite; C_bot is disjoint from C_top)
-         * Offset 2 selects the bottom-left quadrant. */
+        /* C_bot = A_BL * B_top  (overwrite; C_bot disjoint de C_top)
+         * Offset 2 = bottom-left. */
         matmul_morton_inner(C + half * ldc, A_morton, B,
                             half, half, n_block,
                             a_morton_offset + (size_t)2 * quadrant_size,
                             half, ldc, ldb);
 
-        /* C_bot += A_BR * B_bot (accumulate over what BL just wrote)
-         * Offset 3 selects the bottom-right quadrant. */
+        /* C_bot += A_BR * B_bot (accumulate sobre lo que escribio BL)
+         * Offset 3 = bottom-right. */
         matmul_morton_inner_add(C + half * ldc, A_morton, B + half * ldb,
                                 half, half, n_block,
                                 a_morton_offset + (size_t)3 * quadrant_size,
@@ -209,17 +197,17 @@ static void matmul_morton_inner(scalar_t *C,
         return;
     }
 
-    /* Degenerate fallback: a_block_dim == 1 and n_block == 1. The leaf
-     * kernel handles m_block == k_block == n_block == 1 correctly. */
+    /* Fallback degenerado: a_block_dim == 1 y n_block == 1. El leaf
+     * maneja correctamente sub-bloques 1x1x1. */
     kernel_base_morton(C, A_morton, B,
                        m_block, k_block, n_block,
                        a_morton_offset, a_block_dim,
                        ldc, ldb);
 }
 
-/* ------------------------------------------------------------------ */
-/* Accumulate branch of the recursion                                  */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* Rama accumulate                                                    */
+/* ================================================================== */
 
 static void matmul_morton_inner_add(scalar_t *C,
                                     const scalar_t *A_morton,
@@ -257,9 +245,9 @@ static void matmul_morton_inner_add(scalar_t *C,
         size_t half          = a_block_dim / 2;
         size_t quadrant_size = half * half;
 
-        /* All four contributions accumulate: we are already inside the
-         * _add branch, so C carries a previous value that every product
-         * must add onto. */
+        /* Los cuatro productos acumulan: ya estamos dentro de la rama
+         * _add, asi que C trae un valor previo que cada producto debe
+         * preservar sumandose. */
         matmul_morton_inner_add(C, A_morton, B,
                                 half, half, n_block,
                                 a_morton_offset + (size_t)0 * quadrant_size,
@@ -285,17 +273,15 @@ static void matmul_morton_inner_add(scalar_t *C,
                            ldc, ldb);
 }
 
-/* ------------------------------------------------------------------ */
-/* Leaf kernels                                                        */
-/*                                                                     */
-/* The "Option A" indexing scheme from the prompt: for each (i, k)     */
-/* inside the current sub-block, the element of A lives at             */
-/*     A_morton[a_morton_offset + morton_encode(i, k)]                 */
-/* where i and k are LOCAL indices (0..m_block, 0..k_block). The       */
-/* invariant m_block == k_block == a_block_dim guarantees that         */
-/* morton_encode(i, k) stays inside [0, a_block_dim^2), so the         */
-/* computed A index stays inside the sub-block segment.                */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* Kernels base (leaf)                                                */
+/*                                                                    */
+/* Para cada (i, k) dentro del sub-bloque actual, el elemento de A    */
+/* vive en A_morton[a_morton_offset + morton_encode(i, k)], donde i,  */
+/* k son indices LOCALES (0..m_block, 0..k_block). El invariante      */
+/* m_block == k_block == a_block_dim garantiza que morton_encode(i, k)*/
+/* nunca sale del segmento del sub-bloque.                            */
+/* ================================================================== */
 
 static void kernel_base_morton(scalar_t *C,
                                const scalar_t *A_morton,
@@ -305,8 +291,7 @@ static void kernel_base_morton(scalar_t *C,
                                size_t a_block_dim,
                                size_t ldc, size_t ldb)
 {
-    /* a_block_dim is only needed for the invariant assertion above and
-     * for the recursive callers; it is not read by the leaf itself. */
+    /* a_block_dim solo se usa para el invariante; el leaf no lo lee. */
     (void)a_block_dim;
 
     for (size_t i = 0; i < m_block; ++i) {
@@ -345,9 +330,9 @@ static void kernel_base_morton_add(scalar_t *C,
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Benchmark orchestrators                                             */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* Orquestadores de benchmark                                         */
+/* ================================================================== */
 
 void benchmark_iterations_morton(scalar_t *B_out,
                                  const scalar_t *A,
@@ -355,7 +340,7 @@ void benchmark_iterations_morton(scalar_t *B_out,
                                  size_t m, size_t n,
                                  size_t num_iters)
 {
-    /* Reorganize A into Morton order once; the recurrence reuses it. */
+    /* Reorganiza A a Morton una vez; la recurrencia la reusa. */
     scalar_t *A_morton = xalloc_aligned(m * m);
     reorganize_to_morton(A, A_morton, m);
 
@@ -377,10 +362,10 @@ void benchmark_iterations_morton_preorganized(scalar_t *B_out,
     memcpy(B_curr, Z, m * n * sizeof(scalar_t));
 
     for (size_t iter = 0; iter < num_iters; ++iter) {
-        /* B_next = A * B_curr (A is m x m, B_curr is m x n). */
+        /* B_next = A * B_curr (A es m x m, B_curr es m x n). */
         matmul_morton(B_next, A_morton, B_curr, m, m, n);
 
-        /* Store the first n rows of B_next into the output buffer. */
+        /* Almacena las primeras n filas de B_next en el buffer de salida. */
         scalar_t *out_block = B_out + iter * n * n;
         for (size_t i = 0; i < n; ++i) {
             for (size_t j = 0; j < n; ++j) {
@@ -388,7 +373,7 @@ void benchmark_iterations_morton_preorganized(scalar_t *B_out,
             }
         }
 
-        /* Swap so that next iteration's input is the just-computed value. */
+        /* Swap: la proxima iteracion consume lo que acabamos de producir. */
         scalar_t *tmp = B_curr;
         B_curr = B_next;
         B_next = tmp;
