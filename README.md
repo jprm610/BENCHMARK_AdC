@@ -2,22 +2,12 @@
 
 **Curso:** Arquitectura de Computadores
 **Universidad:** Universidad Nacional de Colombia, Sede Medellin
-**Fecha:** Mayo 2026
+**Autores:** Santiago Uribe Echavarría - Juan Pablo Robledo Meza
+**Fecha:** 29 Mayo 2026
 **Hardware de referencia:** AMD EPYC 9R45 (Zen 5) en AWS c8a.2xlarge
 **ISA SIMD principal:** AVX-512 (F + VL + BW + DQ + IFMA)
 
 Esta rama porta el benchmark al servidor de produccion. Implementa y mide la recurrencia $B_{i+1} = A \cdot B_i$ sobre ocho kernels distintos (baseline, reordenamientos, tiling, vectorizacion AVX-512 y paralelizacion OpenMP) con un pipeline de profiling con `perf` calibrado para el hardware Zen 5.
-
-| Kernel | Fase | Tecnica principal |
-|---|---|---|
-| `matmul_naive` | Sesion 01 | Baseline ijk, $-O0$ |
-| `matmul_loops` | Fase 1.1 | Seis permutaciones del orden de bucles |
-| `matmul_tiled_ikj` | Fase 1.2 | Tiling explicito $M_c \times K_c = 384 \times 384$ apuntando a L2 |
-| `matmul_tiled_ikj_avx512` | Fase 1.6 | Microkernel BLIS-style $6 \times 32$ con AVX-512 + FMA |
-| `matmul_tiled_ikj_omp` | Fase 1.6 | $6 \times 32$ + `#pragma omp parallel for` en $i_c$ |
-| `matmul_morton` | Fase 6 | Recursion cache-oblivious con $A$ en Morton fino |
-| `matmul_morton_avx512` | Sesion 03 | Morton-de-bloques + microkernel AVX-512 $4 \times 32$ |
-| `matmul_morton_omp` | Sesion 03 | Morton-de-bloques + AVX-512 + OpenMP tasks |
 
 El contrato publico de las funciones esta en [`docs/API.md`](docs/API.md). La rama paralela `main` contiene la version Zen 2 / AVX2 del proyecto, pensada para desarrollo local en WSL2 sobre un Ryzen 5 4600H; ambas comparten estructura, API y pipeline de validacion.
 
