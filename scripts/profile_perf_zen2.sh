@@ -56,7 +56,7 @@
 #     m       : square problem size (default: 4096)
 #
 # DEPENDENCIES:
-#   - bin/bench_<variant>_O3 must exist (build with the corresponding
+#   - bin/bench/bench_<variant>_O3 must exist (build with the corresponding
 #     Makefile target).
 #   - /proc/sys/kernel/perf_event_paranoid must be <= 2 for HW PMU
 #     events to be accessible without root. The script aborts with a
@@ -84,25 +84,25 @@ RUNS=${RUNS:-3}
 case "$VARIANT" in
     loop_*)
         LOOP_ORDER="${VARIANT#loop_}"
-        BIN="$REPO_DIR/bin/bench_loops_O3"
+        BIN="$REPO_DIR/bin/bench/bench_loops_O3"
         BIN_ARGS="$LOOP_ORDER $M $ITERS_PER_RUN $RUNS"
         ;;
     tiled_ikj_omp)
-        BIN="$REPO_DIR/bin/bench_tiled_ikj_omp_O3"
+        BIN="$REPO_DIR/bin/bench/bench_tiled_ikj_omp_O3"
         BIN_ARGS="$M $ITERS_PER_RUN $RUNS"
         export OMP_NUM_THREADS=${OMP_NUM_THREADS:-6}
         export OMP_PLACES=cores
         export OMP_PROC_BIND=${OMP_PROC_BIND:-close}
         ;;
     morton_omp)
-        BIN="$REPO_DIR/bin/bench_morton_omp_O3"
+        BIN="$REPO_DIR/bin/bench/bench_morton_omp_O3"
         BIN_ARGS="$M $ITERS_PER_RUN $RUNS"
         export OMP_NUM_THREADS=${OMP_NUM_THREADS:-6}
         export OMP_PLACES=cores
         export OMP_PROC_BIND=${OMP_PROC_BIND:-spread}
         ;;
     *)
-        BIN="$REPO_DIR/bin/bench_${VARIANT}_O3"
+        BIN="$REPO_DIR/bin/bench/bench_${VARIANT}_O3"
         BIN_ARGS="$M $ITERS_PER_RUN $RUNS"
         ;;
 esac

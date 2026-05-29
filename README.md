@@ -156,7 +156,7 @@ sudo apt install -y valgrind
 Uso basico (no incluido en los scripts, util para diagnostico fino):
 
 ```bash
-valgrind --tool=cachegrind --cache-sim=yes ./bin/bench_naive_O0 1024 1
+valgrind --tool=cachegrind --cache-sim=yes ./bin/bench/bench_naive_O0 1024 1
 cg_annotate cachegrind.out.<pid>
 ```
 
@@ -201,8 +201,8 @@ Esto produce dos binarios en `bin/`:
 
 | Binario | Compilado con | Para |
 |---------|---------------|------|
-| `bin/bench_naive_O0`    | `-O0 -g`      | Benchmark baseline, paso 1 y paso 3 |
-| `bin/validate_naive_O0` | `-O0 -g`      | Verificador de correctitud |
+| `bin/bench/bench_naive_O0`    | `-O0 -g`      | Benchmark baseline, paso 1 y paso 3 |
+| `bin/validate/validate_naive_O0` | `-O0 -g`      | Verificador de correctitud |
 
 Targets individuales del baseline (Fase 1):
 
@@ -217,27 +217,27 @@ Targets de Fase 1.1 (loop reorder), Fase 1.2 (tiling) y Fase 1.3 (tiled_ikj_avx2
 
 ```bash
 # Fase 1.1 - loop reorder
-make bench_loops              # bin/bench_loops_O0 y bin/bench_loops_O3
-make validate_loops           # bin/validate_loops_O0
+make bench_loops              # bin/bench/bench_loops_O0 y bin/bench/bench_loops_O3
+make validate_loops           # bin/validate/validate_loops_O0
 
 # Fase 1.2 - tiling explicito
-make bench_tiled_ikj              # bin/bench_tiled_ikj_O3
-make validate_tiled_ikj           # bin/validate_tiled_ikj_O0
+make bench_tiled_ikj              # bin/bench/bench_tiled_ikj_O3
+make validate_tiled_ikj           # bin/validate/validate_tiled_ikj_O0
 
 # Fase 1.3 - tiled_ikj_avx2 (6-loop tiling con AVX2+FMA, compilado con -O3 -march=znver2)
-make bench_tiled_ikj_avx2         # bin/bench_tiled_ikj_avx2_O3
-make validate_tiled_ikj_avx2      # bin/validate_tiled_ikj_avx2_O3
+make bench_tiled_ikj_avx2         # bin/bench/bench_tiled_ikj_avx2_O3
+make validate_tiled_ikj_avx2      # bin/validate/validate_tiled_ikj_avx2_O3
 
 # Fase 1.4 - tiled_ikj_omp (tiled_ikj_avx2 + OpenMP parallel for, compilado con -O3 -march=znver2 -fopenmp)
-make bench_tiled_ikj_omp          # bin/bench_tiled_ikj_omp_O3
-make validate_tiled_ikj_omp       # bin/validate_tiled_ikj_omp_O3
+make bench_tiled_ikj_omp          # bin/bench/bench_tiled_ikj_omp_O3
+make validate_tiled_ikj_omp       # bin/validate/validate_tiled_ikj_omp_O3
 ```
 
 Targets de Fase 6 (Morton Z-order cache-oblivious):
 
 ```bash
-make bench_morton_O3          # bin/bench_morton_O3   (m debe ser potencia de 2)
-make validate_morton          # bin/validate_morton_O0 (idem)
+make bench_morton_O3          # bin/bench/bench_morton_O3   (m debe ser potencia de 2)
+make validate_morton          # bin/validate/validate_morton_O0 (idem)
 ```
 
 Unit tests (capa por debajo de validate, ver [`docs/1.9) tests.md`](docs/1.9\)%20tests.md)):
@@ -250,7 +250,7 @@ make test_kernel_avx2_morton     # solo bin/tests/test_kernel_avx2_morton
 make test_kernel_avx2_tiled      # solo bin/tests/test_kernel_avx2_tiled
 ```
 
-`make validate_all` depende de `make tests`, asi que un fallo en los unit-tests aborta antes de correr los `validate_*`.
+`make validate` depende de `make tests`, asi que un fallo en los unit-tests aborta antes de correr los `validate_*`.
 
 Para comparaciones entre kernels (naive + loops + tiled_ikj* + morton*) usar el pipeline unificado de la Sesion 03:
 
@@ -277,8 +277,8 @@ Los binarios de medicion (`bench_*_O3`) se compilan con `CFLAGS_O3_ZEN2` (`-O3 -
 ### 5.1 Validacion (verifica que el kernel computa bien)
 
 ```bash
-./bin/validate_naive_O0          # m = 256 por defecto
-./bin/validate_naive_O0 512      # m custom
+./bin/validate/validate_naive_O0          # m = 256 por defecto
+./bin/validate/validate_naive_O0 512      # m custom
 ```
 
 Pasa tres invariantes algebraicos:
@@ -303,9 +303,9 @@ Si alguno falla, el codigo de salida es 1 y se reporta el primer indice donde di
 ### 5.2 Una sola corrida del benchmark
 
 ```bash
-./bin/bench_naive_O0 1024            # m=1024, iteraciones y corridas default
-./bin/bench_naive_O0 1024 4          # m=1024, 4 iteraciones medidas por corrida
-./bin/bench_naive_O0 1024 4 1        # m=1024, 4 iteraciones, 1 sola corrida medida
+./bin/bench/bench_naive_O0 1024            # m=1024, iteraciones y corridas default
+./bin/bench/bench_naive_O0 1024 4          # m=1024, 4 iteraciones medidas por corrida
+./bin/bench/bench_naive_O0 1024 4 1        # m=1024, 4 iteraciones, 1 sola corrida medida
 ```
 
 Los tres argumentos posicionales son:
@@ -341,7 +341,7 @@ La especificacion completa de knobs (`VARIANTS`, `MS`, `ITERS_PER_RUN`, `RUNS`) 
 #### 5.4.1 Validacion
 
 ```bash
-./bin/validate_morton_O0    256   # 3 invariantes + cross-validation contra naive (m potencia de 2)
+./bin/validate/validate_morton_O0    256   # 3 invariantes + cross-validation contra naive (m potencia de 2)
 ./bin/tests/test_morton           # tests del modulo Morton (encode/decode/reorganize)
 ```
 
@@ -350,7 +350,7 @@ Cada uno imprime `VALIDATION OK` (o `MORTON TESTS OK`) y retorna 0 cuando todo p
 #### 5.4.2 Bench individual
 
 ```bash
-./bin/bench_morton_O3    1024 4 1        # m debe ser potencia de 2
+./bin/bench/bench_morton_O3    1024 4 1        # m debe ser potencia de 2
 ```
 
 Misma CLI y mismo CSV de salida que `bench_naive_O3`. `bench_morton_O3` ejecuta `reorganize_to_morton(A)` una sola vez antes del warm-up, fuera del tiempo medido, para que las GFLOP/s reflejen solo el kernel.
@@ -372,11 +372,11 @@ make bench_tiled_ikj
 make validate_tiled_ikj
 
 # Validar correctitud
-./bin/validate_tiled_ikj_O0 256
+./bin/validate/validate_tiled_ikj_O0 256
 
 # Bench individual
-./bin/bench_tiled_ikj_O3 1024          # m=1024, defaults
-./bin/bench_tiled_ikj_O3 1024 4 1      # m, iters, runs
+./bin/bench/bench_tiled_ikj_O3 1024          # m=1024, defaults
+./bin/bench/bench_tiled_ikj_O3 1024 4 1      # m, iters, runs
 ```
 
 Salida CSV:
@@ -412,12 +412,12 @@ make bench_tiled_ikj_avx2
 make validate_tiled_ikj_avx2
 
 # Validar correctitud
-./bin/validate_tiled_ikj_avx2_O3 256        # m=256, BS=384 (default)
-./bin/validate_tiled_ikj_avx2_O3 256 128    # m=256, BS=128 custom
+./bin/validate/validate_tiled_ikj_avx2_O3 256        # m=256, BS=384 (default)
+./bin/validate/validate_tiled_ikj_avx2_O3 256 128    # m=256, BS=128 custom
 
 # Bench individual
-./bin/bench_tiled_ikj_avx2_O3 1024          # m=1024, defaults (iters auto, runs=5, BS=384)
-./bin/bench_tiled_ikj_avx2_O3 1024 4 1 256  # m=1024, 4 iters, 1 corrida, BS=256
+./bin/bench/bench_tiled_ikj_avx2_O3 1024          # m=1024, defaults (iters auto, runs=5, BS=384)
+./bin/bench/bench_tiled_ikj_avx2_O3 1024 4 1 256  # m=1024, 4 iters, 1 corrida, BS=256
 ```
 
 Salida CSV (7 columnas, incluye `bs`):
@@ -452,12 +452,12 @@ make bench_tiled_ikj_omp
 make validate_tiled_ikj_omp
 
 # Validar correctitud
-./bin/validate_tiled_ikj_omp_O3 256        # m=256, BS=384 (default)
-./bin/validate_tiled_ikj_omp_O3 256 128    # m=256, BS=128 custom
+./bin/validate/validate_tiled_ikj_omp_O3 256        # m=256, BS=384 (default)
+./bin/validate/validate_tiled_ikj_omp_O3 256 128    # m=256, BS=128 custom
 
 # Bench individual (OMP_NUM_THREADS controla el numero de threads)
-OMP_NUM_THREADS=6 OMP_PROC_BIND=close ./bin/bench_tiled_ikj_omp_O3 4096          # m=4096, BS=384, 6 threads close
-OMP_NUM_THREADS=6 OMP_PROC_BIND=close ./bin/bench_tiled_ikj_omp_O3 4096 4 5 256  # m, iters, runs, bs
+OMP_NUM_THREADS=6 OMP_PROC_BIND=close ./bin/bench/bench_tiled_ikj_omp_O3 4096          # m=4096, BS=384, 6 threads close
+OMP_NUM_THREADS=6 OMP_PROC_BIND=close ./bin/bench/bench_tiled_ikj_omp_O3 4096 4 5 256  # m, iters, runs, bs
 ```
 
 Salida CSV (7 columnas, mismo formato que `tiled_ikj_avx2`):
@@ -553,7 +553,7 @@ Si un evento aparece como `<not supported>` en WSL2 es normal (limitacion del hi
 ### 6.1 (Opcional) Cachegrind
 
 ```bash
-valgrind --tool=cachegrind --cache-sim=yes ./bin/bench_naive_O3 1024 1
+valgrind --tool=cachegrind --cache-sim=yes ./bin/bench/bench_naive_O3 1024 1
 ls cachegrind.out.*
 cg_annotate cachegrind.out.<pid> | less
 ```
@@ -603,7 +603,7 @@ Cualquier proceso (Chrome con 80 pestanas, Slack, Zoom, Docker Desktop, OneDrive
 make build
 
 # 2. Verificar correctitud de las 8 variantes
-make validate_all
+make validate
 
 # 3. Sweep perf + consolidacion
 make results                                        # defaults completos

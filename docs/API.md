@@ -225,14 +225,14 @@ double elapsed = t1 - t0;
 
 ## 5. Binarios producidos
 
-### 5.1 `bin/bench_naive_O0`
+### 5.1 `bin/bench/bench_naive_O0`
 
 Compilado con `gcc -O0 -g`. Es el baseline obligatorio del proyecto.
 
 **Uso:**
 
 ```
-./bin/bench_naive_O0 <m> [num_iters] [num_runs]
+./bin/bench/bench_naive_O0 <m> [num_iters] [num_runs]
 ```
 
 - `<m>`: tamano del problema (entero positivo).
@@ -247,14 +247,14 @@ kernel,m,n,num_iters,median_seconds,gflops
 
 Internamente ejecuta una corrida de warm-up (no medida) y luego `num_runs` corridas medidas, reportando la mediana de los tiempos. Cuando `num_runs == 1` la "mediana" es trivialmente esa unica muestra.
 
-### 5.2 `bin/validate_naive_O0`
+### 5.2 `bin/validate/validate_naive_O0`
 
 Valida la implementacion sobre tres invariantes algebraicos: $A \cdot 0 = 0$, $I \cdot Z = Z$, $A \cdot (Z_1 + Z_2) = A \cdot Z_1 + A \cdot Z_2$. Imprime `VALIDATION OK` y retorna 0 si todas pasan; imprime detalles del fallo y retorna 1 en caso contrario.
 
 **Uso:**
 
 ```
-./bin/validate_naive_O0 [m]
+./bin/validate/validate_naive_O0 [m]
 ```
 
 Por defecto $m = 256$.
@@ -329,8 +329,8 @@ Misma semantica que `benchmark_iterations` (Seccion 2.2) pero delegando cada pas
 
 | Binario | CLI | Salida |
 |---------|-----|--------|
-| `bin/bench_loops_O3` | `<order> <m> [num_iters] [num_runs]` | `kernel,m,n,num_iters,median_seconds,gflops` |
-| `bin/validate_loops_O0` | `[m]` (default 256) | 4 tests por variante (3 invariantes + cross-val vs naive) |
+| `bin/bench/bench_loops_O3` | `<order> <m> [num_iters] [num_runs]` | `kernel,m,n,num_iters,median_seconds,gflops` |
+| `bin/validate/validate_loops_O0` | `[m]` (default 256) | 4 tests por variante (3 invariantes + cross-val vs naive) |
 
 Para medir los seis ordenes en el sweep unificado: `make results VARIANTS="loop_ijk loop_ikj loop_jik loop_jki loop_kij loop_kji"`. Cada celda corre en un proceso separado, evitando contaminacion de cache entre ordenes.
 
@@ -499,8 +499,8 @@ Misma logica que la anterior pero recibiendo $A$ **ya en Morton**. Usada por `be
 
 | Binario | Archivo fuente | CLI | Salida |
 |---------|----------------|-----|--------|
-| `bin/bench_morton_O0`       | `bench_morton.c`       | `<m> [num_iters] [num_runs]`           | linea CSV `morton,m,n,num_iters,median_seconds,gflops`; aborta si $m$ no es potencia de 2 |
-| `bin/validate_morton_O0`    | `validate_morton.c`    | `[m]` (default 256, potencia de 2)     | 7 tests: 3 invariantes + 4 cross-validation contra `matmul_naive` (en $m \in \{4, 16, 64, 256\}$) |
+| `bin/bench/bench_morton_O0`       | `bench_morton.c`       | `<m> [num_iters] [num_runs]`           | linea CSV `morton,m,n,num_iters,median_seconds,gflops`; aborta si $m$ no es potencia de 2 |
+| `bin/validate/validate_morton_O0`    | `validate_morton.c`    | `[m]` (default 256, potencia de 2)     | 7 tests: 3 invariantes + 4 cross-validation contra `matmul_naive` (en $m \in \{4, 16, 64, 256\}$) |
 | `bin/tests/test_morton`     | `test_morton.c`        | sin args                               | 4 grupos: tabla 4x4, round-trip encode/decode (4096 pares), contiguidad de cuadrantes para $m=8$, round-trip de reorganizacion para $m \in \{16, 64, 256\}$ |
 
 Los binarios de bench reusan el patron del baseline: 1 warm-up + `num_runs` corridas medidas con mediana, `num_iters` default = $\min(2m/n, 4)$, semillas 42 ($A$) y 43 ($Z$). En `bench_morton_O0` la reorganizacion a Morton se ejecuta una sola vez **antes** del warm-up para que el tiempo cronometrado sea solo el del kernel.
@@ -516,24 +516,24 @@ Si `perf_event_paranoid` esta demasiado restrictivo, el script aborta con mensaj
 ```
 make tests                      -> bin/tests/* (los 4 unit-tests)
 make test_morton                -> bin/tests/test_morton
-make bench_morton_O3            -> bin/bench_morton_O3
-make validate_morton            -> bin/validate_morton_O0
+make bench_morton_O3            -> bin/bench/bench_morton_O3
+make validate_morton            -> bin/validate/validate_morton_O0
 ```
 
-La capa de unit-tests vive en `src/tests/` (ver `docs/1.9) tests.md`). Los binarios resultantes quedan en `bin/tests/` separados de los `bench_*_O3` y `validate_*`. `make validate_all` depende de `make tests`.
+La capa de unit-tests vive en `src/tests/` (ver `docs/1.9) tests.md`). Los binarios resultantes quedan en `bin/tests/` separados de los `bench_*_O3` y `validate_*`. `make validate` depende de `make tests`.
 
 Targets de Fase 1.1 (loop-reorder):
 
 ```
-make bench_loops_O3             -> bin/bench_loops_O3
-make validate_loops             -> bin/validate_loops_O0
+make bench_loops_O3             -> bin/bench/bench_loops_O3
+make validate_loops             -> bin/validate/validate_loops_O0
 ```
 
 Targets de Fase 1.3 (tiled_ikj_avx2):
 
 ```
-make bench_tiled_ikj_avx2_O3        -> bin/bench_tiled_ikj_avx2_O3
-make validate_tiled_ikj_avx2        -> bin/validate_tiled_ikj_avx2_O3
+make bench_tiled_ikj_avx2_O3        -> bin/bench/bench_tiled_ikj_avx2_O3
+make validate_tiled_ikj_avx2        -> bin/validate/validate_tiled_ikj_avx2_O3
 ```
 
 Todos se compilan con `CFLAGS_O3_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma`), que es obligatorio para que `_mm256_fmadd_ps` emita la instruccion FMA real. El `make results` incluye los binarios `bench_*_O3` como dependencia y `run_perf_zen2_sweep.sh` incluye todas las variantes activas en su lista por defecto.
@@ -834,8 +834,8 @@ Mismo patron que `benchmark_iterations` (Seccion 2.2): doble buffer + swap de pu
 
 | Binario | CLI | Salida CSV |
 |---------|-----|------------|
-| `bin/bench_tiled_ikj_avx2_O3` | `<m> [num_iters] [num_runs] [bs]` | `tiled_ikj_avx2,m,n,num_iters,bs,median_seconds,gflops` (7 columnas) |
-| `bin/validate_tiled_ikj_avx2_O3` | `[m] [bs]` (defaults: m=256, bs=384) | 4 tests: `A*0==0`, `I*Z==Z`, linealidad, cross contra naive |
+| `bin/bench/bench_tiled_ikj_avx2_O3` | `<m> [num_iters] [num_runs] [bs]` | `tiled_ikj_avx2,m,n,num_iters,bs,median_seconds,gflops` (7 columnas) |
+| `bin/validate/validate_tiled_ikj_avx2_O3` | `[m] [bs]` (defaults: m=256, bs=384) | 4 tests: `A*0==0`, `I*Z==Z`, linealidad, cross contra naive |
 
 El cuarto argumento opcional `[bs]` llama a `matmul_tiled_ikj_avx2_set_bs(bs)` antes de las corridas. La columna `bs` del CSV preserva el formato de 7 columnas que ya manejaba el consolidador `consolidate_perf_zen2.py` (rama `len(parts) >= 7`).
 
@@ -897,8 +897,8 @@ SMT a $12$ threads degrada el rendimiento $\sim 60\%$ porque los pares de hilos 
 
 | Binario | Target make | Flags |
 |---------|-------------|-------|
-| `bin/bench_tiled_ikj_omp_O3`    | `bench_tiled_ikj_omp`    | `CFLAGS_OMP_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma -fopenmp`) |
-| `bin/validate_tiled_ikj_omp_O3` | `validate_tiled_ikj_omp` | idem |
+| `bin/bench/bench_tiled_ikj_omp_O3`    | `bench_tiled_ikj_omp`    | `CFLAGS_OMP_ZEN2` (`-O3 -march=znver2 -mavx2 -mfma -fopenmp`) |
+| `bin/validate/validate_tiled_ikj_omp_O3` | `validate_tiled_ikj_omp` | idem |
 
 **CLI bench:** `bench_tiled_ikj_omp_O3 <m> [num_iters] [num_runs] [bs]`
 
