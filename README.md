@@ -1,290 +1,309 @@
-# Benchmark de Multiplicacion Iterada de Matrices
+# Benchmark de Multiplicacion Iterada de Matrices (`main_server`)
 
 **Curso:** Arquitectura de Computadores
 **Universidad:** Universidad Nacional de Colombia, Sede Medellin
 **Fecha:** Mayo 2026
-**Estado:** Fase 1 cerrada (baseline + profiling + escalamiento con $m$); Fase 1.1 cerrada (reordenamiento de bucles, 6 variantes); Fase 1.2 cerrada (tiling explicito `ikj` apuntando a L2); Fase 1.3 cerrada (`tiled_ikj_avx512`, integrada en `make results`); Fase 1.4 cerrada (`tiled_ikj_omp`, integrada en `make results` y sweep perf); Fase 1.6 cerrada (microkernel BLIS-style $6 \times 16$ inline para `tiled_ikj_avx512` y `tiled_ikj_omp`, $M_R = 6$, $N_R = 16$, $M_C = 192$, $BS = 384$ por defecto, default OMP a 6 threads `close`); Fase 1.6.1 cerrada (rename `tiled` $\to$ `tiled_ikj` por consistencia); Fase 6 cerrada (Morton Z-order cache-oblivious); Sesion 03 cerrada (microkernel AVX2 + FMA, OpenMP tasks, perf Zen 2, Roofline anclado al $4600$H).
+**Hardware de referencia:** AMD EPYC 9R45 (Zen 5) en AWS c8a.2xlarge
+**ISA SIMD principal:** AVX-512 (F + VL + BW + DQ + IFMA)
+
+Esta rama porta el benchmark al servidor de produccion. Implementa y mide la recurrencia $B_{i+1} = A \cdot B_i$ sobre ocho kernels distintos (baseline, reordenamientos, tiling, vectorizacion AVX-512 y paralelizacion OpenMP) con un pipeline de profiling con `perf` calibrado para el hardware Zen 5.
+
+| Kernel | Fase | Tecnica principal |
+|---|---|---|
+| `matmul_naive` | Sesion 01 | Baseline ijk, $-O0$ |
+| `matmul_loops` | Fase 1.1 | Seis permutaciones del orden de bucles |
+| `matmul_tiled_ikj` | Fase 1.2 | Tiling explicito $M_c \times K_c = 384 \times 384$ apuntando a L2 |
+| `matmul_tiled_ikj_avx512` | Fase 1.6 | Microkernel BLIS-style $6 \times 32$ con AVX-512 + FMA |
+| `matmul_tiled_ikj_omp` | Fase 1.6 | $6 \times 32$ + `#pragma omp parallel for` en $i_c$ |
+| `matmul_morton` | Fase 6 | Recursion cache-oblivious con $A$ en Morton fino |
+| `matmul_morton_avx512` | Sesion 03 | Morton-de-bloques + microkernel AVX-512 $4 \times 32$ |
+| `matmul_morton_omp` | Sesion 03 | Morton-de-bloques + AVX-512 + OpenMP tasks |
+
+El contrato publico de las funciones esta en [`docs/API.md`](docs/API.md). La rama paralela `main` contiene la version Zen 2 / AVX2 del proyecto, pensada para desarrollo local en WSL2 sobre un Ryzen 5 4600H; ambas comparten estructura, API y pipeline de validacion.
+
+---
+
+## 0. Tabla de contenidos
+
+1. [Que hace este proyecto](#1-que-hace-este-proyecto)
+2. [Hardware de referencia](#2-hardware-de-referencia)
+3. [Estructura del repositorio](#3-estructura-del-repositorio)
+4. [Setup en Amazon Linux](#4-setup-en-amazon-linux)
+5. [Quickstart](#5-quickstart)
+6. [Compilar](#6-compilar)
+7. [Validar correctitud](#7-validar-correctitud)
+8. [Ejecutar benchmarks](#8-ejecutar-benchmarks)
+9. [Profiling con `perf`](#9-profiling-con-perf)
+10. [Reproducibilidad y estabilidad](#10-reproducibilidad-y-estabilidad)
+11. [Adaptar el proyecto a otro hardware o microkernel](#11-adaptar-el-proyecto-a-otro-hardware-o-microkernel)
+12. [Documentacion adicional](#12-documentacion-adicional)
 
 ---
 
 ## 1. Que hace este proyecto
 
-Implementa y mide el benchmark de multiplicacion iterada de matrices:
+Mide la recurrencia
 
 $$
 B_{i+1} = A \cdot B_i, \quad i = 0, 1, \ldots, I-1, \quad B_0 = Z
 $$
 
-donde $A \in \mathbb{R}^{m \times m}$, $Z \in \mathbb{R}^{m \times 128}$ e $I = 2m/n$. En cada iteracion se almacenan las primeras $n$ filas del producto.
+con $A \in \mathbb{R}^{m \times m}$, $Z \in \mathbb{R}^{m \times 128}$, $I = 2m/n$. Cada iteracion guarda las primeras $n$ filas del producto en un buffer de salida.
 
-La fase actual cubre los **tres primeros pasos** del proyecto:
+El objetivo del proyecto no es la matmul en si, sino **medir el efecto incremental** de cada tecnica de optimizacion (orden de bucles, tiling, register-blocking, SIMD, OpenMP) sobre un baseline ingenuo. Los ocho kernels comparten la misma firma publica (Seccion 1.5 de `docs/API.md`) y se evaluan con el mismo pipeline de hardware counters.
 
-1. **Implementacion en C compilada sin optimizacion de compilador** (`-O0`).
-2. **Profiling** con `gprof` (perfil por funcion) y `perf` (contadores de hardware: instrucciones, IPC, fallos de pagina, efectividad de branching).
-3. **Evaluacion de desempeno a medida que crece $m$**, identificando los tamanos donde aparecen cambios importantes y comparando con la complejidad teorica $2 m^2 n$ por iteracion.
-
-La especificacion completa de la API publica esta en [`docs/API.md`](docs/API.md). Es un documento vivo: cada cambio a las firmas se reflejara alli en el mismo commit.
+La especializacion de `main_server` respecto a `main` es exclusivamente la microarquitectura objetivo (Zen 5 / AVX-512 vs Zen 2 / AVX2) y los hiperparametros que dependen de ella (tamanos de tile, thresholds de recursion, default OMP). Todo lo demas (estructura del repo, API, validacion, pipeline perf) es identico.
 
 ---
 
-## 2. Estructura del repositorio
+## 2. Hardware de referencia
+
+Todas las decisiones de hiperparametros del proyecto (tamanos de tile, configuracion OMP, threshold de recursion) se eligieron para el EPYC 9R45 en AWS c8a.2xlarge:
+
+| Recurso | Valor |
+|---|---|
+| Microarquitectura | Zen 5 (Genoa-X family) |
+| vCPUs visibles | $8$ (1 thread por core; SMT deshabilitado por el hipervisor) |
+| Topologia NUMA | $1$ unico nodo |
+| L1d | $48$ KiB por core |
+| L2 | $1$ MiB por core |
+| L3 | $32$ MiB **compartido** por los $8$ cores |
+| ISA SIMD | AVX-512F + VL + BW + DQ + IFMA, BMI2, FMA |
+| Registros ZMM arquitecturales | $32$ ($zmm0..zmm31$) |
+| Throughput FMA | $2$ pipes de $512$ bits $\Rightarrow$ $64$ flops/ciclo por core en FP32 |
+| Frecuencia turbo bajo AVX-512 sostenido | $\sim 3.5$ GHz |
+
+Cada decision queda justificada en el doc del modulo correspondiente: $M_c = K_c = 384$ ([`docs/1.3) matmul_tiled_ikj.md`](<docs/1.3) matmul_tiled_ikj.md>)) hace que los tres paneles activos llenen el L2 de $1$ MiB; $M_C = 288,\ k_c = 256$ ([`docs/1.4) matmul_tiled_ikj_avx512.md`](<docs/1.4) matmul_tiled_ikj_avx512.md>)) deja el panel $B$ activo de $32$ KiB holgado en el L1d de $48$ KiB; el default OpenMP de $8$ threads ([`docs/1.5) matmul_tiled_ikj_omp.md`](<docs/1.5) matmul_tiled_ikj_omp.md>)) usa un thread por core porque el hipervisor ya quito SMT.
+
+Diferencia clave respecto a Zen 2 (rama `main`): como L3 es **compartida** entre los $8$ cores (no privada por CCX), `OMP_PROC_BIND=close` y `OMP_PROC_BIND=spread` son topologicamente equivalentes. Si vas a portar a otro chip, ver [Seccion 11](#11-adaptar-el-proyecto-a-otro-hardware-o-microkernel).
+
+---
+
+## 3. Estructura del repositorio
 
 ```
 .
-|-- README.md                          -> Este archivo
-|-- Makefile                           -> Targets de compilacion, profiling y graficas
-|-- docs/
-|   |-- 0.0) makefile.md               -> Referencia de uso del Makefile (targets y flags)
-|   |-- 0.1) matrix_utils.md           -> Helpers compartidos (matrix_utils)
-|   |-- 1.1) matmul_naive.md           -> Algoritmo naive (baseline ijk)
-|   |-- 1.2) matmul_loops.md           -> Reordenamiento de bucles (6 variantes)
-|   |-- 1.3) matmul_tiled_ikj.md       -> Tiling explicito sobre ikj
-|   `-- API.md                         -> Contrato publico de las funciones
+|-- README.md
+|-- Makefile
+|-- docs/                                 Documentacion del proyecto (ver Seccion 12)
 |-- src/
-|   |-- core/                              -> Modulos compartidos por todos los algoritmos
-|   |   |-- matrix_utils.{h,c}             -> Helpers (alocacion, init, comparacion)
-|   |   |-- timing.h                       -> clock_gettime(CLOCK_MONOTONIC) inline
-|   |   `-- morton.{h,c}                   -> Encoding Z-order + reorganizacion (Etapa A3)
-|   |-- microkernels/                      -> Kernels AVX-512 header-only (static inline)
-|   |   |-- kernel_avx512_morton.h         -> Microkernel 4x32 AVX-512 (familia Morton, Zen 5)
-|   |   `-- kernel_avx512_tiled.h          -> Microkernel 6x32 AVX-512 + residual (familia tiled_ikj, Zen 5)
-|   |-- algorithms/                        -> Una carpeta por familia de algoritmo
-|   |   |-- naive/matmul_naive.{h,c}       -> Baseline ijk
-|   |   |-- loops/matmul_loops.{h,c}       -> 6 ordenes de loop con lookup por nombre (Fase 1.1)
-|   |   |-- morton/                        -> Fase 6: kernel recursivo + AVX-512 + OMP
-|   |   |   |-- matmul_morton.{h,c}            -> Kernel recursivo con A en Morton fino (A3)
-|   |   |   |-- matmul_morton_avx512.{h,c}     -> Morton-de-bloques + microkernel 4x32 (Zen 5)
-|   |   |   `-- matmul_morton_omp.{h,c}        -> Variante paralela OpenMP tasks (Zen 5)
-|   |   `-- tiled_ikj/                     -> Fase 1.2-1.6: tiling explicito + BLIS 6x32 + OpenMP
-|   |       |-- matmul_tiled_ikj.{h,c}         -> Tiling Mc x Kc sobre ikj, apunta a L2 (escalar)
-|   |       |-- matmul_tiled_ikj_avx512.{h,c}  -> 6x32 AVX-512 (MR=6, NR=32, MC=288), BS=256 default
-|   |       `-- matmul_tiled_ikj_omp.{h,c}     -> 6x32 AVX-512 + #pragma omp parallel for schedule(static) en ic
-|   |-- drivers/                           -> Programas main: medicion (bench) y verificacion (validate)
-|   |   |-- bench/                         -> bench_naive.c, bench_loops.c, bench_morton{,_avx512,_omp}.c, bench_tiled_ikj{,_avx512,_omp}.c
-|   |   `-- validate/                      -> validate_naive.c, validate_loops.c, validate_morton{,_avx512,_omp}.c, validate_tiled_ikj{,_avx512,_omp}.c
-|   `-- tests/                             -> Tests unitarios standalone (ver docs/1.9) tests.md)
-|       |-- test_matrix_utils.c            -> xalloc_aligned, init_matrix_*, matrices_close
-|       |-- test_morton.c                  -> Round-trip encode/decode + contiguidad de cuadrantes
-|       |-- test_kernel_avx512_morton.c    -> Microkernel 4x32 (kernel_avx512_morton.h)
-|       `-- test_kernel_avx512_tiled.c     -> Microkernel 6x32 (kernel_avx512_tiled.h)
+|   |-- core/                             Modulos compartidos por todos los algoritmos
+|   |   |-- matrix_utils.{h,c}            Alocacion alineada, init_*, matrices_close, scalar_t
+|   |   |-- timing.h                      now_seconds() inline sobre CLOCK_MONOTONIC
+|   |   `-- morton.{h,c}                  Encoding Z-order y reorganizacion row-major <-> Morton
+|   |-- microkernels/                     Tiles AVX-512 header-only (static inline)
+|   |   |-- kernel_avx512_morton.h        4x32, usado por la familia Morton
+|   |   `-- kernel_avx512_tiled.h         6x32, usado por la familia tiled_ikj
+|   |-- algorithms/
+|   |   |-- naive/                        matmul_naive (baseline ijk)
+|   |   |-- loops/                        matmul_loops (6 ordenes seleccionables por nombre)
+|   |   |-- tiled_ikj/                    matmul_tiled_ikj{,_avx512,_omp}
+|   |   `-- morton/                       matmul_morton{,_avx512,_omp}
+|   |-- drivers/                          Programas main
+|   |   |-- bench/                        bench_*.c (uno por kernel)
+|   |   `-- validate/                     validate_*.c (uno por kernel)
+|   `-- tests/                            Unit tests standalone (test_*.c)
 |-- scripts/
-|   |-- profile_perf_zen5.sh           -> Captura perf por celda (variant, m)
-|   |-- run_perf_zen5_sweep.sh         -> Orquesta las celdas (variantes x tamaños)
-|   |-- consolidate_perf_zen5.py       -> Consolida grupos A+B -> results/metrics.csv
-|   `-- plot_perf_zen2.py              -> 4 paneles: IPC, FMA, L3 miss, TLB walks
-|-- results/                            -> CSV y reportes de profiling (gitignored)
-|-- plots/                              -> Imagenes generadas (gitignored salvo perf_zen2 / roofline)
-`-- bin/                                -> Binarios compilados (gitignored)
+|   |-- profile_perf_zen5.sh              Captura perf por celda (variant, m)
+|   |-- run_perf_zen5_sweep.sh            Orquesta el sweep completo
+|   `-- consolidate_perf_zen5.py          Une grupos A+B -> results/metrics.csv
+|-- bin/                                  Binarios compilados (gitignored)
+|   |-- bench/                            bench_<kernel>_ZEN5
+|   |-- validate/                         validate_<kernel>_O0 o _ZEN5
+|   `-- tests/                            test_<modulo>
+|-- results/                              CSV y reportes de profiling (gitignored)
+`-- plots/                                Imagenes generadas (gitignored)
 ```
 
 ---
 
-## 3. Prerrequisitos: que instalar en WSL2
+## 4. Setup en Amazon Linux
 
-Este proyecto asume que estas trabajando en **WSL2 con Ubuntu** (decision tomada al inicio del proyecto). Las instrucciones que siguen estan probadas en Ubuntu 22.04 y 24.04.
+El servidor de referencia corre **Amazon Linux 2023** sobre AWS c8a.2xlarge (Linux nativo, no virtualizado a traves de WSL2). Los comandos asumen acceso SSH al servidor.
 
-### 3.1 Si todavia no tienes WSL2
-
-Abre **PowerShell como administrador** desde Windows y ejecuta:
-
-```powershell
-wsl --install -d Ubuntu
-```
-
-Tras el reinicio, abre Ubuntu desde el menu Inicio y crea tu usuario. Para verificar:
+### 4.1 Acceso al servidor
 
 ```bash
-uname -a   # debe decir Linux ... microsoft-standard-WSL2
-lsb_release -a
+ssh -i <key.pem> ec2-user@<hostname>
 ```
 
-### 3.2 Paquetes obligatorios
-
-Dentro del shell de Ubuntu (WSL2):
+Verificar la distribucion:
 
 ```bash
-sudo apt update
-sudo apt install -y build-essential gcc make binutils
+cat /etc/os-release        # debe decir Amazon Linux 2023
+uname -a
 ```
 
-Esto te da:
-
-| Comando | Paquete | Por que lo necesitamos |
-|---------|---------|------------------------|
-| `gcc`   | `gcc`               | Compilador C, paso 1 del proyecto |
-| `make`  | `make`              | Orquesta la compilacion |
-| `gprof` | `binutils`          | Perfilado por funcion, paso 2 |
-| `ar`, `objdump` | `binutils`  | Utiles para analisis posteriores |
-
-### 3.3 Paquetes para profiling de hardware (paso 2)
-
-Para `perf` (contadores de instrucciones, IPC, fallos de pagina, branch misses):
+### 4.2 Paquetes obligatorios
 
 ```bash
-sudo apt install -y linux-tools-generic linux-tools-common
+sudo dnf groupinstall -y "Development Tools"
+sudo dnf install -y gcc make binutils
 ```
 
-En WSL2 el kernel es propio de Microsoft, por lo que el paquete generico no siempre incluye un `perf` directamente ejecutable. Si al ejecutar `perf` aparece un mensaje del tipo "perf not found for kernel ...", instala desde fuente:
+`Development Tools` agrupa `gcc`, `make`, `binutils` y `git`. El segundo `dnf install` es redundante pero asegura las versiones individuales si el grupo no esta disponible en tu AMI.
+
+Provee `gcc` (compilador), `make` (build), `gprof` (perfilado por funcion, parte de `binutils`), `ar` y `objdump` (analisis).
+
+### 4.3 perf
+
+En Amazon Linux 2023 el paquete `perf` se instala directamente y funciona con el kernel del host sin compilacion adicional:
 
 ```bash
-sudo apt install -y flex bison libelf-dev libdwarf-dev libdw-dev libnuma-dev pkg-config
-cd /usr/src
-sudo git clone --depth=1 https://github.com/microsoft/WSL2-Linux-Kernel.git
-cd WSL2-Linux-Kernel/tools/perf
-sudo make
-sudo cp perf /usr/local/bin/
+sudo dnf install -y perf
 perf --version
 ```
 
-**Importante para WSL2:** los contadores de PMU disponibles dependen del soporte del hipervisor. En la practica funcionan al menos `instructions`, `cycles`, `branches`, `branch-misses`, `task-clock`, `page-faults`. Si algun evento devuelve `<not supported>`, no es un error tuyo, simplemente el evento no esta expuesto. El script `profile_perf_naive.sh` ignora esos eventos.
-
-Para bajar la restriccion de seguridad (necesario en muchos kernels):
+Ajusta `perf_event_paranoid` para que los contadores PMU sean accesibles sin root (una vez por boot, o persistente):
 
 ```bash
-echo "kernel.perf_event_paranoid=1" | sudo tee /etc/sysctl.d/99-perf.conf
-sudo sysctl --system
+sudo sysctl -w kernel.perf_event_paranoid=1                            # temporal
+echo "kernel.perf_event_paranoid=1" | sudo tee /etc/sysctl.d/99-perf.conf && sudo sysctl --system   # persistente
 ```
 
-### 3.4 Cachegrind (opcional, recomendado)
+A diferencia de WSL2, en Amazon Linux todos los eventos PMC del Zen 5 estan expuestos sin restricciones; no es necesario recompilar `perf` desde el kernel.
 
-`cachegrind` simula la jerarquia de cache y te da fallos por linea de codigo. Es **mucho mas lento** (10-50x) pero independiente del hardware, asi que funciona bien dentro de WSL2:
+### 4.4 Python + matplotlib
 
-```bash
-sudo apt install -y valgrind
-```
-
-Uso basico (no incluido en los scripts, util para diagnostico fino):
+Para los plots de profiling:
 
 ```bash
-valgrind --tool=cachegrind --cache-sim=yes ./bin/bench/bench_naive_O0 1024 1
-cg_annotate cachegrind.out.<pid>
-```
-
-### 3.5 Python + matplotlib (paso 3, graficas)
-
-```bash
-sudo apt install -y python3 python3-pip python3-venv
+sudo dnf install -y python3 python3-pip
 python3 -m venv ~/venvs/matmul
 source ~/venvs/matmul/bin/activate
 pip install matplotlib numpy
 ```
 
-Recuerda activar el venv (`source ~/venvs/matmul/bin/activate`) cada vez que abras una nueva terminal antes de ejecutar `scripts/plot_results.py`.
+Activa el venv (`source ~/venvs/matmul/bin/activate`) cada vez que abras una nueva sesion SSH antes de correr cualquier script de plotting.
 
-Alternativa rapida sin venv (no recomendada para entornos compartidos):
+### 4.5 Cachegrind (opcional)
+
+Para diagnosticar cache misses por linea de codigo (mas lento que `perf` pero util para inspeccion fina):
 
 ```bash
-sudo apt install -y python3-matplotlib python3-numpy
+sudo dnf install -y valgrind
 ```
 
-### 3.6 Verificacion rapida del entorno
+Uso basico:
+
+```bash
+valgrind --tool=cachegrind --cache-sim=yes ./bin/bench/bench_naive_ZEN5 1024 1
+cg_annotate cachegrind.out.<pid> | less
+```
+
+### 4.6 Verificacion del entorno
 
 ```bash
 gcc --version
 make --version
 gprof --version
-perf --version || echo "perf no esta listo"
+perf --version
 python3 -c "import matplotlib, numpy; print('python OK')"
 ```
 
 ---
 
-## 4. Compilar el proyecto
+## 5. Quickstart
 
-Desde la raiz del repositorio (en WSL2):
-
-```bash
-make
-```
-
-Esto produce dos binarios en `bin/`:
-
-| Binario | Compilado con | Para |
-|---------|---------------|------|
-| `bin/bench/bench_naive_O0`    | `-O0 -g`      | Benchmark baseline, paso 1 y paso 3 |
-| `bin/validate/validate_naive_O0` | `-O0 -g`      | Verificador de correctitud |
-
-Targets individuales del baseline (Fase 1):
+Desde la raiz del repositorio:
 
 ```bash
-make bench_naive_O0      # solo el benchmark baseline
-make validate_naive      # solo el verificador baseline
-make bench_naive_pg      # version con -pg para gprof, paso 2
-make clean               # borra bin/ y build/
-make distclean           # clean + borra results/*.csv y plots/*
+make build       # 1. compila los 20 binarios (8 bench + 8 validate + 4 tests)
+make validate    # 2. corre la piramide tests -> validate sobre los 8 kernels
+make results     # 3. sweep perf Zen 5 -> results/metrics.csv
 ```
 
-Targets de Fase 1.1 (loop reorder), Fase 1.2 (tiling) y Fase 1.3 (tiled_ikj_avx512):
-
-```bash
-# Fase 1.1 - loop reorder
-make bench_loops              # bin/bench/bench_loops_O0 y bin/bench/bench_loops_O3
-make validate_loops           # bin/validate/validate_loops_O0
-
-# Fase 1.2 - tiling explicito
-make bench_tiled_ikj              # bin/bench/bench_tiled_ikj_O3
-make validate_tiled_ikj           # bin/validate/validate_tiled_ikj_O0
-
-# Fase 1.3 - tiled_ikj_avx512 (6-loop tiling con AVX-512+FMA, compilado con -O3 -march=native)
-make bench_tiled_ikj_avx512_ZEN5    # bin/bench/bench_tiled_ikj_avx512_ZEN5
-make validate_tiled_ikj_avx512_ZEN5 # bin/validate/validate_tiled_ikj_avx512_ZEN5
-
-# Fase 1.4 - tiled_ikj_omp (tiled_ikj_avx512 + OpenMP parallel for, compilado con -O3 -march=native -fopenmp)
-make bench_tiled_ikj_omp          # bin/bench/bench_tiled_ikj_omp_O3
-make validate_tiled_ikj_omp       # bin/validate/validate_tiled_ikj_omp_O3
-```
-
-Targets de Fase 6 (Morton Z-order cache-oblivious):
-
-```bash
-make bench_morton             # bin/bench/bench_morton_O0   (m debe ser potencia de 2)
-make validate_morton          # bin/validate/validate_morton_O0 (idem)
-```
-
-Unit tests (capa por debajo de validate, ver [`docs/1.9) tests.md`](docs/1.9\)%20tests.md)):
-
-```bash
-make tests                       # bin/tests/* — los 4 unit-tests, en orden
-make test_matrix_utils           # solo bin/tests/test_matrix_utils
-make test_morton                 # solo bin/tests/test_morton
-make test_kernel_avx512_morton   # solo bin/tests/test_kernel_avx512_morton
-make test_kernel_avx512_tiled    # solo bin/tests/test_kernel_avx512_tiled
-```
-
-`make validate` depende de `make tests`, asi que un fallo en los unit-tests aborta antes de correr los `validate_*`.
-
-Para comparaciones entre kernels (naive + loops + tiled_ikj* + morton*) usar el pipeline unificado de la Sesion 03:
-
-```bash
-make results                  # sweep perf Zen 2 + consolida -> results/metrics.csv
-```
-
-**Flags fijos en el Makefile** (`BASE_CFLAGS`):
-
-```
--std=c11 -Wall -Wextra -Wpedantic -O0 -g -fno-omit-frame-pointer
-```
-
-- `-O0`: requisito del proyecto. Sin optimizacion del compilador.
-- `-g`: simbolos de debug, necesarios para que `gprof` y `perf report` muestren nombres legibles.
-- `-fno-omit-frame-pointer`: deja el stack pointer en su sitio para que las herramientas de profiling resuelvan call graphs sin DWARF unwinding.
+Si los tres pasos terminan con `OK`, el repo esta sano y `results/metrics.csv` tiene una fila por celda `(variant, m)` con todos los contadores. Usar los knobs de la [Seccion 8.3](#83-sweep-unificado-make-results) para limitar el alcance durante desarrollo.
 
 ---
 
-## 5. Correr y validar
+## 6. Compilar
 
-### 5.1 Validacion (verifica que el kernel computa bien)
+### 6.1 Targets agregados
 
-```bash
-./bin/validate/validate_naive_O0          # m = 256 por defecto
-./bin/validate/validate_naive_O0 512      # m custom
+| Target | Que hace |
+|---|---|
+| `make build` (alias `make all`) | Compila los $20$ binarios sin ejecutar nada |
+| `make tests` | Compila y corre los $4$ unit-tests en orden |
+| `make validate` | Depende de `tests`; corre los $8$ `validate_*` en orden |
+| `make results` | Compila los $8$ benches y lanza el sweep perf $\to$ `results/metrics.csv` |
+| `make clean` | Borra `bin/` y `build/` |
+| `make distclean` | `clean` + borra `results/*.csv` y `plots/*` |
+
+### 6.2 Targets individuales
+
+| Kernel | Target bench | Target validate |
+|---|---|---|
+| `naive` | `make bench_naive_ZEN5` | `make validate_naive` |
+| `loops` | `make bench_loops_ZEN5` | `make validate_loops` |
+| `tiled_ikj` | `make bench_tiled_ikj_ZEN5` | `make validate_tiled_ikj` |
+| `tiled_ikj_avx512` | `make bench_tiled_ikj_avx512_ZEN5` | `make validate_tiled_ikj_avx512` |
+| `tiled_ikj_omp` | `make bench_tiled_ikj_omp_ZEN5` | `make validate_tiled_ikj_omp` |
+| `morton` | `make bench_morton_ZEN5` | `make validate_morton` |
+| `morton_avx512` | `make bench_morton_avx512_ZEN5` | `make validate_morton_avx512` |
+| `morton_omp` | `make bench_morton_omp_ZEN5` | `make validate_morton_omp` |
+
+Referencia completa de targets, incluidos los de profiling (`profile_zen5`, `profile_zen5_one`, `profile_zen5_omp`, `consolidate_zen5`), en [`docs/0.0) makefile.md`](<docs/0.0) makefile.md>).
+
+### 6.3 Flags por sufijo
+
+| Sufijo | Variable | Flags |
+|---|---|---|
+| `_O0` | `BASE_CFLAGS` | `-std=c11 -Wall -Wextra -Wpedantic -O0 -g -fno-omit-frame-pointer -D_POSIX_C_SOURCE=200809L` |
+| `_ZEN5` | `CFLAGS_O3_ZEN5` | `-std=c11 -Wall -Wextra -Wpedantic -O3 -march=native -D_POSIX_C_SOURCE=200809L` + thresholds Zen 5 via `-D...` |
+| `_ZEN5` + OMP | `CFLAGS_OMP_ZEN5` | `CFLAGS_O3_ZEN5` + `-fopenmp` |
+
+`-O0 -g` se usa donde queremos que el codigo refleje el algoritmo sin reordenamientos del compilador (el `validate_naive`, el `validate_loops`, etc.). Los benches y los validates de las variantes vectorizadas usan `_ZEN5` porque los microkernels son `static inline` con intrinsics AVX-512: a `-O0` no se materializan las instrucciones FMA-$512$ y el test mediria otra cosa.
+
+Los `-D...` que `CFLAGS_O3_ZEN5` inyecta sobrescriben en compile-time los defaults `#ifndef`-guarded de cada modulo. El bloque concreto vive en el Makefile y configura:
+
+- `TILED_IKJ_MC_DEFAULT = 384`, `TILED_IKJ_KC_DEFAULT = 384` (apuntan al L2 de $1$ MiB).
+- `TILED_IKJ_AVX512_MC = 288`, `TILED_IKJ_AVX512_BS_DEFAULT = 256` (panel $B$ de $32$ KiB en L1d).
+- Igual para `TILED_IKJ_OMP_*`.
+- `MORTON_AVX512_THRESHOLD_DEFAULT = 1048576` (leaf $A$ activo de $\sim 32$ KiB).
+- `MORTON_OMP_RECURSION_THRESHOLD_DEFAULT = MORTON_OMP_PARALLEL_THRESHOLD_DEFAULT = 1048576`.
+
+---
+
+## 7. Validar correctitud
+
+### 7.1 Piramide de tres niveles
+
+El proyecto verifica con tres capas, de fina a gruesa:
+
+```
+tests (unit)     -> piezas individuales en aislamiento
+validate         -> algoritmos completos contra invariantes algebraicos + cross-check vs naive
+bench            -> performance (no correctitud)
 ```
 
-Pasa tres invariantes algebraicos:
+`make validate` corre primero `tests` y aborta si falla. Detalle de las capas en [`docs/1.9) tests.md`](<docs/1.9) tests.md>).
+
+### 7.2 Como ejecutar
+
+```bash
+make tests        # 4 unit-tests sobre core/ y microkernels/
+make validate     # tests + 8 validate_* en orden, aborta al primer fallo
+```
+
+Individualmente:
+
+```bash
+./bin/validate/validate_naive_O0                       # m = 256 por defecto
+./bin/validate/validate_naive_O0 512                   # m custom
+./bin/validate/validate_tiled_ikj_avx512_ZEN5 256 256  # m, bs (solo tiled_*_avx512/omp)
+./bin/tests/test_morton                                # tests del modulo morton
+```
+
+### 7.3 Invariantes cubiertos
+
+Todos los `validate_*` chequean los tres invariantes algebraicos basicos:
 
 1. $A \cdot 0 = 0$
 2. $I \cdot Z = Z$
 3. $A \cdot (Z_1 + Z_2) = A \cdot Z_1 + A \cdot Z_2$
+
+Los `validate_*` distintos al baseline anaden ademas cross-validation contra `matmul_naive` sobre un barrido de tamanos. Tolerancias por validate y detalles de los tests adicionales en `docs/API.md` Seccion 5.2.
 
 Salida esperada:
 
@@ -297,474 +316,184 @@ Tolerances: abs=1.0e-04, rel=1.0e-03
 VALIDATION OK
 ```
 
-Si alguno falla, el codigo de salida es 1 y se reporta el primer indice donde difieren los valores.
-
-### 5.2 Una sola corrida del benchmark
-
-```bash
-./bin/bench/bench_naive_O0 1024            # m=1024, iteraciones y corridas default
-./bin/bench/bench_naive_O0 1024 4          # m=1024, 4 iteraciones medidas por corrida
-./bin/bench/bench_naive_O0 1024 4 1        # m=1024, 4 iteraciones, 1 sola corrida medida
-```
-
-Los tres argumentos posicionales son:
-
-1. `m`: tamano del problema (obligatorio).
-2. `num_iters`: iteraciones del benchmark dentro de cada corrida medida. Default: $\min(2m/n, 4)$.
-3. `num_runs`: corridas medidas (sobre las que se toma la mediana). Default: 5.
-
-Independientemente de `num_runs`, el binario hace siempre **1 corrida de warm-up** (no medida) antes de medir.
-
-Salida (una linea CSV en stdout):
-
-```
-m,n,num_iters,median_seconds,gflops
-1024,128,4,X.XXXXXX,X.XXXXXX
-```
-
-### 5.3 Sweep completo: paso 3 del proyecto
-
-```bash
-make sweep_naive
-```
-
-Equivalente a `bash scripts/run_sweep_naive.sh`. Corre el benchmark para los valores por defecto $m \in \{256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192\}$ y por cada uno produce **tres archivos**:
-
-1. Una linea en `results/naive_O0.csv` con la medicion de gflops.
-2. Un reporte `results/gprof_naive_m<m>.txt` (perfil por funcion).
-3. Un reporte `results/perf_naive_m<m>.txt` (contadores de hardware).
-
-Asi tienes registro completo de paso 1 (timing baseline), paso 2 (profiling) y paso 3 (escalamiento) en una sola corrida.
-
-Para un rango custom:
-
-```bash
-bash scripts/run_sweep_naive.sh "256 512 1024 2048"
-```
-
-Controlar el profiling:
-
-```bash
-PROFILING=0     bash scripts/run_sweep_naive.sh                  # solo CSV, sin profiling
-PROFILING=gprof bash scripts/run_sweep_naive.sh                  # CSV + solo gprof
-PROFILING=perf  bash scripts/run_sweep_naive.sh                  # CSV + solo perf
-PROFILE_ITERS=2 PROFILE_RUNS=1 bash scripts/run_sweep_naive.sh   # mas iteraciones para el profile
-```
-
-Por defecto el profiling usa `iters=1, runs=1` (una sola corrida determinista) para no multiplicar los tiempos. La medicion del CSV sigue usando 5 corridas internas con mediana para tener un valor estadisticamente estable.
-
-**Nota sobre tiempos esperados a `-O0`:** una corrida completa de baseline a `-O0` con $m = 8192$ puede tomar varios minutos. Para el reporte final, el sweep completo del rango por defecto puede tardar entre 1 y 2 horas dependiendo del hardware. Conviene lanzarlo y dejarlo correr. Si solo necesitas el CSV (sin profiling), usa `PROFILING=0` para reducir el tiempo al minimo.
-
-### 5.4 Graficas a partir del CSV
-
-Con el venv activado (`source ~/venvs/matmul/bin/activate`) y el CSV ya generado:
-
-```bash
-python3 scripts/plot_results.py
-```
-
-Produce dos PNG en `plots/`:
-
-- `plots/naive_gflops_vs_m.png`: gflops sostenidos vs $m$, con marcas verticales para las transiciones de cache.
-- `plots/naive_time_vs_m.png`: tiempo por iteracion en escala log-log, con la curva teorica $2 m^2 n$ anclada en el $m$ mas pequeno. Sirve para comparar con la complejidad esperada.
-
-**Defaults calibrados para AMD Ryzen 5 4600H** (la maquina de pruebas inicial):
-
-- L1d: 32 KB por core (192 KiB totales / 6 cores)
-- L2 : 512 KB por core (3 MiB totales / 6 cores)
-- L3 : 4 MB compartida (4 MiB / 1 instancia)
-
-Si corres en otra maquina personaliza los argumentos:
-
-```bash
-python3 scripts/plot_results.py \
-    --cpu-label "Intel Core i7-XXXX" \
-    --l1-kb 32 --l2-kb 1024 --l3-kb 8192
-```
-
-Para conocer los tamanos exactos de tu maquina:
-
-```bash
-lscpu | grep -E "cache|Model name"
-# o, mas explicito:
-getconf -a | grep CACHE
-```
-
-**Importante:** los valores que pides en el script son **por core** para L1 y L2, y **totales (compartido)** para L3. `lscpu` reporta el total de L1/L2 sumado a traves de los cores ("192 KiB (6 instances)"); divide entre el numero de instancias para sacar el valor por core.
-
-### 5.5 Flujo de Fase 6: Morton (Z-order) cache-oblivious
-
-#### 5.5.1 Validacion
-
-```bash
-./bin/validate/validate_morton_O0    256   # 3 invariantes + cross-validation contra naive (m potencia de 2)
-./bin/tests/test_morton           # tests del modulo Morton (encode/decode/reorganize)
-```
-
-Cada uno imprime `VALIDATION OK` (o `MORTON TESTS OK`) y retorna 0 cuando todo pasa.
-
-#### 5.5.2 Bench individual
-
-```bash
-./bin/bench/bench_morton_O0    1024 4 1        # m debe ser potencia de 2
-```
-
-Misma CLI y mismo CSV de salida que `bench_naive_O0`. `bench_morton_O0` ejecuta `reorganize_to_morton(A)` una sola vez antes del warm-up, fuera del tiempo medido, para que las GFLOP/s reflejen solo el kernel.
-
-#### 5.5.3 Sweep individual
-
-```bash
-make sweep_morton_run                         # produce results/morton_O0.csv
-# equivalente a:
-bash scripts/run_sweep_morton.sh              # 4 potencias de 2, ~50 min a -O0
-```
-
-Para un rango custom:
-
-```bash
-bash scripts/run_sweep_morton.sh    "1024 2048 4096 8192"
-```
-
-`run_sweep_morton.sh` filtra y omite con warning a stderr cualquier $m$ que no sea potencia de 2.
-
-#### 5.5.4 Comparacion entre kernels
-
-Para comparar Morton contra el resto del pipeline (naive, loops, tiled_ikj*, morton_avx512, morton_omp) se usa el pipeline unificado de la Sesion 03 (seccion 5.6):
-
-```bash
-sudo sh -c 'echo 1 > /proc/sys/kernel/perf_event_paranoid'   # una vez por boot
-make results              # sweep perf Zen 2 sobre 13 variantes -> results/metrics.csv
-```
-
-### 5.7 Flujo de Fase 1.2: tiling explicito (`tiled_ikj`)
-
-```bash
-# Compilar
-make bench_tiled_ikj
-make validate_tiled_ikj
-
-# Validar correctitud
-./bin/validate/validate_tiled_ikj_O0 256
-
-# Bench individual
-./bin/bench/bench_tiled_ikj_O3 1024          # m=1024, defaults
-./bin/bench/bench_tiled_ikj_O3 1024 4 1      # m, iters, runs
-```
-
-Salida CSV:
-```
-tiled_ikj,1024,128,4,X.XXXXXX,X.XXXXXX
-```
-
-Para incluir `tiled_ikj` en el sweep de perf completo y regenerar `results/metrics.csv`:
-
-```bash
-make results
-```
-
-El target `results` ya incluye `bench_tiled_ikj_O3` como dependencia y `run_perf_zen5_sweep.sh`
-incluye `tiled_ikj` en su lista de variantes por defecto.
-
-Para correr solo la celda de tiling sin relanzar todo el sweep:
-
-```bash
-VARIANTS="tiled_ikj" MS="1024 2048" bash scripts/run_perf_zen5_sweep.sh
-python3 scripts/consolidate_perf_zen5.py
-```
-
-**Tamanos de tile:** `Mc = Kc = 256`, elegidos para que los tres panels activos (A: 256 KB, B: 128 KB, C: 128 KB) llenen exactamente el L2 de 512 KB del Ryzen 5 4600H. El beneficio sobre `loop_ikj` es visible a partir de $m \geq 4096$, cuando $A$ supera el L3 y el tiling evita los cache misses masivos que sufre el orden sin bloques.
+Codigo de salida `0` en exito, `1` al primer fallo, con reporte del primer indice y los valores divergentes.
 
 ---
 
-### 5.8 Flujo de Fase 1.3 / 1.6: tiled_ikj_avx512 (microkernel BLIS-style 6x32 con AVX-512+FMA)
+## 8. Ejecutar benchmarks
+
+### 8.1 Convencion comun
+
+**CLI estandar:**
+
+```
+bench_<kernel>_ZEN5 <m> [num_iters] [num_runs]
+```
+
+Variantes con knob adicional:
+
+```
+bench_loops_ZEN5 <order> <m> [num_iters] [num_runs]              # order = ijk|ikj|jik|jki|kij|kji
+bench_tiled_ikj_avx512_ZEN5 <m> [num_iters] [num_runs] [bs]      # bs = k_c, default 256
+bench_tiled_ikj_omp_ZEN5    <m> [num_iters] [num_runs] [bs]
+```
+
+**Defaults:** `num_iters = min(2m/n, 4)`, `num_runs = 5`.
+
+**Protocolo:** una corrida de warm-up no medida + `num_runs` corridas medidas, se reporta la **mediana** de los tiempos.
+
+**Salida:** una linea CSV en `stdout`:
+
+```
+<kernel>,m,n,num_iters,median_seconds,gflops
+```
+
+Para `tiled_ikj_avx512` y `tiled_ikj_omp` se inserta una columna `bs` (formato de $7$ columnas).
+
+**Restriccion de la familia Morton:** $m$ debe ser potencia de $2$ y $\geq 4$ (el indexing Z-order requiere subdivisiones exactas). El binario aborta con mensaje claro si no se cumple. La reorganizacion a Morton se ejecuta **una sola vez antes del warm-up**, fuera del tiempo cronometrado.
+
+### 8.2 Ejemplos
 
 ```bash
-# Compilar (requiere -O3 -march=native)
-make bench_tiled_ikj_avx512
-make validate_tiled_ikj_avx512
+# Naive
+./bin/bench/bench_naive_ZEN5 1024 4 1
 
-# Validar correctitud
-./bin/validate/validate_tiled_ikj_avx512_ZEN5 256        # m=256, BS=384 (default)
-./bin/validate/validate_tiled_ikj_avx512_ZEN5 256 128    # m=256, BS=128 custom
+# Loops, orden ikj
+./bin/bench/bench_loops_ZEN5 ikj 1024 4 1
 
-# Bench individual
-./bin/bench/bench_tiled_ikj_avx512_ZEN5 1024          # m=1024, defaults (iters auto, runs=5, BS=384)
-./bin/bench/bench_tiled_ikj_avx512_ZEN5 1024 4 1 256  # m=1024, 4 iters, 1 corrida, BS=256
+# Tiled_ikj_avx512 con bs custom
+./bin/bench/bench_tiled_ikj_avx512_ZEN5 4096 4 1 384
+
+# Tiled_ikj_omp con 8 threads, un thread por core
+OMP_NUM_THREADS=8 OMP_PLACES=cores OMP_PROC_BIND=close \
+    ./bin/bench/bench_tiled_ikj_omp_ZEN5 4096
+
+# Morton (m potencia de 2)
+./bin/bench/bench_morton_avx512_ZEN5 4096 4 1
+
+# Morton OpenMP
+OMP_NUM_THREADS=8 OMP_PLACES=cores OMP_PROC_BIND=close \
+    ./bin/bench/bench_morton_omp_ZEN5 4096
 ```
 
-Salida CSV (7 columnas, incluye `bs`):
-```
-tiled_ikj_avx512,1024,128,4,384,X.XXXXXX,X.XXXXXX
-```
+En este chip `OMP_PROC_BIND=close` y `OMP_PROC_BIND=spread` son topologicamente equivalentes (L3 compartido, $1$ NUMA node), pero conviene mantener uno fijo durante un sweep para no introducir varianza entre celdas.
 
-Para incluir `tiled_ikj_avx512` en el sweep de perf completo y regenerar `results/metrics.csv`:
+### 8.3 Sweep unificado (`make results`)
+
+Para comparar kernels y producir un CSV consolidado:
 
 ```bash
-make results
+make results                                            # defaults
+make results MS="1024 4096"                             # solo esos tamanos
+make results VARIANTS="tiled_ikj_avx512 morton_avx512"  # solo esas variantes
+make results ITERS_PER_RUN=0                            # I_full = 2m/n, 1 run
 ```
 
-El target `results` incluye `bench_tiled_ikj_avx512_ZEN5` como dependencia y `run_perf_zen5_sweep.sh` incluye `tiled_ikj_avx512` en su lista de variantes por defecto.
+**Knobs:**
 
-Para correr solo la celda de `tiled_ikj_avx512` sin relanzar todo el sweep:
+| Variable | Default | Que controla |
+|---|---|---|
+| `VARIANTS` | $13$ activas | Lista de variantes a correr (separadas por espacio) |
+| `MS` | `1024 2048 4096 8192 16384 32768` | Lista de tamanos |
+| `ITERS_PER_RUN` | `1` | Iteraciones por run. `0` activa $I_{\text{full}} = 2m/n$ |
+| `RUNS` | `3` (o `1` si `ITERS_PER_RUN=0`) | Runs medidos para la mediana |
 
-```bash
-VARIANTS="tiled_ikj_avx512" MS="1024 2048" bash scripts/run_perf_zen5_sweep.sh
-python3 scripts/consolidate_perf_zen5.py
-```
+**Variantes activas** (las que `run_perf_zen5_sweep.sh` corre por defecto): `naive`, `loop_ijk`, `loop_ikj`, `loop_jik`, `loop_jki`, `loop_kij`, `loop_kji`, `tiled_ikj`, `tiled_ikj_avx512`, `tiled_ikj_omp`, `morton`, `morton_avx512`, `morton_omp`.
 
-**Geometria del microkernel BLIS-style (Fase 1.6):** $M_R = 6$, $N_R = 16$, $M_C = 192$ fijos en source; $BS$ (= $k_c$) configurable runtime, default $384$. Los $12$ acumuladores YMM del tile $6 \times 16$ de $C$ se mantienen vivos durante toda la pasada $k_c$ (verificado con `objdump` que GCC no spillea ningun YMM). El panel $A$ activo $M_C \times k_c = 192 \times 384$ ocupa $288$ KiB y cabe en el L2 de $512$ KB del Ryzen 5 4600H; el panel $B$ activo $k_c \times N_R = 384 \times 16$ ocupa $24$ KiB y cabe en el L1d de $32$ KB. Cambiar $BS$ via 4.o argumento del bench o `matmul_tiled_ikj_avx512_set_bs(bs)` en runtime (cualquier valor positivo es valido; el microkernel itera $p$ uno a la vez).
+**Salida:** `results/metrics.csv` con una fila por celda `(variant, m)` y todas las columnas de hardware counters consolidadas.
 
 ---
 
-### 5.9 Flujo de Fase 1.4 / 1.6: tiled_ikj_omp (microkernel 6x16 + OpenMP)
+## 9. Profiling con `perf`
+
+### 9.1 Que captura
+
+`make results` lanza `scripts/run_perf_zen5_sweep.sh`, que por cada celda `(variant, m)` ejecuta `perf stat` dos veces para evitar multiplexing de contadores. Los `.txt` crudos quedan en `results/<variant>/perf_<variant>_m<M>_{A,B}.txt`; el consolidador `scripts/consolidate_perf_zen5.py` los une en `results/metrics.csv`.
+
+**Eventos por grupo** (los que el script pide a `perf`; nombres exactos del PMC de Zen 5):
+
+| Grupo | Eventos |
+|---|---|
+| A (compute side) | `cycles`, `instructions`, `fp_ret_sse_avx_ops.all`, `ls_dispatch.ld_dispatch`, `l2_request_g1.all_no_prefetch` |
+| B (memory + TLB) | `cycles`, `instructions`, `l2_cache_req_stat.ls_rd_blk_l_hit_x`, `cache-misses`, `bp_l1_tlb_miss_l2_tlb_miss`, `dTLB-load-misses` |
+
+`cycles` e `instructions` se duplican en ambos grupos para cross-check entre pasadas. La cabecera de `scripts/profile_perf_zen5.sh` documenta cada evento y sus equivalentes si alguno no esta disponible en una microcode revision concreta.
+
+### 9.2 Como lanzar
 
 ```bash
-# Compilar (requiere -O3 -march=native -fopenmp)
-make bench_tiled_ikj_omp
-make validate_tiled_ikj_omp
+sudo sysctl -w kernel.perf_event_paranoid=1     # una vez por boot
 
-# Validar correctitud
-./bin/validate/validate_tiled_ikj_omp_O3 256        # m=256, BS=384 (default)
-./bin/validate/validate_tiled_ikj_omp_O3 256 128    # m=256, BS=128 custom
-
-# Bench individual (OMP_NUM_THREADS controla el numero de threads)
-OMP_NUM_THREADS=6 OMP_PROC_BIND=close ./bin/bench/bench_tiled_ikj_omp_O3 4096          # m=4096, BS=384, 6 threads close
-OMP_NUM_THREADS=6 OMP_PROC_BIND=close ./bin/bench/bench_tiled_ikj_omp_O3 4096 4 5 256  # m, iters, runs, bs
+make profile_zen5                               # sweep completo (todas las variantes y MS)
+make profile_zen5_one VARIANT=tiled_ikj_avx512 M=4096   # una sola celda
+make profile_zen5_omp                           # morton_omp con varios threads
 ```
 
-Salida CSV (7 columnas, mismo formato que `tiled_ikj_avx512`):
-```
-tiled_ikj_omp,4096,128,4,384,X.XXXXXX,X.XXXXXX
-```
+### 9.3 Plots
 
-Para incluir `tiled_ikj_omp` en el sweep de perf completo con 6 threads fijos y regenerar `results/metrics.csv`:
-
-```bash
-make results
-```
-
-El target `results` incluye `bench_tiled_ikj_omp_O3` como dependencia. `run_perf_zen5_sweep.sh` incluye `tiled_ikj_omp` en su lista de variantes y `profile_perf_zen5.sh` fija `OMP_NUM_THREADS=6 OMP_PLACES=cores OMP_PROC_BIND=close` automaticamente para esa variante (cambiado en Fase 1.6 desde $8$/close, que era suboptimo para el microkernel FMA-bound del $6 \times 16$).
-
-Para correr solo la celda de `tiled_ikj_omp` sin relanzar todo el sweep:
-
-```bash
-bash scripts/profile_perf_zen5.sh tiled_ikj_omp 4096
-python3 scripts/consolidate_perf_zen5.py --out results/metrics.csv
-```
-
-**Paralelizacion:** un unico `#pragma omp parallel for schedule(static)` sobre el bucle externo $i_c$ (tiles de filas de altura $M_C = 192$). Cada tile escribe exclusivamente las filas $[i_c, i_c + M_C)$ de $C$; no hay conflictos de escritura entre threads. $A$ y $B$ son `const` y compartidas. El `memset` inicial de $C$ corre fuera de la region paralela. SMT a $12$ threads degrada $\sim 60\%$ porque los dos hilos comparten las pipas FMA del core fisico, por eso el default empirico es $6$ threads.
+El pipeline de plots para este chip esta pendiente de refinamiento y se trabajara en una sesion separada (otra rama). Por ahora la informacion consolidada vive en `results/metrics.csv`; la visualizacion vendra despues.
 
 ---
 
-### 5.6 Flujo de Sesion 03: microkernel AVX2 + OpenMP + Roofline
+## 10. Reproducibilidad y estabilidad
 
-La Sesion 03 lleva el proyecto al hardware del Ryzen $5$ $4600$H (Zen $2$): microkernel AVX2 + FMA $4 \times 16$, paralelizacion con OpenMP tasks, profiling con eventos PMC de Zen $2$ y Roofline anclado al bandwidth STREAM medido. Todos los targets nuevos viven bajo el bloque `# === Sesion 03 targets ===` del `Makefile` y no tocan los pipelines de Fases $1$ ni $6$.
+### 10.1 Documenta el hardware
 
-#### 5.6.1 Targets de un solo comando
-
-```bash
-make audit                            # auditoria PDEP/PEXT (imprime PASS / FAIL)
-make hwinfo                           # bin/hwinfo: caracteristicas del CPU en runtime
-make sweep_threshold                  # mide el RECURSION_THRESHOLD optimo de Morton
-make validate_morton_avx512             # cross-valida la variante AVX-512 contra naive y morton
-make bench_morton_avx512                # bench single-core del microkernel AVX-512
-OMP_NUM_THREADS=6 make bench_morton_omp   # version paralela (OpenMP tasks)
-make results                          # sweep perf Zen 5 sobre 13 variantes -> results/metrics.csv
-make stream                           # mide DRAM bandwidth con STREAM (Triad 1T y 8T)
-make profile_zen5                     # captura eventos perf Zen 5 (group A + group B por celda)
-make plot_roofline                    # genera plots/roofline_9R45.png anclado al STREAM medido
-```
-
-`make audit` debe ejecutarse antes de cualquier bench: BMI2 en Zen $2$ esta microcodeado ($\sim 18$ ciclos para `PDEP`/`PEXT`) y un uso incidental degradaria el throughput sin notarlo. El script verifica que ningun modulo Morton emite `pdep` ni `pext` en el ensamblador.
-
-`make profile_zen2` requiere `kernel.perf_event_paranoid <= 2`. Ajustar una vez por boot con:
+Guarda esta info junto con tus resultados:
 
 ```bash
-sudo sysctl -w kernel.perf_event_paranoid=1
-```
-
-#### 5.6.2 Variables de entorno para `bench_morton_omp`
-
-| Variable | Default util en el $4600$H | Efecto |
-|----------|-----------------------------|--------|
-| `OMP_NUM_THREADS` | `6` (un thread por core fisico) | $12$ activa SMT, suma rendimiento pero con eficiencia baja. |
-| `OMP_PROC_BIND`   | `close` (recomendado)           | Mantiene threads en el mismo CCX. `spread` los reparte entre los $2$ CCXs. |
-| `OMP_PLACES`      | `cores`                         | Une cada thread a un core fisico. |
-
-Mejor combinacion empirica para throughput puro (sweep de Prompt $6$, `results/omp_scaling.csv`): `OMP_NUM_THREADS=12 OMP_PROC_BIND=close` toca $\sim 256$ GFLOPS a $m = 8192$ y $\sim 262$ GFLOPS a $m = 4096$. Para single-CCX limpio (e.g. compartiendo el laptop con otras cargas): `OMP_NUM_THREADS=3 OMP_PROC_BIND=close`.
-
-#### 5.6.3 Reproducir el Roofline completo
-
-```bash
-source ~/venvs/matmul/bin/activate
-sudo sysctl -w kernel.perf_event_paranoid=1
-
-make audit                            # PASS
-make results                           # ~25 min, sweep perf Zen 2 -> results/metrics.csv
-make plot_perf_zen2                    # ~1  min, plots/perf_zen2_breakdown.png
-make stream                            # ~2  min
-make profile_zen2_omp                  # ~3  min, perf de morton_omp para el Roofline
-make plot_roofline                     # < 1 min, plots/roofline_4600h.png
-```
-
-Mejor resultado esperado al cierre: `morton_avx512` a $\sim 40$ GFLOPS bench-wide a $m = 8192$ ($\sim 64 \%$ del techo FMA single-core medido con perf), y `morton_omp` a $\sim 260$ GFLOPS con $12$ threads `close` segun `omp_scaling.csv`. El reporte completo de hallazgos esta en [`docs/SESION_03_RESUMEN.md`](docs/SESION_03_RESUMEN.md).
-
----
-
-## 6. Paso 2: profiling
-
-**Atajo:** `make sweep_naive` corre los tres (CSV + gprof + perf) por cada valor de $m$ automaticamente. Las dos subsecciones siguientes describen como correr cada profiler por separado para un solo $m$, util durante el desarrollo o para inspeccionar un cliff concreto.
-
-### 6.1 Perfil por funcion con gprof
-
-```bash
-make bench_naive_pg                              # compila bench con -pg
-bash scripts/profile_gprof_naive.sh              # m=2048, iters=1, runs=1 por defecto
-bash scripts/profile_gprof_naive.sh 1024         # m custom
-bash scripts/profile_gprof_naive.sh 1024 2 1     # m, iteraciones, corridas medidas
-```
-
-El reporte queda en `results/gprof_naive_m<M>.txt`. Es esperable que **mas del 95% del tiempo** caiga en `matmul_naive`; eso confirma que esa funcion es el cuello de botella.
-
-Para inspeccionar manualmente:
-
-```bash
-gprof bin/bench/bench_naive_pg gmon.out > results/gprof_manual.txt
-less results/gprof_manual.txt
-```
-
-### 6.2 Contadores de hardware con perf
-
-```bash
-bash scripts/profile_perf_naive.sh               # m=2048, iters=1, runs=1
-bash scripts/profile_perf_naive.sh 1024          # m custom
-bash scripts/profile_perf_naive.sh 1024 2 1      # m, iteraciones, corridas
-```
-
-El reporte queda en `results/perf_naive_m<M>.txt`. Los eventos solicitados cubren los cuatro puntos del paso 2:
-
-| Pregunta del proyecto | Eventos de perf |
-|------------------------|-----------------|
-| Numero de instrucciones | `instructions` |
-| IPC promedio            | `instructions` / `cycles` |
-| Fallos de pagina        | `page-faults`, `minor-faults`, `major-faults` |
-| Efectividad del branching | `branches`, `branch-misses` |
-| (Bonus) memoria         | `cache-references`, `cache-misses`, `L1-dcache-load-misses`, `LLC-load-misses` |
-
-**Interpretacion tipica a `-O0`:** IPC bajo (entre 0.3 y 0.8 sobre un peak teorico de 4-6), branch miss rate $< 0.5\%$, mucha actividad en cache misses. El cuello de botella es memoria, no CPU.
-
-Si un evento aparece como `<not supported>` en WSL2 es normal (limitacion del hipervisor). Los eventos basicos (`instructions`, `cycles`, `branches`, `branch-misses`, `page-faults`) suelen funcionar.
-
-### 6.3 (Opcional) Cachegrind
-
-```bash
-valgrind --tool=cachegrind --cache-sim=yes ./bin/bench/bench_naive_O0 1024 1
-ls cachegrind.out.*
-cg_annotate cachegrind.out.<pid> | less
-```
-
-Cachegrind simula L1/LL caches y genera fallos por **linea de codigo**. Mucho mas lento que `perf` pero util cuando quieres saber exactamente que linea del kernel produce los misses.
-
----
-
-## 7. Reproducibilidad: estabilizar las mediciones
-
-Antes de tomar mediciones para el reporte:
-
-### 7.1 Documenta el hardware
-
-```bash
-lscpu                              # modelo, frecuencias, caches
-cat /proc/cpuinfo | grep "model name" | head -1
+lscpu
 cat /sys/devices/system/cpu/cpu0/cache/index{0,1,2,3}/size
-free -h                            # RAM total
+free -h
+cat /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
 ```
 
-Guarda esta salida junto con tus resultados.
+### 10.2 Aisla la instancia
 
-### 7.2 Fija el gobernador de CPU (si tu instalacion lo permite)
+Una instancia AWS dedicada no comparte cores con otros tenants en c8a.2xlarge, pero conviene asegurarse de que no hay carga concurrente del usuario durante las mediciones:
 
-WSL2 hereda el gobernador del host. En Windows, asegurate que el plan de energia este en "Maximo rendimiento":
+- Cerrar procesos pesados (builds, indexadores, monitorizadores como `htop` activo, etc.).
+- No usar la misma instancia para builds y bench en paralelo.
+- Verificar que ningun otro `bench_*` esta en background con `pgrep bench_`.
 
-```powershell
-powercfg /list
-powercfg /setactive SCHEME_MIN   # Maximum performance
-```
+### 10.3 Mediana de varias corridas
 
-### 7.3 Cierra programas pesados
-
-Cualquier proceso (Chrome con 80 pestanas, Slack, Zoom, Docker Desktop, OneDrive sincronizando) compite por L3 y memoria y mete ruido. Cierralos antes de medir.
-
-### 7.4 Reporta la mediana
-
-`bench_naive_O0` ya hace cinco corridas y reporta la mediana. Si quieres ser mas estricto, edita `DEFAULT_RUNS` en `src/drivers/bench/bench_naive.c` y recompila.
+Los benches ya reportan mediana de $5$ corridas por defecto. Para el sweep, ajusta con `RUNS=<n>`.
 
 ---
 
-## 8. Flujo de trabajo completo para la entrega de la Fase 1
+## 11. Adaptar el proyecto a otro hardware o microkernel
 
-Resumen de un ciclo completo para los **tres primeros pasos**:
+Los defaults estan calibrados para Zen 5 / EPYC 9R45. Si vas a correr en otro chip, estos son los puntos donde tocar:
 
-```bash
-# 1. Compilar todo (incluye bench_naive_O0, bench_naive_pg y validate_naive_O0)
-make
-make bench_naive_pg
+| Que cambiar | Donde | Por que |
+|---|---|---|
+| `-march=native` | `CFLAGS_O3_ZEN5` y `CFLAGS_OMP_ZEN5` en el `Makefile` | Selecciona el ISA tuning de GCC para el chip de destino |
+| Thresholds `-D...` del Makefile (`TILED_IKJ_MC_DEFAULT`, `TILED_IKJ_AVX512_MC`, `BS_DEFAULT`, `MORTON_*_THRESHOLD_DEFAULT`) | Bloque `CFLAGS_O3_ZEN5` del `Makefile` | Tienen que cuadrar con el L1d, L2 y registros del chip nuevo |
+| Tile de microkernel $M_R, N_R$ | `kernel_avx512_morton.h` ($4 \times 32$) y `kernel_avx512_tiled.h` ($6 \times 32$) | Dependen del numero de registros vectoriales y del ancho de SIMD (32 ZMM en Zen 5, $16$ YMM en Zen 2) |
+| Default `OMP_NUM_THREADS` | `scripts/profile_perf_zen5.sh` (casos `tiled_ikj_omp` / `morton_omp`) | Debe coincidir con el numero de cores fisicos del chip |
+| Politica `OMP_PROC_BIND` | idem | Topologia: $1$ NUMA node con L3 compartido $\to$ `close` $==$ `spread`; varios CCX o NUMA $\to$ elegir segun el modelo de localidad |
 
-# 2. Verificar correctitud
-./bin/validate/validate_naive_O0 256
+Para reemplazar un microkernel con tu propia version: copiar `src/microkernels/kernel_avx512_*.h` a un header nuevo, ajustar las constantes $M_R$, $N_R$ y el cuerpo del kernel, y cambiar el `#include` en el modulo de algoritmo que lo consume (`matmul_morton_avx512.c`, `matmul_tiled_ikj_avx512.c`, etc.). El contrato externo de cada `matmul_*` no cambia, asi que los `validate_*` siguen sirviendo sin tocarlos.
 
-# 3. Paso 1, 2 y 3 de una sola pasada:
-#    - CSV con gflops vs m (paso 3)
-#    - gprof por cada m (paso 2.a)
-#    - perf por cada m (paso 2.b)
-make sweep_naive
-
-# 4. Generar las graficas (paso 3)
-source ~/venvs/matmul/bin/activate
-python3 scripts/plot_results.py
-```
-
-Al terminar, en `results/` y `plots/` deberian estar:
-
-- `results/naive_O0.csv` (datos del sweep)
-- `results/gprof_naive_m256.txt`, `results/gprof_naive_m384.txt`, ..., `results/gprof_naive_m8192.txt`
-- `results/perf_naive_m256.txt`, `results/perf_naive_m384.txt`, ..., `results/perf_naive_m8192.txt`
-- `plots/naive_gflops_vs_m.png`
-- `plots/naive_time_vs_m.png`
+La rama paralela `main` es un ejemplo de port a otra microarquitectura: lleva el proyecto a AVX2 sobre Zen 2 con los mismos kernels reescalados a tiles que aprovechan los $16$ YMM (tile $4 \times 16$ para Morton, $6 \times 16$ para tiled) y con setup en WSL2 sobre un Ryzen 5 4600H. Sirve como referencia de hasta donde llega un port "completo" en direccion opuesta a la actual.
 
 ---
 
-## 9. Que viene despues (no incluido en esta fase)
+## 12. Documentacion adicional
 
-Las fases siguientes mantendran la misma API descrita en `docs/API.md` y se sumaran como modulos independientes:
-
-| Fase | Que se agregara | Estado |
-|------|-----------------|--------|
-| 1.1 | Reordenamiento de bucles (6 ordenes seleccionables por nombre) | **COMPLETADO** (`matmul_loops`, integrado en `make results` y sweep perf Zen 2) |
-| 1.2 | Tiling explicito de un nivel para L2 | **COMPLETADO** (`matmul_tiled_ikj`, $M_c = K_c = 256$ apuntando al L2 del $4600$H) |
-| 1.3 / 1.6 | Tiling con AVX2+FMA y microkernel BLIS-style | **COMPLETADO** (`tiled_ikj_avx512`: microkernel inline $6 \times 16$, $M_C = 192$, $BS = 384$ default; integrado en `make results`) |
-| 1.4 / 1.6 | OpenMP sobre microkernel $6 \times 16$ | **COMPLETADO** (`tiled_ikj_omp`: `#pragma omp parallel for` en bucle $i_c$, $6$ threads `close` default) |
-| 4 | Flags de compilador y auto-vectorizacion (`-O3 -march=native`) | **COMPLETADO** como parte de la Sesion 03 (microkernel AVX2 + FMA explicito sobre Zen $2$) |
-| 5 | OpenMP + comparacion con OpenBLAS | OpenMP **COMPLETADO** (Sesion 03 `matmul_morton_omp`; Fase 1.4/1.6 `tiled_ikj_omp`); comparacion contra OpenBLAS pendiente para Sesion 04 |
-| 6 / Opcional | Matmul recursivo cache-oblivious + layout Morton sobre $A$ | **COMPLETADO** (Sesion 02 codigo y validacion; Sesion 03 sweep masivo, perf compare, Roofline) |
-
-El proyecto **esta disenado para que cada fase se entregue de forma incremental** y se pueda comparar contra el baseline producido aqui.
-
----
-
-## 10. Preguntas frecuentes
-
-**No tengo WSL2, solo tengo Windows.**
-Necesitas instalarlo. Es la opcion acordada por compatibilidad con `gprof` y `perf`. La instalacion son dos comandos en PowerShell (seccion 3.1).
-
-**perf no se compila / no encuentra el kernel.**
-WSL2 usa un kernel propio de Microsoft. La opcion mas robusta es compilar `perf` desde el repositorio `WSL2-Linux-Kernel` como muestra la seccion 3.3. Si no es viable, los tres puntos del paso 2 que se pueden medir tambien con `gprof` y `cachegrind` siguen siendo accesibles.
-
-**El sweep tarda mucho.**
-A `-O0` es esperable. Reduce el rango con `bash scripts/run_sweep_naive.sh "256 512 1024 2048"` mientras desarrollas. El sweep completo se lanza una vez al final.
-
-**Quiero medir tambien con `-O3`.**
-Eso es parte de la Fase 4. Aqui no se hace para mantener el baseline limpio y el paso 1 explicito.
-
-**Como cambio de `float` a `double`?**
-Edita `typedef float scalar_t;` en `src/core/matrix_utils.h` (alias compartido) y revisa las constantes `ABS_TOL`, `REL_TOL` en `src/drivers/validate/validate_naive.c`. La API queda igual gracias al alias.
+| Documento | Cubre |
+|---|---|
+| [`docs/API.md`](docs/API.md) | Contrato publico (firmas, tipos, layout, constantes, binarios) |
+| [`docs/0.0) makefile.md`](<docs/0.0) makefile.md>) | Referencia completa de targets y knobs del `Makefile` |
+| [`docs/0.1) matrix_utils.md`](<docs/0.1) matrix_utils.md>) | Helpers de `core/matrix_utils` |
+| [`docs/0.2) morton.md`](<docs/0.2) morton.md>) | Encoding Z-order y reorganizacion |
+| [`docs/1.1) matmul_naive.md`](<docs/1.1) matmul_naive.md>) | Baseline `ijk` |
+| [`docs/1.2) matmul_loops.md`](<docs/1.2) matmul_loops.md>) | Reordenamiento de bucles ($6$ variantes) |
+| [`docs/1.3) matmul_tiled_ikj.md`](<docs/1.3) matmul_tiled_ikj.md>) | Tiling explicito apuntando a L2 |
+| [`docs/1.4) matmul_tiled_ikj_avx512.md`](<docs/1.4) matmul_tiled_ikj_avx512.md>) | Microkernel BLIS-style $6 \times 32$ con AVX-512 + FMA |
+| [`docs/1.5) matmul_tiled_ikj_omp.md`](<docs/1.5) matmul_tiled_ikj_omp.md>) | $6 \times 32$ + OpenMP `parallel for` en $i_c$ |
+| [`docs/1.6) matmul_morton.md`](<docs/1.6) matmul_morton.md>) | Recursion Morton fina cache-oblivious |
+| [`docs/1.7) matmul_morton_avx512.md`](<docs/1.7) matmul_morton_avx512.md>) | Morton-de-bloques + microkernel AVX-512 $4 \times 32$ |
+| [`docs/1.8) matmul_morton_omp.md`](<docs/1.8) matmul_morton_omp.md>) | Morton-de-bloques + OpenMP tasks |
+| [`docs/1.9) tests.md`](<docs/1.9) tests.md>) | Piramide de unit-tests (estructura y casos cubiertos) |
