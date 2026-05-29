@@ -36,7 +36,7 @@
 #     m       : tamano cuadrado del problema (default: 1024)
 #
 # PREREQUISITOS:
-#   - bin/bench_<variant>_ZEN5 debe existir.
+#   - bin/bench/bench_<variant>_ZEN5 debe existir.
 #     Construir con: make results   (todos)
 #                    make bench_<variant>_ZEN5  (uno solo)
 #   - kernel.perf_event_paranoid <= 2.
@@ -58,25 +58,25 @@ RUNS=${RUNS:-3}
 case "$VARIANT" in
     loop_*)
         LOOP_ORDER="${VARIANT#loop_}"
-        BIN="$REPO_DIR/bin/bench_loops_ZEN5"
+        BIN="$REPO_DIR/bin/bench/bench_loops_ZEN5"
         BIN_ARGS="$LOOP_ORDER $M $ITERS_PER_RUN $RUNS"
         ;;
     tiled_ikj_omp)
-        BIN="$REPO_DIR/bin/bench_tiled_ikj_omp_ZEN5"
+        BIN="$REPO_DIR/bin/bench/bench_tiled_ikj_omp_ZEN5"
         BIN_ARGS="$M $ITERS_PER_RUN $RUNS"
         export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
         export OMP_PLACES=cores
         export OMP_PROC_BIND=${OMP_PROC_BIND:-close}
         ;;
     morton_omp)
-        BIN="$REPO_DIR/bin/bench_morton_omp_ZEN5"
+        BIN="$REPO_DIR/bin/bench/bench_morton_omp_ZEN5"
         BIN_ARGS="$M $ITERS_PER_RUN $RUNS"
         export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
         export OMP_PLACES=cores
         export OMP_PROC_BIND=${OMP_PROC_BIND:-spread}
         ;;
     *)
-        BIN="$REPO_DIR/bin/bench_${VARIANT}_ZEN5"
+        BIN="$REPO_DIR/bin/bench/bench_${VARIANT}_ZEN5"
         BIN_ARGS="$M $ITERS_PER_RUN $RUNS"
         ;;
 esac
