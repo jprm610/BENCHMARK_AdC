@@ -202,6 +202,7 @@ Desde la raiz del repositorio:
 make build       # 1. compila los 20 binarios (8 bench + 8 validate + 4 tests)
 make validate    # 2. corre la piramide tests -> validate sobre los 8 kernels
 make results     # 3. sweep perf Zen 5 -> results/metrics.csv
+make plots       # 4. renderiza las 4 figuras en plots/
 ```
 
 Si los tres pasos terminan con `OK`, el repo esta sano y `results/metrics.csv` tiene una fila por celda `(variant, m)` con todos los contadores. Usar los knobs de la [Seccion 8.3](#83-sweep-unificado-make-results) para limitar el alcance durante desarrollo.
@@ -218,6 +219,7 @@ Si los tres pasos terminan con `OK`, el repo esta sano y `results/metrics.csv` t
 | `make tests` | Compila y corre los $4$ unit-tests en orden |
 | `make validate` | Depende de `tests`; corre los $8$ `validate_*` en orden |
 | `make results` | Compila los $8$ benches y lanza el sweep perf $\to$ `results/metrics.csv` |
+| `make plots` | Renderiza las $4$ figuras a `plots/` desde `results/metrics.csv` (no relanza `results`) |
 | `make clean` | Borra `bin/` y `build/` |
 | `make distclean` | `clean` + borra `results/*.csv` y `plots/*` |
 
@@ -234,7 +236,7 @@ Si los tres pasos terminan con `OK`, el repo esta sano y `results/metrics.csv` t
 | `morton_avx512` | `make bench_morton_avx512_ZEN5` | `make validate_morton_avx512` |
 | `morton_omp` | `make bench_morton_omp_ZEN5` | `make validate_morton_omp` |
 
-Referencia completa de targets, incluidos los de profiling (`profile_zen5`, `profile_zen5_one`, `profile_zen5_omp`, `consolidate_zen5`), en [`docs/0.0) makefile.md`](<docs/0.0) makefile.md>).
+Referencia completa de targets, incluidos los de profiling (`profile_zen5`, `profile_zen5_one`, `profile_zen5_omp`, `consolidate_zen5`) y de analisis (`plots`), en [`docs/0.0) makefile.md`](<docs/0.0) makefile.md>).
 
 ### 6.3 Flags por sufijo
 
@@ -433,10 +435,10 @@ Estilo, paleta (verde oscuro tiled, azul oscuro morton, amarillos loops, gris na
 
 ```bash
 source ~/venvs/matmul/bin/activate
-python3 scripts/plot_metrics_perf_zen5.py --csv results/metrics.csv --out-dir plots/
+make plots
 ```
 
-El header del CSV (`seconds` con BOM UTF-8 que emite el consolidador en el servidor) y el alias a `median_seconds` se manejan internamente.
+`make plots` es el atajo canonico; internamente ejecuta `python3 scripts/plot_metrics_perf_zen5.py --csv results/metrics.csv --out-dir plots`. El target no depende de `results`, asi que un replot es barato y no relanza el sweep de perf. El header del CSV (`seconds` con BOM UTF-8 que emite el consolidador en el servidor) y el alias a `median_seconds` se manejan internamente.
 
 ---
 

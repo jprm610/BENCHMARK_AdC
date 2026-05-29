@@ -24,6 +24,7 @@
 #   make tests         -> build + run all unit tests (fast, run first)
 #   make validate      -> tests + run all validate_* (correctness gate)
 #   make results       -> build + perf sweep -> results/metrics.csv
+#   make plots         -> render 4 figures from results/metrics.csv -> plots/
 #   make clean         -> remove binaries and object files
 #   make distclean     -> clean + remove results/*.csv and plots/*
 #
@@ -226,7 +227,7 @@ ALL_TESTS := \
         test_matrix_utils test_morton \
         test_kernel_avx512_morton test_kernel_avx512_tiled \
         profile_zen5 profile_zen5_one profile_zen5_omp \
-        consolidate_zen5 plot_perf_zen5 \
+        consolidate_zen5 plots \
         clean distclean
 
 # ── 6. MAIN TARGETS ───────────────────────────────────────────────────
@@ -414,8 +415,15 @@ consolidate_zen5:
 
 # ── 9. ANALYSIS & AUXILIARY ───────────────────────────────────────────
 
-plot_perf_zen5:
-	python3 scripts/plot_perf_zen5.py
+# Render the 4 figures (gflops_vs_m, best_per_family, llc_misses_vs_m,
+# omp_scaling) into plots/ from results/metrics.csv. Requires
+# matplotlib in the active Python environment (see README section 4.4
+# for the venv setup). Does NOT depend on `results` so a replot is
+# cheap and does not retrigger the multi-minute perf sweep; run
+# `make results` first if results/metrics.csv is missing or stale.
+plots:
+	python3 scripts/plot_metrics_perf_zen5.py \
+	    --csv results/metrics.csv --out-dir plots
 
 # Unit tests (build + run). Each target builds + runs a single test;
 # the aggregate target `tests` (Section 6) runs all of them in order.
