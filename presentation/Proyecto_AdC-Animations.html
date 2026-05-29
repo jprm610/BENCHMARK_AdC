@@ -1,0 +1,2986 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cache Aware vs Oblivious — Benchmark de Multiplicación Iterada de Matrices</title>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" crossorigin="anonymous"></script>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+:root{
+  --bg:       #ffffff;
+  --ink:      #1a1a1a;
+  --muted:    #666666;
+  --light:    #f5f5f5;
+  --accent:   #1e90ff; 
+  
+  --row-0:  #e74c3c;
+  --row-1:  #3498db;
+  --row-2:  #2ecc71;
+  --row-3:  #f39c12;
+  --row-4:  #9b59b6;
+  --row-5:  #1abc9c;
+  --row-6:  #e67e22;
+  --row-7:  #34495e;
+  --row-8:  #d35400;
+  --row-9:  #16a085;
+  --row-10: #c0392b;
+  --row-11: #8e44ad;
+  --row-12: #2980b9;
+  --row-13: #27ae60;
+  --row-14: #f1c40f;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Inter', sans-serif;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* Contenedor de slides */
+.deck {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  z-index: 2;
+}
+
+.slide {
+  position: absolute;
+  inset: 0;
+  padding: 24px 48px 56px 48px;
+  display: none;
+  flex-direction: column;
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+.slide.active {
+  display: flex;
+  opacity: 1;
+}
+
+/* Cabecera mínima */
+.slide-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding-bottom: 12px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #e0e0e0;
+}
+.slide-eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.slide-title {
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  font-size: 22px;
+  color: var(--ink);
+  margin-top: 2px;
+}
+.slide-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.slide-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* Barra de navegación */
+.nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background: var(--light);
+  border-top: 1px solid #e0e0e0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  z-index: 10;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+}
+.nav-section { display: flex; align-items: center; gap: 12px; }
+.nav-btn {
+  background: none; border: 1px solid #ccc; padding: 4px 12px;
+  font-family: inherit; font-size: 10px; cursor: pointer;
+  color: var(--ink); transition: all 150ms ease; border-radius: 2px;
+}
+.nav-btn:hover:not(:disabled) { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.nav-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.nav-counter { color: var(--muted); font-weight: 500; }
+.nav-title { color: var(--muted); font-size: 11px; }
+
+/* Slide de memoria */
+.memory-slide {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 48px;
+  flex: 1;
+  min-height: 0;
+}
+.panel { display: flex; flex-direction: column; min-height: 0; justify-content: center; }
+.panel-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 16px; font-weight: 500;
+}
+.panel-caption { font-size: 13px; color: var(--muted); margin-top: 16px; line-height: 1.6; max-width: 90%; }
+.matrix-svg, .cache-svg { width: 100%; height: auto; display: block; }
+
+/* Simulador de Loops */
+.sim-controls {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 24px; margin-bottom: 24px; padding-bottom: 16px;
+  border-bottom: 1px solid #e0e0e0; flex-wrap: wrap;
+}
+.sim-layout { display: grid; grid-template-columns: 1fr 380px; gap: 40px; flex: 1; min-height: 0; }
+.sim-left { display: flex; flex-direction: column; gap: 20px; }
+.sim-matrices-row { display: flex; flex-direction: row; gap: 24px; justify-content: center; align-items: flex-start; }
+.sim-matrix-panel { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px; background: var(--light); border-radius: 6px; }
+.sim-matrix-label { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); letter-spacing: 0.12em; text-transform: uppercase; }
+
+.sim-matrix { display: grid; gap: 3px; padding: 5px; background: white; border: 2px solid var(--ink); border-radius: 4px; }
+.sim-matrix-cell {
+  width: 56px; height: 56px; background: white;
+  border: 1.5px solid #d0d0d0; border-radius: 3px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  font-family: 'JetBrains Mono', monospace; transition: all 200ms ease;
+}
+.sim-matrix-cell .cell-label { font-size: 12px; font-weight: 600; color: var(--ink); }
+.sim-matrix-cell .cell-line { font-size: 9px; color: #999; margin-top: 2px; }
+.sim-matrix-cell.hit { background: #d4edda; border-color: #2ecc71; border-width: 2.5px; transform: scale(1.08); }
+.sim-matrix-cell.miss { background: #f8d7da; border-color: #e74c3c; border-width: 2.5px; transform: scale(1.08); }
+
+.sim-snippet { background: #fafafa; border: 1px solid #e0e0e0; border-radius: 6px; padding: 14px 18px; }
+.sim-snippet-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #e0e0e0; }
+.sim-snippet-title { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; color: var(--ink); }
+.sim-snippet-quality { font-family: 'JetBrains Mono', monospace; font-size: 10px; padding: 2px 8px; border-radius: 3px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; }
+.sim-snippet-quality.peor { background: #fdecea; color: #c0392b; }
+.sim-snippet-quality.medio { background: #fef5e7; color: #b9770e; }
+.sim-snippet-quality.mejor { background: #e8f8f0; color: #1e8449; }
+.sim-snippet-code { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--ink); line-height: 1.5; white-space: pre; overflow-x: auto; margin: 0; background: transparent; padding: 0; }
+.sim-snippet-code code { font-family: inherit; background: transparent; padding: 0; }
+
+.sim-side { display: flex; flex-direction: column; gap: 24px; }
+.sim-cache-section { display: flex; flex-direction: column; }
+.sim-order-selector { display: flex; gap: 4px; background: var(--light); padding: 3px; border-radius: 4px; }
+.sim-order-btn {
+  background: transparent; border: none; padding: 6px 14px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 500;
+  cursor: pointer; color: var(--muted); border-radius: 3px; transition: all 150ms ease; letter-spacing: 0.05em;
+}
+.sim-order-btn:hover { color: var(--ink); }
+.sim-order-btn.active { background: var(--ink); color: var(--bg); }
+.sim-playback { display: flex; gap: 8px; align-items: center; }
+.sim-btn {
+  background: none; border: 1px solid #ccc; padding: 6px 12px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  cursor: pointer; color: var(--ink); transition: all 150ms ease; border-radius: 3px; min-width: 60px;
+}
+.sim-btn:hover:not(:disabled) { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.sim-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.sim-btn.primary { background: var(--accent); color: white; border-color: var(--accent); }
+.sim-btn.primary:hover:not(:disabled) { background: #1772d4; border-color: #1772d4; }
+
+.sim-cache-label { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 14px; font-weight: 500; }
+.sim-cache-slots { display: flex; flex-direction: column; gap: 14px; }
+.sim-cache-slot {
+  flex: 1; border: 2px dashed #ccc; border-radius: 6px; padding: 14px 12px;
+  min-height: 110px; background: var(--light); transition: all 200ms ease;
+}
+.sim-cache-slot.filled-A { background: #fef0ed; border-color: var(--row-0); border-style: solid; }
+.sim-cache-slot.filled-B { background: #ecf3fb; border-color: var(--row-1); border-style: solid; }
+.sim-cache-slot.flash { animation: cacheFlash 400ms ease; }
+@keyframes cacheFlash {
+  0%   { transform: scale(1); box-shadow: 0 0 0 0 rgba(30,144,255,0.4); }
+  50%  { transform: scale(1.02); box-shadow: 0 0 0 8px rgba(30,144,255,0); }
+  100% { transform: scale(1); }
+}
+.sim-cache-slot-header { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+.sim-cache-slot-tag { font-size: 10px; font-weight: 400; color: var(--muted); }
+.sim-cache-slot-contents { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+.sim-cache-cell { text-align: center; padding: 4px 2px; background: white; border-radius: 3px; color: var(--ink); }
+.sim-cache-slot-empty { display: flex; align-items: center; justify-content: center; height: 100%; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #bbb; font-style: italic; }
+
+.sim-stats { display: flex; flex-direction: column; gap: 14px; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+.sim-stat-row { display: flex; justify-content: space-between; align-items: baseline; }
+.sim-stat-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; }
+.sim-stat-value { font-size: 20px; font-weight: 600; color: var(--ink); }
+.sim-stat-value.hit { color: #2ecc71; }
+.sim-stat-value.miss { color: var(--row-0); }
+
+.sim-status {
+  font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--ink);
+  padding: 12px 14px; background: var(--light); border-radius: 4px;
+  margin-top: 14px; border-left: 4px solid #ccc; transition: border-color 200ms ease; line-height: 1.5;
+}
+.sim-status.hit { border-left-color: #2ecc71; }
+.sim-status.miss { border-left-color: var(--row-0); }
+.sim-status .pulse { font-weight: 700; }
+
+/* Portada */
+.intro-block { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 32px; }
+.intro-mega { font-weight: 700; font-size: 88px; line-height: 1; letter-spacing: -0.02em; color: var(--ink); }
+.intro-mega .accent-line { color: var(--accent); }
+.intro-meta { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); letter-spacing: 0.08em; line-height: 1.8; }
+
+/* Tiling Layout */
+.tiling-layout { display: grid; grid-template-columns: 280px 1fr; gap: 2rem; align-items: start; margin-top: 1rem; }
+.tiling-controls { display: flex; flex-direction: column; gap: 1.2rem; background: var(--light); padding: 1.2rem; border-radius: 8px; border: 1px solid #e0e0e0; }
+.slider-box { display: flex; flex-direction: column; gap: 0.3rem; }
+.slider-box label { font-size: 0.9rem; color: var(--ink); }
+.param-val { font-family: 'JetBrains Mono', monospace; color: #38bdf8; font-weight: 600; }
+.slider-ticks { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--muted); padding: 0 4px; }
+.playback-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem; }
+.control-btn { background: #1e293b; border: 1px solid #334155; color: #f8fafc; padding: 0.4rem; border-radius: 4px; cursor: pointer; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; transition: all 0.2s; }
+.control-btn:hover { background: #334155; }
+.action-btn { background: #0284c7; border-color: #38bdf8; }
+.action-btn:hover { background: #0369a1; }
+
+.cache-card { background: #0f172a; border: 1px solid #ffffff; padding: 1rem; border-radius: 6px; }
+.cache-card h3, .macro-step-card h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 0.5rem; }
+.cache-usage { font-size: 1.4rem; font-family: 'JetBrains Mono', monospace; font-weight: 600; color: #f8fafc; }
+.cache-bar-container { height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden; margin: 0.6rem 0; }
+
+/* FIX IMPORTANTE: Corregido el 'transition' erróneo que rompía el renderizado */
+.cache-bar-fill { height: 100%; width: 0%; transition: width 0.3s ease, background-color 0.3s ease; }
+
+.cache-breakdown { font-size: 0.8rem; line-height: 1.4; color: #94a3b8; }
+.cache-badge { text-align: center; font-size: 0.75rem; font-weight: 600; padding: 0.25rem; border-radius: 4px; margin-top: 0.6rem; }
+.badge-safe { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+.badge-overflow { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); animation: pulse 1.5s infinite; }
+
+@keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
+
+.macro-indices { font-size: 1.1rem; color: var(--ink); margin-bottom: 0.5rem; }
+.macro-sequence-list { display: flex; gap: 0.3rem; flex-wrap: wrap; max-height: 80px; overflow-y: auto; font-size: 0.75rem; }
+.seq-item { background: #e2e8f0; padding: 0.15rem 0.3rem; border-radius: 3px; color: var(--muted); }
+.seq-item.active { background: var(--accent); color: #ffffff; }
+
+.tiling-matrices { display: grid; grid-template-columns: repeat(3, auto); gap: 1.5rem; justify-content: center; align-items: start; }
+.matrix-container { display: flex; flex-direction: column; gap: 0.5rem; }
+.matrix-title { font-size: 0.9rem; font-weight: 500; color: var(--ink); }
+.matrix-title .dim { color: var(--muted); font-size: 0.8rem; }
+.matrix-grid { display: grid; background: #0f172a; border: 1px solid #334155; padding: 2px; border-radius: 4px; }
+.tile-cell { width: 16px; height: 16px; border: 1px solid rgba(255, 255, 255, 0.03); box-sizing: border-box; transition: background-color 0.15s, border-color 0.15s; }
+
+.b-top { border-top: 2px solid rgba(255, 255, 255, 0.3) !important; }
+.b-left { border-left: 2px solid rgba(255, 255, 255, 0.3) !important; }
+
+.matrix-grid .tile-cell.active-a { background-color: rgba(56, 189, 248, 0.35); border-color: #38bdf8; }
+.matrix-grid .tile-cell.active-b { background-color: rgba(168, 85, 247, 0.35); border-color: #a855f7; }
+.matrix-grid .tile-cell.active-c { background-color: rgba(34, 197, 94, 0.35); border-color: #22c55e; }
+
+/* ============================================ */
+/* Slide: Microkernel AVX2                       */
+/* ============================================ */
+
+.avx-slide-body { gap: 14px; }
+
+.avx-controls {
+  display: flex; align-items: center; gap: 24px;
+  padding-bottom: 12px; border-bottom: 1px solid #e0e0e0; flex-wrap: wrap;
+}
+.avx-row-selector { display: flex; gap: 4px; background: var(--light); padding: 3px; border-radius: 4px; align-items: center; }
+.avx-row-selector-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted);
+  letter-spacing: 0.1em; text-transform: uppercase; padding: 0 10px 0 6px;
+}
+.avx-row-btn {
+  background: transparent; border: none; padding: 6px 14px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 500;
+  cursor: pointer; color: var(--muted); border-radius: 3px;
+  transition: all 150ms ease;
+}
+.avx-row-btn:hover { color: var(--ink); }
+.avx-row-btn.active { background: var(--ink); color: var(--bg); }
+
+.avx-playback { display: flex; gap: 8px; align-items: center; }
+
+.avx-counter {
+  margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);
+}
+.avx-counter strong { color: var(--ink); font-weight: 600; }
+
+/* Layout principal: 3 zonas */
+.avx-layout {
+  display: grid;
+  grid-template-columns: 320px 170px 1fr;
+  gap: 28px;
+  align-items: start;
+  margin-top: 8px;
+}
+
+/* Etiquetas de paneles */
+.avx-panel-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 8px; font-weight: 500;
+}
+
+/* ===== ZONA A: Operandos ===== */
+.avx-operands { display: flex; flex-direction: column; gap: 18px; }
+
+.avx-panel { display: flex; flex-direction: column; }
+
+/* Registro YMM: contenedor "metálico" oscuro con celdas dentro */
+.avx-ymm-register {
+  display: grid; grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  background: var(--ink);
+  padding: 4px;
+  border-radius: 4px;
+  position: relative;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 1px 2px rgba(0,0,0,0.15);
+}
+.avx-ymm-register::before {
+  content: "256 bits · 8 floats";
+  position: absolute;
+  top: -7px; right: 6px;
+  font-family: 'JetBrains Mono', monospace; font-size: 8px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  background: var(--bg);
+  padding: 0 5px;
+}
+.avx-ymm-pair { display: flex; flex-direction: column; gap: 4px; }
+.avx-ymm-pair .avx-ymm-register::before { display: none; }
+.avx-ymm-pair-label {
+  position: relative;
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+/* Celdas YMM (lanes) */
+.avx-ymm-cell {
+  text-align: center;
+  padding: 8px 2px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 600;
+  border-radius: 2px;
+  min-height: 30px;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: -0.02em;
+}
+
+/* Color para A (rojo) */
+.avx-ymm-a .avx-ymm-cell {
+  background: var(--row-0);
+  color: white;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.15);
+}
+
+/* Color para B (azul) */
+.avx-ymm-b .avx-ymm-cell {
+  background: var(--row-1);
+  color: white;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.15);
+}
+
+/* Indicador de broadcast (línea punteada que conecta el valor escalar de A) */
+.avx-broadcast-indicator {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 6px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--ink);
+}
+.avx-scalar-source {
+  background: var(--row-0); color: white;
+  padding: 3px 8px; border-radius: 3px;
+  font-weight: 600;
+}
+.avx-broadcast-arrow {
+  flex: 1;
+  border-top: 2px dashed var(--row-0);
+  position: relative;
+}
+.avx-broadcast-arrow::after {
+  content: "▶";
+  position: absolute;
+  right: -2px; top: -10px;
+  color: var(--row-0);
+  font-size: 12px;
+}
+.avx-broadcast-label {
+  font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;
+}
+
+.avx-source-note {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; color: var(--muted);
+  margin-top: 6px;
+  letter-spacing: -0.01em;
+}
+
+/* ===== ZONA B: FMA ===== */
+.avx-fma {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 14px;
+  position: relative;
+  align-self: stretch;
+}
+
+.avx-fma-box {
+  width: 160px; min-height: 150px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: var(--light);
+  padding: 14px 10px;
+  position: relative;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+.avx-fma-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 18px; font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 0.05em;
+}
+.avx-fma-instr {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; color: var(--muted);
+  margin-top: 2px;
+}
+.avx-fma-lanes {
+  display: grid; grid-template-columns: repeat(8, 1fr);
+  gap: 2px; margin-top: 12px; width: 100%;
+}
+.avx-fma-lane {
+  height: 8px;
+  background: var(--accent);
+  border-radius: 1px;
+  opacity: 0.85;
+}
+.avx-fma-lane.pulse { animation: avxLanePulse 600ms ease infinite; }
+@keyframes avxLanePulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+.avx-fma-paral {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; color: var(--ink);
+  margin-top: 8px; font-weight: 500;
+}
+
+.avx-fma-equation {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px; color: var(--ink);
+  text-align: center;
+  padding: 8px 12px;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  letter-spacing: 0;
+}
+.avx-fma-equation .red { color: var(--row-0); font-weight: 700; }
+.avx-fma-equation .blue { color: var(--row-1); font-weight: 700; }
+.avx-fma-equation .green { color: var(--row-2); font-weight: 700; }
+
+/* ===== ZONA C: Acumulador ===== */
+.avx-accumulator {
+  display: flex; flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.avx-acc-header {
+  display: flex; justify-content: space-between; align-items: baseline;
+}
+.avx-acc-meta {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--muted);
+}
+.avx-acc-meta strong { color: var(--ink); font-weight: 600; }
+
+.avx-acc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: repeat(6, auto);
+  gap: 6px 8px;
+  border: 1px solid #e0e0e0;
+  background: var(--light);
+  padding: 10px;
+  border-radius: 6px;
+}
+
+/* Cada registro YMM en C: contenedor oscuro de 8 celdas */
+.avx-ymm-c {
+  display: grid; grid-template-columns: repeat(8, 1fr);
+  gap: 1px;
+  background: var(--ink);
+  padding: 3px 3px 3px 28px; /* espacio para el label */
+  border-radius: 3px;
+  position: relative;
+  transition: all 250ms ease;
+}
+.avx-ymm-c-label {
+  position: absolute;
+  left: 3px; top: 50%; transform: translateY(-50%);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; font-weight: 700;
+  color: #aaa;
+  letter-spacing: -0.02em;
+}
+.avx-ymm-c .avx-ymm-cell {
+  background: #e8f5ec;
+  color: var(--ink);
+  font-size: 10px;
+  padding: 4px 1px;
+  min-height: 24px;
+  font-weight: 500;
+}
+
+/* Estados: row activa, registros activos */
+.avx-ymm-c.dim {
+  opacity: 0.35;
+}
+.avx-ymm-c.active {
+  box-shadow: 0 0 0 2px var(--row-2), 0 4px 10px rgba(46,204,113,0.25);
+  transform: scale(1.015);
+}
+.avx-ymm-c.active .avx-ymm-c-label { color: white; font-weight: 700; }
+.avx-ymm-c.active .avx-ymm-cell {
+  background: var(--row-2);
+  color: white;
+  font-weight: 600;
+  animation: avxCellPulse 700ms ease;
+}
+@keyframes avxCellPulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.08); background: #58e58a; }
+  100% { transform: scale(1); }
+}
+
+/* Panel de explicación inferior */
+.avx-stage-info {
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  background: var(--light);
+  padding: 10px 14px;
+  border-radius: 4px;
+  border-left: 4px solid var(--accent);
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+/* Panel de código del microkernel (debajo del layout) */
+.avx-code-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: auto;
+  padding-top: 12px;
+}
+.avx-code-block {
+  background: #fafafa;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 10px 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  overflow-x: auto;
+  white-space: pre;
+}
+.avx-code-title {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 6px; font-weight: 500;
+}
+.avx-code-block .kw-a { color: var(--row-0); font-weight: 600; }
+.avx-code-block .kw-b { color: var(--row-1); font-weight: 600; }
+.avx-code-block .kw-c { color: #1e8449; font-weight: 600; }
+.avx-code-block .cm  { color: #999; }
+.avx-stage-info code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  background: white;
+  border: 1px solid #e0e0e0;
+  padding: 1px 5px;
+  border-radius: 2px;
+}
+.avx-stage-info .tag-a { color: var(--row-0); font-weight: 600; }
+.avx-stage-info .tag-b { color: var(--row-1); font-weight: 600; }
+.avx-stage-info .tag-c { color: #1e8449; font-weight: 600; }
+
+/* ===== SLIDE MICRO-TILE (Option B) ===== */
+.mktile-layout {
+  display: grid; grid-template-columns: 1fr 1.6fr 200px;
+  gap: 32px; align-items: start; flex: 1;
+}
+.mktile-context-grid {
+  display: flex; flex-direction: column; gap: 16px;
+}
+.mktile-zoom-pair {
+  display: flex; gap: 12px; align-items: flex-start;
+}
+.mktile-mini-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.1em;
+}
+.mktile-mini-grid {
+  display: grid; gap: 1px; background: #ccc; border: 1px solid #aaa; border-radius: 2px;
+}
+.mktile-mini-cell {
+  width: 12px; height: 12px; background: #eee;
+}
+.mktile-mini-cell.highlight-mr { background: rgba(231,76,60,0.55); }
+.mktile-mini-cell.highlight-nr { background: rgba(52,152,219,0.55); }
+.mktile-mini-cell.highlight-c  { background: rgba(46,204,113,0.55); }
+.mktile-mini-cell.dim-cell     { opacity: 0.25; }
+.mktile-arrow {
+  font-size: 24px; color: var(--muted); align-self: center; padding-top: 16px;
+}
+
+/* Tile principal 6×16 */
+.mktile-main { display: flex; flex-direction: column; gap: 8px; }
+.mktile-nr-header {
+  display: flex; margin-left: 36px;
+  font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--muted);
+}
+.mktile-nr-half { flex: 1; text-align: center; padding: 3px 0; border: 1px solid #ddd; border-radius: 3px; background: rgba(52,152,219,0.08); }
+.mktile-nr-half + .mktile-nr-half { margin-left: 6px; }
+.mktile-main-body { display: flex; gap: 4px; align-items: flex-start; }
+.mktile-mr-axis {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--muted);
+  writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap;
+  padding-top: 4px;
+}
+.mktile-big-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 22px) 6px repeat(8, 22px);
+  grid-template-rows: repeat(6, 22px);
+  gap: 1px; background: #bbb; border: 1px solid #999; border-radius: 3px; overflow: hidden;
+}
+.mktile-big-cell {
+  width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+  font-family: 'JetBrains Mono', monospace; font-size: 7px; color: rgba(0,0,0,0.5);
+  cursor: pointer; transition: filter 150ms ease;
+}
+.mktile-big-cell:hover { filter: brightness(1.15); }
+.mktile-big-sep { background: #555; }
+.mktile-big-cell[data-row="0"] { background: rgba(231,76,60,0.3); }
+.mktile-big-cell[data-row="1"] { background: rgba(52,152,219,0.3); }
+.mktile-big-cell[data-row="2"] { background: rgba(46,204,113,0.3); }
+.mktile-big-cell[data-row="3"] { background: rgba(243,156,18,0.3); }
+.mktile-big-cell[data-row="4"] { background: rgba(155,89,182,0.3); }
+.mktile-big-cell[data-row="5"] { background: rgba(26,188,156,0.3); }
+.mktile-big-cell.mktile-row-hl[data-row="0"] { background: var(--row-0); color: white; }
+.mktile-big-cell.mktile-row-hl[data-row="1"] { background: var(--row-1); color: white; }
+.mktile-big-cell.mktile-row-hl[data-row="2"] { background: var(--row-2); color: white; }
+.mktile-big-cell.mktile-row-hl[data-row="3"] { background: var(--row-3); color: white; }
+.mktile-big-cell.mktile-row-hl[data-row="4"] { background: var(--row-4); color: white; }
+.mktile-big-cell.mktile-row-hl[data-row="5"] { background: var(--row-5); color: white; }
+.mktile-big-cell.mktile-dim { opacity: 0.2; }
+.mktile-row-selector {
+  display: flex; flex-direction: column; gap: 2px; margin-top: 4px;
+}
+.mktile-row-btn {
+  display: flex; align-items: center; gap: 8px; padding: 4px 8px;
+  border: 1px solid #e0e0e0; border-radius: 3px; cursor: pointer;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; background: white;
+  transition: all 150ms ease;
+}
+.mktile-row-btn:hover { border-color: #999; }
+.mktile-row-btn.active { border-color: var(--ink); background: var(--ink); color: white; }
+.mktile-row-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.mktile-ymm-pair-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--muted);
+}
+
+/* Right panel: register budget */
+.mktile-budget { display: flex; flex-direction: column; gap: 12px; }
+.mktile-budget-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 4px; border: 1px solid #e0e0e0;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+}
+.mktile-budget-count {
+  font-size: 22px; font-weight: 700; min-width: 28px; text-align: center;
+}
+.mktile-budget-desc { font-size: 10px; color: var(--muted); line-height: 1.4; }
+.mktile-budget-total {
+  margin-top: 4px; padding: 10px; background: var(--ink); color: white;
+  border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 11px; text-align: center;
+}
+
+/* Etiqueta de balance de registros */
+.avx-balance {
+  display: flex; gap: 14px;
+  margin-top: 6px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.avx-balance-item { display: flex; align-items: center; gap: 5px; }
+.avx-balance-dot { width: 8px; height: 8px; border-radius: 2px; }
+.avx-balance-dot.a { background: var(--row-0); }
+.avx-balance-dot.b { background: var(--row-1); }
+.avx-balance-dot.c { background: var(--row-2); }
+.avx-balance-dot.x { background: #d0d0d0; }
+
+/* ============================================ */
+/* Slides Morton                                */
+/* ============================================ */
+
+/* === 06 · Encoding Morton === */
+.morton-enc-body { gap: 14px; }
+.morton-enc-controls {
+  display: grid; grid-template-columns: 1fr 1fr auto;
+  gap: 22px; padding: 14px 18px;
+  background: var(--light); border-radius: 6px;
+  border: 1px solid #e0e0e0; align-items: center;
+}
+.morton-enc-input-block { display: flex; flex-direction: column; gap: 6px; }
+.morton-enc-input-block label { font-size: 12px; color: var(--ink); }
+.morton-enc-input-block input[type="range"] { width: 100%; }
+.me-bits-row { display: flex; gap: 4px; margin-top: 4px; align-items: center; }
+.me-bits-label { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); min-width: 30px; }
+.me-bit {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'JetBrains Mono', monospace; font-size: 13px;
+  font-weight: 700; border-radius: 3px;
+  border: 1.5px solid #e0e0e0; background: white;
+  color: var(--ink); transition: all 200ms ease;
+}
+.me-bit.i-bit { color: white; border-color: var(--row-0); background: var(--row-0); }
+.me-bit.j-bit { color: white; border-color: var(--row-1); background: var(--row-1); }
+.me-bit.zero-bit { color: #bbb; border-color: #e8e8e8; background: #fafafa; }
+.me-bit.highlight { transform: translateY(-3px) scale(1.1); box-shadow: 0 4px 10px rgba(0,0,0,0.15); }
+.morton-enc-output {
+  display: flex; flex-direction: column;
+  align-items: center; gap: 4px;
+  padding: 10px 16px; border: 2px solid var(--ink);
+  border-radius: 6px; background: white; min-width: 240px;
+}
+.morton-enc-output-label { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; }
+.morton-enc-output-value { font-size: 20px; font-weight: 700; color: var(--ink); font-family: 'JetBrains Mono', monospace; }
+.morton-enc-output-bits { display: flex; gap: 2px; margin-top: 4px; }
+
+.morton-enc-main {
+  display: grid; grid-template-columns: 1.1fr 1fr;
+  gap: 24px; flex: 1; min-height: 0;
+}
+.morton-enc-interleave { display: flex; flex-direction: column; }
+.morton-enc-interleave svg { width: 100%; height: 280px; }
+.me-caption {
+  font-size: 12px; color: var(--muted);
+  line-height: 1.55; margin-top: 10px;
+}
+.me-caption strong { color: var(--ink); }
+
+.morton-enc-spread { display: flex; flex-direction: column; min-height: 0; }
+.me-spread-controls { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
+.me-spread-target {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--muted); margin-left: auto;
+}
+.me-spread-target strong { color: var(--ink); }
+.me-spread-steps {
+  display: flex; flex-direction: column; gap: 5px;
+  overflow-y: auto; padding-right: 2px;
+}
+.me-routine-step {
+  padding: 6px 10px;
+  background: #fafafa;
+  border: 1px solid #e0e0e0;
+  border-left: 3px solid #e0e0e0;
+  border-radius: 3px;
+  transition: all 250ms ease;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+}
+.me-routine-step.active { background: white; border-left-color: var(--accent); box-shadow: 0 2px 6px rgba(30,144,255,0.15); }
+.me-routine-step.done { border-left-color: var(--row-2); }
+.me-routine-step-title { font-weight: 600; color: var(--ink); margin-bottom: 2px; }
+.me-routine-step-mask { color: var(--muted); font-size: 9px; margin-bottom: 3px; }
+.me-routine-step-bits { letter-spacing: 0.05em; font-size: 10px; color: var(--muted); white-space: pre; overflow-x: auto; }
+.me-routine-step-bits .b-on { color: var(--row-1); font-weight: 700; }
+.me-routine-step.no-op { opacity: 0.5; }
+
+/* === 07 · Layout Z-order === */
+.zorder-body { gap: 14px; }
+.zorder-controls {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding-bottom: 12px; border-bottom: 1px solid #e0e0e0;
+}
+.zorder-size-selector { display: flex; gap: 3px; background: var(--light); padding: 3px; border-radius: 4px; }
+.zorder-size-btn {
+  background: transparent; border: none; padding: 5px 12px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 500;
+  cursor: pointer; color: var(--muted); border-radius: 3px; transition: all 150ms ease;
+}
+.zorder-size-btn:hover { color: var(--ink); }
+.zorder-size-btn.active { background: var(--ink); color: var(--bg); }
+.zorder-counter { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); margin-left: auto; }
+.zorder-counter strong { color: var(--ink); }
+
+.zorder-main {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 28px; flex: 1; min-height: 0;
+}
+.zorder-grid-wrap { display: flex; flex-direction: column; }
+.zorder-grid-svg { width: 100%; max-width: 480px; height: auto; align-self: center; }
+.zorder-memory-wrap { display: flex; flex-direction: column; min-height: 0; }
+.zorder-memory-bar {
+  display: grid; gap: 1px;
+  background: #bbb; border: 1px solid #999;
+  border-radius: 4px; padding: 1px; margin-top: 8px;
+}
+.zorder-mem-cell {
+  height: 22px; min-width: 0;
+  background: #f0f0f0;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'JetBrains Mono', monospace; font-size: 8px;
+  color: rgba(0,0,0,0.55);
+  transition: background 250ms ease, color 250ms ease, transform 200ms ease;
+}
+.zorder-mem-cell.q-0 { background: var(--row-0); color: white; }
+.zorder-mem-cell.q-1 { background: var(--row-1); color: white; }
+.zorder-mem-cell.q-2 { background: var(--row-2); color: white; }
+.zorder-mem-cell.q-3 { background: var(--row-3); color: white; }
+.zorder-mem-cell.unvisited { background: #f0f0f0; color: rgba(0,0,0,0.3); }
+.zorder-mem-cell.active { outline: 2px solid var(--ink); z-index: 2; transform: scale(1.15); }
+.zorder-info {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  background: var(--light); padding: 10px 12px; border-radius: 4px;
+  margin-top: 10px; border-left: 4px solid var(--accent);
+  color: var(--ink); line-height: 1.5;
+}
+.zorder-info strong { font-weight: 700; }
+.zorder-quad-legend {
+  display: flex; gap: 14px; margin-top: 8px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--muted); flex-wrap: wrap;
+}
+.zorder-quad-dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+
+/* === 08 · Morton-de-bloques === */
+.mblk-body { gap: 14px; }
+.mblk-controls {
+  display: flex; align-items: center; gap: 14px;
+  padding-bottom: 10px; border-bottom: 1px solid #e0e0e0;
+}
+.mblk-main {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 28px; flex: 1; min-height: 0;
+}
+.mblk-col { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.mblk-col-title { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 14px; color: var(--ink); }
+.mblk-col-sub { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); }
+.mblk-grid-svg { width: 100%; max-width: 360px; height: auto; align-self: center; }
+.mblk-memory {
+  display: grid; gap: 1px;
+  background: #bbb; border: 1px solid #999;
+  padding: 1px; border-radius: 4px;
+  margin-top: 6px;
+}
+.mblk-mem-cell {
+  height: 16px; min-width: 0;
+  font-family: 'JetBrains Mono', monospace; font-size: 7px;
+  display: flex; align-items: center; justify-content: center;
+  color: rgba(0,0,0,0.7);
+  transition: outline 150ms ease;
+}
+.mblk-mem-cell.active { outline: 2px solid var(--ink); z-index: 2; }
+.mblk-caption { font-size: 11px; color: var(--muted); line-height: 1.5; margin-top: 6px; }
+.mblk-caption strong { color: var(--ink); }
+.mblk-row-stride {
+  display: flex; gap: 6px; align-items: center;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--ink); margin-top: 6px; padding: 6px 10px;
+  background: #fafafa; border: 1px solid #e0e0e0; border-radius: 3px;
+}
+.mblk-row-stride .stride-good { color: #1e8449; font-weight: 700; }
+.mblk-row-stride .stride-bad  { color: var(--row-0); font-weight: 700; }
+
+/* === 09 · Microkernel AVX2 4x16 === */
+.avx4-slide-body { gap: 14px; }
+.avx4-layout {
+  display: grid;
+  grid-template-columns: 320px 170px 1fr;
+  gap: 28px; align-items: start; margin-top: 8px;
+}
+.avx4-operands { display: flex; flex-direction: column; gap: 14px; }
+.avx4-broadcast-panel { display: flex; flex-direction: column; }
+.avx4-broadcast-list { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+.avx4-broadcast-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px;
+  background: rgba(231,76,60,0.06);
+  border: 1px solid rgba(231,76,60,0.25);
+  border-radius: 3px;
+  transition: all 200ms ease;
+}
+.avx4-broadcast-row.dim { opacity: 0.35; }
+.avx4-broadcast-row.active {
+  background: rgba(231,76,60,0.18);
+  border-color: var(--row-0);
+  box-shadow: 0 2px 6px rgba(231,76,60,0.18);
+}
+.avx4-broadcast-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  font-weight: 700; color: var(--row-0);
+  min-width: 36px; text-align: center;
+}
+.avx4-broadcast-ymm {
+  display: grid; grid-template-columns: repeat(8, 1fr);
+  gap: 1px; flex: 1; padding: 2px; background: var(--ink);
+  border-radius: 2px;
+}
+.avx4-broadcast-cell {
+  height: 16px;
+  background: var(--row-0); color: white;
+  font-family: 'JetBrains Mono', monospace; font-size: 7px;
+  font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 1px;
+}
+.avx4-acc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: repeat(4, auto);
+  gap: 6px 8px;
+  border: 1px solid #e0e0e0;
+  background: var(--light);
+  padding: 10px;
+  border-radius: 6px;
+}
+</style>
+</head>
+<body>
+
+<div class="deck" id="deck">
+
+  <section class="slide" data-title="Intro">
+    <div class="slide-head">
+      <div>
+        <div class="slide-eyebrow">Arquitectura de Computadores</div>
+        <div class="slide-title">Multiplicación Iterada de Matrices</div>
+      </div>
+    </div>
+    <div class="slide-body">
+      <div class="intro-block">
+        <div class="intro-mega">
+          Cache<br>
+          <span class="accent-line">aware</span> vs<br>
+          <span class="accent-line">oblivious</span>
+        </div>
+        <div class="intro-meta">
+          $B_{i+1} = A \cdot B_i$ · Zen 2 / Zen 5 · AVX2 + OpenMP
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Layout en memoria">
+    <div class="slide-head">
+      <div>
+        <div class="slide-eyebrow">01 · Layout en memoria</div>
+        <div class="slide-title">Matriz 15×15 en RAM</div>
+      </div>
+      <div class="slide-meta">row-major · xalloc_aligned(64)</div>
+    </div>
+    <div class="slide-body">
+      <div class="memory-slide">
+        <div class="panel">
+          <div class="panel-label">Matriz A</div>
+          <svg class="matrix-svg" viewBox="0 0 460 460" xmlns="http://www.w3.org/2000/svg" id="matrix-svg"></svg>
+          <div class="panel-caption">15×15 floats · cada fila = 60 bytes</div>
+        </div>
+        <div class="panel">
+          <div class="panel-label">Caché lineal</div>
+          <svg class="cache-svg" viewBox="0 0 700 520" xmlns="http://www.w3.org/2000/svg" id="cache-svg"></svg>
+          <div class="panel-caption">Líneas de 64 bytes · direcciones alineadas a 0x40 (64)</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Loops · Patrón de acceso">
+    <div class="slide-head">
+      <div>
+        <div class="slide-eyebrow">03 · AWARE · Loops</div>
+        <div class="slide-title">Patrón de acceso según el orden</div>
+      </div>
+      <div class="slide-meta">C = A · B (4×4) · cache line = 32 B = 8 floats · 2 slots FIFO</div>
+    </div>
+    <div class="slide-body">
+      <div class="sim-controls">
+        <div class="sim-order-selector" id="sim-order-selector">
+          <button class="sim-order-btn active" data-order="jki">jki</button>
+          <button class="sim-order-btn" data-order="kji">kji</button>
+          <button class="sim-order-btn" data-order="jik">jik</button>
+          <button class="sim-order-btn" data-order="ijk">ijk</button>
+          <button class="sim-order-btn" data-order="kij">kij</button>
+          <button class="sim-order-btn" data-order="ikj">ikj</button>
+        </div>
+        <div class="sim-playback">
+          <button class="sim-btn primary" id="sim-play">▶ play</button>
+          <button class="sim-btn" id="sim-pause" disabled>⏸ pause</button>
+          <button class="sim-btn" id="sim-step">→ step</button>
+          <button class="sim-btn" id="sim-end">⏭ final</button>
+          <button class="sim-btn" id="sim-reset">↻ reset</button>
+        </div>
+      </div>
+
+      <div class="sim-layout">
+        <div class="sim-left">
+          <div class="sim-matrices-row">
+            <div class="sim-matrix-panel">
+              <div class="sim-matrix-label">A · 4 × 4</div>
+              <div class="sim-matrix" id="sim-matrix-A"></div>
+            </div>
+            <div class="sim-matrix-panel">
+              <div class="sim-matrix-label">B · 4 × 4</div>
+              <div class="sim-matrix" id="sim-matrix-B"></div>
+            </div>
+          </div>
+          <div class="sim-snippet">
+            <div class="sim-snippet-header">
+              <span class="sim-snippet-title" id="sim-snippet-title">jki — inner: i, fijos: j, k</span>
+              <span class="sim-snippet-quality" id="sim-snippet-quality">peor</span>
+            </div>
+            <pre class="sim-snippet-code" id="sim-snippet-code"><code class="language-cpp">for j: for k: for i:
+    C[i][j] += A[i][k] * B[k][j]</code></pre>
+          </div>
+        </div>
+
+        <div class="sim-side">
+          <div class="sim-cache-section">
+            <div class="sim-cache-label">Caché compartida · 2 slots · FIFO</div>
+            <div class="sim-cache-slots" id="sim-cache-slots">
+              <div class="sim-cache-slot" id="sim-slot-0"><div class="sim-cache-slot-empty">slot 0 · vacío</div></div>
+              <div class="sim-cache-slot" id="sim-slot-1"><div class="sim-cache-slot-empty">slot 1 · vacío</div></div>
+            </div>
+          </div>
+
+          <div class="sim-stats-section">
+            <div class="sim-stats">
+              <div class="sim-stat-row"><span class="sim-stat-label">paso</span><span class="sim-stat-value" id="sim-step-count">0 / 0</span></div>
+              <div class="sim-stat-row"><span class="sim-stat-label">hits</span><span class="sim-stat-value hit" id="sim-hits">0</span></div>
+              <div class="sim-stat-row"><span class="sim-stat-label">misses</span><span class="sim-stat-value miss" id="sim-misses">0</span></div>
+              <div class="sim-stat-row"><span class="sim-stat-label">hit rate</span><span class="sim-stat-value" id="sim-rate">—</span></div>
+            </div>
+            <div class="sim-status" id="sim-status">esperando...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" id="slide-tiling" data-title="Tiling">
+    <div class="slide-head">
+      <div>
+        <div class="slide-eyebrow">04 · Cache Blocking · Estructura del Algoritmo</div>
+        <div class="slide-title">Visualización del footprint de memoria y bandas de acumulación ($M=12, K=12, N=8$)</div>
+      </div>
+    </div>
+    
+    <div class="slide-body">
+      <div class="tiling-layout">
+        <div class="tiling-controls">
+          <div class="slider-box">
+            <label>Tamaño de Bloque $M_c$: <span id="lbl-mc" class="param-val">6</span></label>
+            <input type="range" id="slide-mc" min="0" max="4" step="1" value="3">
+            <div class="slider-ticks"><span>2</span><span>3</span><span>4</span><span>6</span><span>12</span></div>
+          </div>
+          
+          <div class="slider-box">
+            <label>Tamaño de Bloque $K_c$: <span id="lbl-kc" class="param-val">6</span></label>
+            <input type="range" id="slide-kc" min="0" max="4" step="1" value="3">
+            <div class="slider-ticks"><span>2</span><span>3</span><span>4</span><span>6</span><span>12</span></div>
+          </div>
+          
+          <div class="playback-bar">
+            <button id="tile-btn-prev" class="control-btn">←</button>
+            <button id="tile-btn-play" class="control-btn action-btn">▶ Play</button>
+            <button id="tile-btn-next" class="control-btn">→</button>
+            <button id="tile-btn-reset" class="control-btn">↻</button>
+          </div>
+
+          <div class="cache-card" id="cache-status-card">
+            <h3>Presupuesto de L2 (Simulado)</h3>
+            <div class="cache-usage"><span id="cache-total">132</span> / 140 Floats</div>
+            <div class="cache-bar-container">
+              <div id="cache-bar-fill" class="cache-bar-fill"></div>
+            </div>
+            <p class="cache-breakdown">
+              $A(M_c \times K_c)$: <span id="breakdown-a">36</span> <br>
+              $B(K_c \times N)$: <span id="breakdown-b">48</span> <br>
+              $C(M_c \times N)$: <span id="breakdown-c">48</span>
+            </p>
+            <div id="cache-badge" class="cache-badge badge-safe">ESTADO ÓPTIMO</div>
+          </div>
+
+          <div class="macro-step-card">
+            <h3>Iteración Macro Actual</h3>
+            <div class="macro-indices font-mono">
+              ii = <span id="idx-ii">0</span> | kk = <span id="idx-kk">0</span>
+            </div>
+            <div id="macro-sequence-list" class="macro-sequence-list font-mono"></div>
+          </div>
+        </div>
+        
+        <div class="tiling-matrices">
+          <div class="matrix-container">
+            <div class="matrix-title">Matriz $A$ <span class="dim font-mono">(12×12)</span></div>
+            <div id="grid-a" class="matrix-grid dynamic-grid"></div>
+          </div>
+          <div class="matrix-container">
+            <div class="matrix-title">Matriz $B$ <span class="dim font-mono">(12×8)</span></div>
+            <div id="grid-b" class="matrix-grid dynamic-grid"></div>
+          </div>
+          <div class="matrix-container">
+            <div class="matrix-title">Matriz $C$ <span class="dim font-mono">(12×8)</span></div>
+            <div id="grid-c" class="matrix-grid dynamic-grid"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== NUEVO SLIDE: Micro-tile MR×NR ===== -->
+  <section class="slide" data-title="Micro-tile MR×NR">
+    <div class="slide-head">
+      <div>
+        <div class="slide-eyebrow">04b · Cache Blocking → Microkernel</div>
+        <div class="slide-title">Del bloque $M_c \times N_c$ al micro-tile $MR \times NR$</div>
+      </div>
+      <div class="slide-meta">MR=6 · NR=16 · 12 YMMs residentes en registros</div>
+    </div>
+    <div class="slide-body">
+      <div class="mktile-layout">
+
+        <!-- Columna izquierda: contexto zoom-out -->
+        <div>
+          <div class="panel-label">Zoom-out: bloque $M_c \times N_c$ en L2</div>
+          <div class="mktile-context-grid">
+            <div class="mktile-zoom-pair">
+              <div>
+                <div class="mktile-mini-label">A · $M_c \times K_c$ (12×12)</div>
+                <div class="mktile-mini-grid" id="mktile-mini-a" style="grid-template-columns:repeat(12,12px);grid-template-rows:repeat(12,12px)"></div>
+              </div>
+              <div style="padding-top:30px;color:var(--muted);font-size:18px">×</div>
+              <div>
+                <div class="mktile-mini-label">B · $K_c \times N_c$ (12×16)</div>
+                <div class="mktile-mini-grid" id="mktile-mini-b" style="grid-template-columns:repeat(16,12px);grid-template-rows:repeat(12,12px)"></div>
+              </div>
+            </div>
+            <div style="font-size:20px;color:var(--muted);text-align:center">↓</div>
+            <div>
+              <div class="mktile-mini-label">C · $M_c \times N_c$ (12×16) — tile activo resaltado</div>
+              <div class="mktile-mini-grid" id="mktile-mini-c" style="grid-template-columns:repeat(16,12px);grid-template-rows:repeat(12,12px)"></div>
+            </div>
+            <div class="panel-caption" style="margin-top:8px">
+              El macro-loop itera sobre bloques $M_c \times K_c$ de A y $K_c \times N_c$ de B. El micro-kernel procesa el tile <strong>MR×NR</strong> marcado manteniendo sus 96 floats <em>siempre en registros</em>.
+            </div>
+          </div>
+        </div>
+
+        <!-- Columna central: tile 6×16 ampliado -->
+        <div class="mktile-main">
+          <div class="panel-label">Micro-tile C · MR=6 filas × NR=16 columnas</div>
+          <div class="mktile-nr-header">
+            <div class="mktile-nr-half">ymm_b0 · cols 0–7 (8 floats)</div>
+            <div style="width:6px"></div>
+            <div class="mktile-nr-half">ymm_b1 · cols 8–15 (8 floats)</div>
+          </div>
+          <div class="mktile-main-body">
+            <div class="mktile-mr-axis">MR = 6 filas → 1 broadcast de A por fila</div>
+            <div class="mktile-big-grid" id="mktile-big-grid"></div>
+          </div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);margin-top:4px;padding-left:36px">
+            Línea vertical = límite entre ymm_b0 y ymm_b1 · Haz clic en una fila para resaltarla
+          </div>
+        </div>
+
+        <!-- Columna derecha: presupuesto de registros + selector de fila -->
+        <div>
+          <div class="panel-label">Presupuesto YMM</div>
+          <div class="mktile-budget">
+            <div class="mktile-budget-row" style="border-color:var(--row-2)">
+              <div class="mktile-budget-count" style="color:var(--row-2)">12</div>
+              <div class="mktile-budget-desc">YMMs acumuladores de C<br>(viven en registros todo $k_c$)</div>
+            </div>
+            <div class="mktile-budget-row" style="border-color:var(--row-1)">
+              <div class="mktile-budget-count" style="color:var(--row-1)">2</div>
+              <div class="mktile-budget-desc">YMMs para fila de B<br>(recargados cada paso $p$)</div>
+            </div>
+            <div class="mktile-budget-row" style="border-color:var(--row-0)">
+              <div class="mktile-budget-count" style="color:var(--row-0)">1</div>
+              <div class="mktile-budget-desc">YMM broadcast de A<br>(reutilizado entre filas)</div>
+            </div>
+            <div class="mktile-budget-total">15 / 16 YMMs usados<br><span style="font-size:9px;opacity:0.7">1 libre · zero register spill</span></div>
+            <div style="margin-top:8px">
+              <div class="mktile-mini-label">Seleccionar fila</div>
+              <div class="mktile-row-selector" id="mktile-row-selector">
+                <div class="mktile-row-btn active" data-row="0"><span class="mktile-row-dot" style="background:var(--row-0)"></span>i=0 · c00+c01</div>
+                <div class="mktile-row-btn" data-row="1"><span class="mktile-row-dot" style="background:var(--row-1)"></span>i=1 · c10+c11</div>
+                <div class="mktile-row-btn" data-row="2"><span class="mktile-row-dot" style="background:var(--row-2)"></span>i=2 · c20+c21</div>
+                <div class="mktile-row-btn" data-row="3"><span class="mktile-row-dot" style="background:var(--row-3)"></span>i=3 · c30+c31</div>
+                <div class="mktile-row-btn" data-row="4"><span class="mktile-row-dot" style="background:var(--row-4)"></span>i=4 · c40+c41</div>
+                <div class="mktile-row-btn" data-row="5"><span class="mktile-row-dot" style="background:var(--row-5)"></span>i=5 · c50+c51</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Microkernel AVX2">
+    <div class="slide-head">
+      <div>
+        <div class="slide-eyebrow">05 · AWARE · Vectorización</div>
+        <div class="slide-title">Microkernel AVX2 · MR=6, NR=16 floats en registros YMM</div>
+      </div>
+      <div class="slide-meta">vfmadd231ps · 15 de 16 YMMs · techo: 32 flops/ciclo</div>
+    </div>
+
+    <div class="slide-body avx-slide-body">
+
+      <div class="avx-controls">
+        <div class="avx-row-selector">
+          <span class="avx-row-selector-label">Fila activa</span>
+          <button class="avx-row-btn active" data-row="0">i=0</button>
+          <button class="avx-row-btn" data-row="1">i=1</button>
+          <button class="avx-row-btn" data-row="2">i=2</button>
+          <button class="avx-row-btn" data-row="3">i=3</button>
+          <button class="avx-row-btn" data-row="4">i=4</button>
+          <button class="avx-row-btn" data-row="5">i=5</button>
+        </div>
+        <div class="avx-playback">
+          <button class="sim-btn primary" id="avx-play">▶ play</button>
+          <button class="sim-btn" id="avx-step">→ step</button>
+          <button class="sim-btn" id="avx-reset">↻ reset</button>
+        </div>
+        <div class="avx-counter">
+          FMAs emitidas · <strong id="avx-fma-count">2</strong> de 12 por paso <code>p</code>
+        </div>
+      </div>
+
+      <div class="avx-layout">
+
+        <!-- ============ ZONA A: Operandos ============ -->
+        <div class="avx-operands">
+
+          <div class="avx-panel">
+            <div class="avx-panel-label">ymm_a · broadcast desde A</div>
+            <div class="avx-broadcast-indicator">
+              <span class="avx-scalar-source" id="avx-scalar-a">A[0,p]</span>
+              <span class="avx-broadcast-arrow"></span>
+              <span class="avx-broadcast-label">×8</span>
+            </div>
+            <div class="avx-ymm-register avx-ymm-a" id="avx-ymm-a">
+              <div class="avx-ymm-cell">A[<span class="ax-i">0</span>,p]</div>
+              <div class="avx-ymm-cell">A[<span class="ax-i">0</span>,p]</div>
+              <div class="avx-ymm-cell">A[<span class="ax-i">0</span>,p]</div>
+              <div class="avx-ymm-cell">A[<span class="ax-i">0</span>,p]</div>
+              <div class="avx-ymm-cell">A[<span class="ax-i">0</span>,p]</div>
+              <div class="avx-ymm-cell">A[<span class="ax-i">0</span>,p]</div>
+              <div class="avx-ymm-cell">A[<span class="ax-i">0</span>,p]</div>
+              <div class="avx-ymm-cell">A[<span class="ax-i">0</span>,p]</div>
+            </div>
+            <div class="avx-source-note">_mm256_broadcast_ss(&amp;A[<span class="ax-i">0</span>*lda + p])</div>
+          </div>
+
+          <div class="avx-panel">
+            <div class="avx-panel-label">ymm_b0, ymm_b1 · fila p de B</div>
+            <div class="avx-ymm-pair">
+              <div class="avx-ymm-register avx-ymm-b">
+                <div class="avx-ymm-cell">B[p,0]</div>
+                <div class="avx-ymm-cell">B[p,1]</div>
+                <div class="avx-ymm-cell">B[p,2]</div>
+                <div class="avx-ymm-cell">B[p,3]</div>
+                <div class="avx-ymm-cell">B[p,4]</div>
+                <div class="avx-ymm-cell">B[p,5]</div>
+                <div class="avx-ymm-cell">B[p,6]</div>
+                <div class="avx-ymm-cell">B[p,7]</div>
+              </div>
+              <div class="avx-ymm-register avx-ymm-b">
+                <div class="avx-ymm-cell">B[p,8]</div>
+                <div class="avx-ymm-cell">B[p,9]</div>
+                <div class="avx-ymm-cell">B[p,10]</div>
+                <div class="avx-ymm-cell">B[p,11]</div>
+                <div class="avx-ymm-cell">B[p,12]</div>
+                <div class="avx-ymm-cell">B[p,13]</div>
+                <div class="avx-ymm-cell">B[p,14]</div>
+                <div class="avx-ymm-cell">B[p,15]</div>
+              </div>
+            </div>
+            <div class="avx-source-note">_mm256_loadu_ps(&amp;B[p*ldb + 0/8])</div>
+          </div>
+
+        </div>
+
+        <!-- ============ ZONA B: FMA ============ -->
+        <div class="avx-fma">
+          <div class="avx-fma-box">
+            <div class="avx-fma-title">FMA</div>
+            <div class="avx-fma-instr">vfmadd231ps</div>
+            <div class="avx-fma-lanes" id="avx-fma-lanes">
+              <div class="avx-fma-lane pulse"></div>
+              <div class="avx-fma-lane pulse"></div>
+              <div class="avx-fma-lane pulse"></div>
+              <div class="avx-fma-lane pulse"></div>
+              <div class="avx-fma-lane pulse"></div>
+              <div class="avx-fma-lane pulse"></div>
+              <div class="avx-fma-lane pulse"></div>
+              <div class="avx-fma-lane pulse"></div>
+            </div>
+            <div class="avx-fma-paral">8 lanes ∥ · 1 ciclo</div>
+          </div>
+          <div class="avx-fma-equation">
+            <span class="green">c</span> += <span class="red">a</span> × <span class="blue">b</span>
+          </div>
+        </div>
+
+        <!-- ============ ZONA C: Acumulador ============ -->
+        <div class="avx-accumulator">
+          <div class="avx-acc-header">
+            <div class="avx-panel-label">micro-tile C · 6×16 floats en registros</div>
+            <div class="avx-acc-meta"><strong>12</strong> YMMs de C + <strong>2</strong> de B + <strong>1</strong> de A = <strong>15</strong> / 16</div>
+          </div>
+          <div class="avx-acc-grid" id="avx-acc-grid">
+            <!-- 12 registros YMM (6 filas × 2): generados arriba para evitar JS pesado -->
+            <div class="avx-ymm-c" data-row="0" data-col="0">
+              <span class="avx-ymm-c-label">c00</span>
+              <div class="avx-ymm-cell">0</div><div class="avx-ymm-cell">1</div><div class="avx-ymm-cell">2</div><div class="avx-ymm-cell">3</div>
+              <div class="avx-ymm-cell">4</div><div class="avx-ymm-cell">5</div><div class="avx-ymm-cell">6</div><div class="avx-ymm-cell">7</div>
+            </div>
+            <div class="avx-ymm-c" data-row="0" data-col="1">
+              <span class="avx-ymm-c-label">c01</span>
+              <div class="avx-ymm-cell">8</div><div class="avx-ymm-cell">9</div><div class="avx-ymm-cell">10</div><div class="avx-ymm-cell">11</div>
+              <div class="avx-ymm-cell">12</div><div class="avx-ymm-cell">13</div><div class="avx-ymm-cell">14</div><div class="avx-ymm-cell">15</div>
+            </div>
+            <div class="avx-ymm-c" data-row="1" data-col="0">
+              <span class="avx-ymm-c-label">c10</span>
+              <div class="avx-ymm-cell">0</div><div class="avx-ymm-cell">1</div><div class="avx-ymm-cell">2</div><div class="avx-ymm-cell">3</div>
+              <div class="avx-ymm-cell">4</div><div class="avx-ymm-cell">5</div><div class="avx-ymm-cell">6</div><div class="avx-ymm-cell">7</div>
+            </div>
+            <div class="avx-ymm-c" data-row="1" data-col="1">
+              <span class="avx-ymm-c-label">c11</span>
+              <div class="avx-ymm-cell">8</div><div class="avx-ymm-cell">9</div><div class="avx-ymm-cell">10</div><div class="avx-ymm-cell">11</div>
+              <div class="avx-ymm-cell">12</div><div class="avx-ymm-cell">13</div><div class="avx-ymm-cell">14</div><div class="avx-ymm-cell">15</div>
+            </div>
+            <div class="avx-ymm-c" data-row="2" data-col="0">
+              <span class="avx-ymm-c-label">c20</span>
+              <div class="avx-ymm-cell">0</div><div class="avx-ymm-cell">1</div><div class="avx-ymm-cell">2</div><div class="avx-ymm-cell">3</div>
+              <div class="avx-ymm-cell">4</div><div class="avx-ymm-cell">5</div><div class="avx-ymm-cell">6</div><div class="avx-ymm-cell">7</div>
+            </div>
+            <div class="avx-ymm-c" data-row="2" data-col="1">
+              <span class="avx-ymm-c-label">c21</span>
+              <div class="avx-ymm-cell">8</div><div class="avx-ymm-cell">9</div><div class="avx-ymm-cell">10</div><div class="avx-ymm-cell">11</div>
+              <div class="avx-ymm-cell">12</div><div class="avx-ymm-cell">13</div><div class="avx-ymm-cell">14</div><div class="avx-ymm-cell">15</div>
+            </div>
+            <div class="avx-ymm-c" data-row="3" data-col="0">
+              <span class="avx-ymm-c-label">c30</span>
+              <div class="avx-ymm-cell">0</div><div class="avx-ymm-cell">1</div><div class="avx-ymm-cell">2</div><div class="avx-ymm-cell">3</div>
+              <div class="avx-ymm-cell">4</div><div class="avx-ymm-cell">5</div><div class="avx-ymm-cell">6</div><div class="avx-ymm-cell">7</div>
+            </div>
+            <div class="avx-ymm-c" data-row="3" data-col="1">
+              <span class="avx-ymm-c-label">c31</span>
+              <div class="avx-ymm-cell">8</div><div class="avx-ymm-cell">9</div><div class="avx-ymm-cell">10</div><div class="avx-ymm-cell">11</div>
+              <div class="avx-ymm-cell">12</div><div class="avx-ymm-cell">13</div><div class="avx-ymm-cell">14</div><div class="avx-ymm-cell">15</div>
+            </div>
+            <div class="avx-ymm-c" data-row="4" data-col="0">
+              <span class="avx-ymm-c-label">c40</span>
+              <div class="avx-ymm-cell">0</div><div class="avx-ymm-cell">1</div><div class="avx-ymm-cell">2</div><div class="avx-ymm-cell">3</div>
+              <div class="avx-ymm-cell">4</div><div class="avx-ymm-cell">5</div><div class="avx-ymm-cell">6</div><div class="avx-ymm-cell">7</div>
+            </div>
+            <div class="avx-ymm-c" data-row="4" data-col="1">
+              <span class="avx-ymm-c-label">c41</span>
+              <div class="avx-ymm-cell">8</div><div class="avx-ymm-cell">9</div><div class="avx-ymm-cell">10</div><div class="avx-ymm-cell">11</div>
+              <div class="avx-ymm-cell">12</div><div class="avx-ymm-cell">13</div><div class="avx-ymm-cell">14</div><div class="avx-ymm-cell">15</div>
+            </div>
+            <div class="avx-ymm-c" data-row="5" data-col="0">
+              <span class="avx-ymm-c-label">c50</span>
+              <div class="avx-ymm-cell">0</div><div class="avx-ymm-cell">1</div><div class="avx-ymm-cell">2</div><div class="avx-ymm-cell">3</div>
+              <div class="avx-ymm-cell">4</div><div class="avx-ymm-cell">5</div><div class="avx-ymm-cell">6</div><div class="avx-ymm-cell">7</div>
+            </div>
+            <div class="avx-ymm-c" data-row="5" data-col="1">
+              <span class="avx-ymm-c-label">c51</span>
+              <div class="avx-ymm-cell">8</div><div class="avx-ymm-cell">9</div><div class="avx-ymm-cell">10</div><div class="avx-ymm-cell">11</div>
+              <div class="avx-ymm-cell">12</div><div class="avx-ymm-cell">13</div><div class="avx-ymm-cell">14</div><div class="avx-ymm-cell">15</div>
+            </div>
+          </div>
+
+          <div class="avx-balance">
+            <span class="avx-balance-item"><span class="avx-balance-dot c"></span>12 YMM · acumuladores C (todo el loop kc)</span>
+            <span class="avx-balance-item"><span class="avx-balance-dot b"></span>2 YMM · fila de B (se renuevan cada p)</span>
+            <span class="avx-balance-item"><span class="avx-balance-dot a"></span>1 YMM · broadcast de A (reutilizado entre filas)</span>
+            <span class="avx-balance-item"><span class="avx-balance-dot x"></span>1 YMM · libre</span>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="avx-stage-info" id="avx-stage-info">
+        <strong>Paso i=<span id="avx-info-i">0</span>:</strong>
+        el escalar <code><span class="tag-a">A[<span class="ax-i">0</span>,p]</span></code> se replica en 8 lanes de <code>ymm_a</code>;
+        con los 16 floats de B en <code><span class="tag-b">ymm_b0..b1</span></code> se emiten <strong>2 FMAs</strong> (16 floats FP32 en paralelo)
+        que acumulan sobre <code><span class="tag-c">c<span class="ax-i">0</span>0</span></code> y <code><span class="tag-c">c<span class="ax-i">0</span>1</span></code>.
+        Tras las 6 filas: <strong>12 FMAs · 96 floats de C</strong> actualizados con solo <strong>2 loads de B</strong> y <strong>6 broadcasts de A</strong>. C nunca toca memoria durante el loop <code>kc</code>.
+      </div>
+
+      <div class="avx-code-panel">
+        <div>
+          <div class="avx-code-title">microkernel · loop kc · paso p</div>
+          <pre class="avx-code-block"><span class="cm">// Carga vector de B (16 floats) — 1 vez por p</span>
+<span class="kw-b">__m256 b0</span> = _mm256_loadu_ps(&amp;B[p*ldb + 0]);
+<span class="kw-b">__m256 b1</span> = _mm256_loadu_ps(&amp;B[p*ldb + 8]);
+
+<span class="cm">// Para cada fila i de 0..5: broadcast + 2 FMAs</span>
+<span class="kw-a">a</span> = _mm256_broadcast_ss(&amp;A[i*lda + p]);
+<span class="kw-c">c_i0</span> = _mm256_fmadd_ps(<span class="kw-a">a</span>, <span class="kw-b">b0</span>, <span class="kw-c">c_i0</span>);
+<span class="kw-c">c_i1</span> = _mm256_fmadd_ps(<span class="kw-a">a</span>, <span class="kw-b">b1</span>, <span class="kw-c">c_i1</span>);</pre>
+        </div>
+        <div>
+          <div class="avx-code-title">balance · 1 paso p</div>
+          <pre class="avx-code-block"><span class="cm">// Tráfico de memoria por paso p (kc total)</span>
+loads  de <span class="kw-b">B</span> : 2  · (16 floats)
+loads  de <span class="kw-a">A</span> : 6 broadcasts (escalar)
+loads  de <span class="kw-c">C</span> : 0  ← <span class="kw-c">vive en registros</span>
+stores de <span class="kw-c">C</span> : 0  ← <span class="kw-c">vive en registros</span>
+
+<span class="cm">// Cómputo por paso p</span>
+FMAs           : 12 → <strong>96 flops/p</strong></pre>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ===== SLIDE 06: Encoding Morton ===== -->
+  <section class="slide" data-title="Encoding Morton">
+    <div class="slide-head">
+      <div>
+        <div class="slide-eyebrow">06 · OBLIVIOUS · Encoding</div>
+        <div class="slide-title">Interleave de bits — $\text{code}(i, j)$</div>
+      </div>
+      <div class="slide-meta">bits de i a posiciones impares · bits de j a pares</div>
+    </div>
+
+    <div class="slide-body morton-enc-body">
+
+      <div class="morton-enc-controls">
+        <div class="morton-enc-input-block">
+          <label>i = <span id="me-i-dec" class="param-val">5</span></label>
+          <input type="range" id="me-i" min="0" max="15" value="5">
+          <div class="me-bits-row">
+            <span class="me-bits-label">bin:</span>
+            <div id="me-i-bits" style="display:flex;gap:3px"></div>
+          </div>
+        </div>
+        <div class="morton-enc-input-block">
+          <label>j = <span id="me-j-dec" class="param-val">3</span></label>
+          <input type="range" id="me-j" min="0" max="15" value="3">
+          <div class="me-bits-row">
+            <span class="me-bits-label">bin:</span>
+            <div id="me-j-bits" style="display:flex;gap:3px"></div>
+          </div>
+        </div>
+        <div class="morton-enc-output">
+          <div class="morton-enc-output-label">$\text{code}(i, j)$</div>
+          <div class="morton-enc-output-value" id="me-code-dec">55</div>
+          <div class="morton-enc-output-bits" id="me-code-bits"></div>
+        </div>
+      </div>
+
+      <div class="morton-enc-main">
+        <div class="morton-enc-interleave">
+          <div class="panel-label">Interleave bit a bit</div>
+          <svg id="me-interleave-svg" viewBox="0 0 520 280" preserveAspectRatio="xMidYMid meet"></svg>
+          <div class="me-caption">
+            Cada bit $i_k$ aterriza en la posición <strong>$2k+1$</strong> del código.
+            Cada bit $j_k$ aterriza en la posición <strong>$2k$</strong>.
+            Eso fija la tabla canónica de cuadrantes:
+            $(0,0)\!\to\!0$, $(0,1)\!\to\!1$, $(1,0)\!\to\!2$, $(1,1)\!\to\!3$ (TL, TR, BL, BR).
+          </div>
+        </div>
+
+        <div class="morton-enc-spread">
+          <div class="panel-label">spread_bits_32_to_64 · rutina de 5 pasos</div>
+          <div class="me-spread-controls">
+            <button class="sim-btn primary" id="me-play">▶ play</button>
+            <button class="sim-btn" id="me-step">→ step</button>
+            <button class="sim-btn" id="me-reset">↻ reset</button>
+            <span class="me-spread-target">aplicada sobre <strong id="me-target-name">j</strong> = <strong id="me-target-val">3</strong></span>
+          </div>
+          <div class="me-spread-steps" id="me-spread-steps"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SLIDE 07: Layout Z-order ===== -->
+  <section class="slide" data-title="Layout Z-order">
+    <div class="slide-head">
+      <div>
+        <div class="slide-eyebrow">07 · OBLIVIOUS · Layout</div>
+        <div class="slide-title">Curva Z — los cuatro cuadrantes ocupan segmentos consecutivos</div>
+      </div>
+      <div class="slide-meta">A[i,j] → A_morton[ morton_encode(i,j) ]</div>
+    </div>
+
+    <div class="slide-body zorder-body">
+
+      <div class="zorder-controls">
+        <div class="zorder-size-selector" id="zorder-size-selector">
+          <button class="zorder-size-btn" data-size="4">4×4</button>
+          <button class="zorder-size-btn active" data-size="8">8×8</button>
+          <button class="zorder-size-btn" data-size="16">16×16</button>
+        </div>
+        <div class="sim-playback">
+          <button class="sim-btn primary" id="zorder-play">▶ play</button>
+          <button class="sim-btn" id="zorder-pause" disabled>⏸ pause</button>
+          <button class="sim-btn" id="zorder-step">→ step</button>
+          <button class="sim-btn" id="zorder-end">⏭ final</button>
+          <button class="sim-btn" id="zorder-reset">↻ reset</button>
+        </div>
+        <div class="zorder-counter">paso · <strong id="zorder-counter">0 / 64</strong></div>
+      </div>
+
+      <div class="zorder-main">
+        <div class="zorder-grid-wrap">
+          <div class="panel-label">Matriz <span id="zorder-dim-label">8×8</span> · trayectoria Z</div>
+          <svg id="zorder-grid-svg" class="zorder-grid-svg" viewBox="0 0 460 460"></svg>
+          <div class="zorder-quad-legend">
+            <span><span class="zorder-quad-dot" style="background:var(--row-0)"></span>TL · cuadrante 0</span>
+            <span><span class="zorder-quad-dot" style="background:var(--row-1)"></span>TR · cuadrante 1</span>
+            <span><span class="zorder-quad-dot" style="background:var(--row-2)"></span>BL · cuadrante 2</span>
+            <span><span class="zorder-quad-dot" style="background:var(--row-3)"></span>BR · cuadrante 3</span>
+          </div>
+        </div>
+
+        <div class="zorder-memory-wrap">
+          <div class="panel-label">Memoria lineal · A_morton</div>
+          <div class="zorder-memory-bar" id="zorder-memory-bar"></div>
+          <div class="zorder-info" id="zorder-info">
+            Pulsa <strong>play</strong> para ver el orden en que se llenan las casillas.
+            Cada color indica a qué cuadrante (de nivel superior) pertenece la celda.
+          </div>
+          <div class="me-caption" style="margin-top:auto">
+            <strong>Propiedad clave:</strong> los 4 cuadrantes de cualquier sub-bloque caen en
+            4 segmentos consecutivos de memoria de tamaño $h^2$. La recursión navega $A$
+            sumando offsets $\{0,1,2,3\} \cdot h^2$ a un puntero base — sin strides ni leading dimensions.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SLIDE 08: Morton-de-bloques ===== -->
+  <section class="slide" data-title="Morton-de-bloques">
+    <div class="slide-head">
+      <div>
+        <div class="slide-eyebrow">08 · OBLIVIOUS · Layout de bloques</div>
+        <div class="slide-title">Morton-de-elementos vs Morton-de-bloques · tile = 4×4</div>
+      </div>
+      <div class="slide-meta">el microkernel necesita filas contiguas → row-major dentro del tile</div>
+    </div>
+
+    <div class="slide-body mblk-body">
+
+      <div class="mblk-controls">
+        <span class="panel-label" style="margin-bottom:0">Resaltar fila i de A:</span>
+        <div class="zorder-size-selector" id="mblk-row-selector">
+          <button class="zorder-size-btn active" data-row="0">i=0</button>
+          <button class="zorder-size-btn" data-row="1">i=1</button>
+          <button class="zorder-size-btn" data-row="2">i=2</button>
+          <button class="zorder-size-btn" data-row="3">i=3</button>
+        </div>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);margin-left:auto">
+          matriz 8×8 · tiles de 4×4 floats
+        </span>
+      </div>
+
+      <div class="mblk-main">
+        <!-- Columna izquierda: Morton-de-elementos -->
+        <div class="mblk-col">
+          <div class="mblk-col-title">Morton-de-elementos <span class="mblk-col-sub">(Fase previa)</span></div>
+          <svg id="mblk-grid-elem" class="mblk-grid-svg" viewBox="0 0 360 360"></svg>
+          <div class="mblk-col-sub">Memoria — la fila i=<span class="mblk-row-display">0</span> NO es contigua</div>
+          <div class="mblk-memory" id="mblk-mem-elem" style="grid-template-columns:repeat(16, 1fr)"></div>
+          <div class="mblk-row-stride">
+            Saltos entre $A[i, j]$ y $A[i, j+1]$ → <span class="stride-bad" id="mblk-stride-elem">strided / 2</span>
+          </div>
+          <div class="mblk-caption">
+            Dos elementos consecutivos de una fila están separados por <strong>2 posiciones</strong> en memoria.
+            <code>_mm256_broadcast_ss</code> seguiría funcionando, pero las cargas vectoriales de B
+            recorrerían un patrón strided.
+          </div>
+        </div>
+
+        <!-- Columna derecha: Morton-de-bloques -->
+        <div class="mblk-col">
+          <div class="mblk-col-title">Morton-de-bloques <span class="mblk-col-sub">(usado por el microkernel AVX2)</span></div>
+          <svg id="mblk-grid-block" class="mblk-grid-svg" viewBox="0 0 360 360"></svg>
+          <div class="mblk-col-sub">Memoria — dentro del tile la fila SÍ es contigua</div>
+          <div class="mblk-memory" id="mblk-mem-block" style="grid-template-columns:repeat(16, 1fr)"></div>
+          <div class="mblk-row-stride">
+            Saltos entre $A[i, j]$ y $A[i, j+1]$ dentro del tile → <span class="stride-good">stride-1 ✓</span>
+          </div>
+          <div class="mblk-caption">
+            Los tiles 4×4 se ordenan entre sí en <strong>Z-order</strong> (igual que antes),
+            pero los 16 floats de cada tile viven contiguos en <strong>row-major</strong>.
+            Sigue valiendo la propiedad de cuadrantes consecutivos, ahora a escala de tiles.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SLIDE 09: Microkernel AVX2 4×16 ===== -->
+  <section class="slide" data-title="Microkernel AVX2 4×16">
+    <div class="slide-head">
+      <div>
+        <div class="slide-eyebrow">09 · OBLIVIOUS · Vectorización</div>
+        <div class="slide-title">Microkernel AVX2 · MR=4, NR=16 · 4 broadcasts de A en paralelo</div>
+      </div>
+      <div class="slide-meta">8 acumuladores + 2 B + 4 broadcasts A = 14/16 YMMs</div>
+    </div>
+
+    <div class="slide-body avx4-slide-body">
+
+      <div class="avx-controls">
+        <div class="avx-row-selector">
+          <span class="avx-row-selector-label">Fila activa</span>
+          <button class="avx-row-btn active" data-row="0">i=0</button>
+          <button class="avx-row-btn" data-row="1">i=1</button>
+          <button class="avx-row-btn" data-row="2">i=2</button>
+          <button class="avx-row-btn" data-row="3">i=3</button>
+        </div>
+        <div class="avx-playback">
+          <button class="sim-btn primary" id="avx4-play">▶ play</button>
+          <button class="sim-btn" id="avx4-step">→ step</button>
+          <button class="sim-btn" id="avx4-reset">↻ reset</button>
+        </div>
+        <div class="avx-counter">
+          FMAs emitidas · <strong id="avx4-fma-count">2</strong> de 8 por paso <code>p</code>
+        </div>
+      </div>
+
+      <div class="avx4-layout">
+
+        <!-- ZONA A: 4 broadcasts simultáneos + 2 YMM de B -->
+        <div class="avx4-operands">
+
+          <div class="avx4-broadcast-panel">
+            <div class="avx-panel-label">ymm_a0..a3 · 4 broadcasts SIMULTÁNEOS de A</div>
+            <div class="avx4-broadcast-list" id="avx4-broadcast-list">
+              <div class="avx4-broadcast-row active" data-row="0">
+                <span class="avx4-broadcast-label">a0<br>A[0,p]</span>
+                <div class="avx4-broadcast-ymm">
+                  <div class="avx4-broadcast-cell">A[0,p]</div><div class="avx4-broadcast-cell">A[0,p]</div>
+                  <div class="avx4-broadcast-cell">A[0,p]</div><div class="avx4-broadcast-cell">A[0,p]</div>
+                  <div class="avx4-broadcast-cell">A[0,p]</div><div class="avx4-broadcast-cell">A[0,p]</div>
+                  <div class="avx4-broadcast-cell">A[0,p]</div><div class="avx4-broadcast-cell">A[0,p]</div>
+                </div>
+              </div>
+              <div class="avx4-broadcast-row" data-row="1">
+                <span class="avx4-broadcast-label">a1<br>A[1,p]</span>
+                <div class="avx4-broadcast-ymm">
+                  <div class="avx4-broadcast-cell">A[1,p]</div><div class="avx4-broadcast-cell">A[1,p]</div>
+                  <div class="avx4-broadcast-cell">A[1,p]</div><div class="avx4-broadcast-cell">A[1,p]</div>
+                  <div class="avx4-broadcast-cell">A[1,p]</div><div class="avx4-broadcast-cell">A[1,p]</div>
+                  <div class="avx4-broadcast-cell">A[1,p]</div><div class="avx4-broadcast-cell">A[1,p]</div>
+                </div>
+              </div>
+              <div class="avx4-broadcast-row" data-row="2">
+                <span class="avx4-broadcast-label">a2<br>A[2,p]</span>
+                <div class="avx4-broadcast-ymm">
+                  <div class="avx4-broadcast-cell">A[2,p]</div><div class="avx4-broadcast-cell">A[2,p]</div>
+                  <div class="avx4-broadcast-cell">A[2,p]</div><div class="avx4-broadcast-cell">A[2,p]</div>
+                  <div class="avx4-broadcast-cell">A[2,p]</div><div class="avx4-broadcast-cell">A[2,p]</div>
+                  <div class="avx4-broadcast-cell">A[2,p]</div><div class="avx4-broadcast-cell">A[2,p]</div>
+                </div>
+              </div>
+              <div class="avx4-broadcast-row" data-row="3">
+                <span class="avx4-broadcast-label">a3<br>A[3,p]</span>
+                <div class="avx4-broadcast-ymm">
+                  <div class="avx4-broadcast-cell">A[3,p]</div><div class="avx4-broadcast-cell">A[3,p]</div>
+                  <div class="avx4-broadcast-cell">A[3,p]</div><div class="avx4-broadcast-cell">A[3,p]</div>
+                  <div class="avx4-broadcast-cell">A[3,p]</div><div class="avx4-broadcast-cell">A[3,p]</div>
+                  <div class="avx4-broadcast-cell">A[3,p]</div><div class="avx4-broadcast-cell">A[3,p]</div>
+                </div>
+              </div>
+            </div>
+            <div class="avx-source-note" style="margin-top:8px">
+              4 _mm256_broadcast_ss en registros distintos<br>
+              — quita la dependencia broadcast → FMA siguiente
+            </div>
+          </div>
+
+          <div class="avx-panel">
+            <div class="avx-panel-label">ymm_b0, ymm_b1 · fila p de B</div>
+            <div class="avx-ymm-pair">
+              <div class="avx-ymm-register avx-ymm-b">
+                <div class="avx-ymm-cell">B[p,0]</div><div class="avx-ymm-cell">B[p,1]</div>
+                <div class="avx-ymm-cell">B[p,2]</div><div class="avx-ymm-cell">B[p,3]</div>
+                <div class="avx-ymm-cell">B[p,4]</div><div class="avx-ymm-cell">B[p,5]</div>
+                <div class="avx-ymm-cell">B[p,6]</div><div class="avx-ymm-cell">B[p,7]</div>
+              </div>
+              <div class="avx-ymm-register avx-ymm-b">
+                <div class="avx-ymm-cell">B[p,8]</div><div class="avx-ymm-cell">B[p,9]</div>
+                <div class="avx-ymm-cell">B[p,10]</div><div class="avx-ymm-cell">B[p,11]</div>
+                <div class="avx-ymm-cell">B[p,12]</div><div class="avx-ymm-cell">B[p,13]</div>
+                <div class="avx-ymm-cell">B[p,14]</div><div class="avx-ymm-cell">B[p,15]</div>
+              </div>
+            </div>
+            <div class="avx-source-note">_mm256_loadu_ps(&amp;B[p*ldb + 0/8])</div>
+          </div>
+
+        </div>
+
+        <!-- ZONA B: FMA -->
+        <div class="avx-fma">
+          <div class="avx-fma-box">
+            <div class="avx-fma-title">FMA</div>
+            <div class="avx-fma-instr">vfmadd231ps</div>
+            <div class="avx-fma-lanes">
+              <div class="avx-fma-lane pulse"></div><div class="avx-fma-lane pulse"></div>
+              <div class="avx-fma-lane pulse"></div><div class="avx-fma-lane pulse"></div>
+              <div class="avx-fma-lane pulse"></div><div class="avx-fma-lane pulse"></div>
+              <div class="avx-fma-lane pulse"></div><div class="avx-fma-lane pulse"></div>
+            </div>
+            <div class="avx-fma-paral">8 lanes ∥ · 1 ciclo</div>
+          </div>
+          <div class="avx-fma-equation">
+            <span class="green">c</span> += <span class="red">a</span> × <span class="blue">b</span>
+          </div>
+        </div>
+
+        <!-- ZONA C: Acumulador 4×16 = 8 YMMs -->
+        <div class="avx-accumulator">
+          <div class="avx-acc-header">
+            <div class="avx-panel-label">micro-tile C · 4×16 floats en registros</div>
+            <div class="avx-acc-meta"><strong>8</strong> YMMs de C + <strong>2</strong> de B + <strong>4</strong> de A = <strong>14</strong> / 16</div>
+          </div>
+          <div class="avx4-acc-grid" id="avx4-acc-grid">
+            <div class="avx-ymm-c" data-row="0" data-col="0">
+              <span class="avx-ymm-c-label">c00</span>
+              <div class="avx-ymm-cell">0</div><div class="avx-ymm-cell">1</div><div class="avx-ymm-cell">2</div><div class="avx-ymm-cell">3</div>
+              <div class="avx-ymm-cell">4</div><div class="avx-ymm-cell">5</div><div class="avx-ymm-cell">6</div><div class="avx-ymm-cell">7</div>
+            </div>
+            <div class="avx-ymm-c" data-row="0" data-col="1">
+              <span class="avx-ymm-c-label">c01</span>
+              <div class="avx-ymm-cell">8</div><div class="avx-ymm-cell">9</div><div class="avx-ymm-cell">10</div><div class="avx-ymm-cell">11</div>
+              <div class="avx-ymm-cell">12</div><div class="avx-ymm-cell">13</div><div class="avx-ymm-cell">14</div><div class="avx-ymm-cell">15</div>
+            </div>
+            <div class="avx-ymm-c" data-row="1" data-col="0">
+              <span class="avx-ymm-c-label">c10</span>
+              <div class="avx-ymm-cell">0</div><div class="avx-ymm-cell">1</div><div class="avx-ymm-cell">2</div><div class="avx-ymm-cell">3</div>
+              <div class="avx-ymm-cell">4</div><div class="avx-ymm-cell">5</div><div class="avx-ymm-cell">6</div><div class="avx-ymm-cell">7</div>
+            </div>
+            <div class="avx-ymm-c" data-row="1" data-col="1">
+              <span class="avx-ymm-c-label">c11</span>
+              <div class="avx-ymm-cell">8</div><div class="avx-ymm-cell">9</div><div class="avx-ymm-cell">10</div><div class="avx-ymm-cell">11</div>
+              <div class="avx-ymm-cell">12</div><div class="avx-ymm-cell">13</div><div class="avx-ymm-cell">14</div><div class="avx-ymm-cell">15</div>
+            </div>
+            <div class="avx-ymm-c" data-row="2" data-col="0">
+              <span class="avx-ymm-c-label">c20</span>
+              <div class="avx-ymm-cell">0</div><div class="avx-ymm-cell">1</div><div class="avx-ymm-cell">2</div><div class="avx-ymm-cell">3</div>
+              <div class="avx-ymm-cell">4</div><div class="avx-ymm-cell">5</div><div class="avx-ymm-cell">6</div><div class="avx-ymm-cell">7</div>
+            </div>
+            <div class="avx-ymm-c" data-row="2" data-col="1">
+              <span class="avx-ymm-c-label">c21</span>
+              <div class="avx-ymm-cell">8</div><div class="avx-ymm-cell">9</div><div class="avx-ymm-cell">10</div><div class="avx-ymm-cell">11</div>
+              <div class="avx-ymm-cell">12</div><div class="avx-ymm-cell">13</div><div class="avx-ymm-cell">14</div><div class="avx-ymm-cell">15</div>
+            </div>
+            <div class="avx-ymm-c" data-row="3" data-col="0">
+              <span class="avx-ymm-c-label">c30</span>
+              <div class="avx-ymm-cell">0</div><div class="avx-ymm-cell">1</div><div class="avx-ymm-cell">2</div><div class="avx-ymm-cell">3</div>
+              <div class="avx-ymm-cell">4</div><div class="avx-ymm-cell">5</div><div class="avx-ymm-cell">6</div><div class="avx-ymm-cell">7</div>
+            </div>
+            <div class="avx-ymm-c" data-row="3" data-col="1">
+              <span class="avx-ymm-c-label">c31</span>
+              <div class="avx-ymm-cell">8</div><div class="avx-ymm-cell">9</div><div class="avx-ymm-cell">10</div><div class="avx-ymm-cell">11</div>
+              <div class="avx-ymm-cell">12</div><div class="avx-ymm-cell">13</div><div class="avx-ymm-cell">14</div><div class="avx-ymm-cell">15</div>
+            </div>
+          </div>
+
+          <div class="avx-balance">
+            <span class="avx-balance-item"><span class="avx-balance-dot c"></span>8 YMM · acumuladores C (todo el loop kc)</span>
+            <span class="avx-balance-item"><span class="avx-balance-dot b"></span>2 YMM · fila de B (se renuevan cada p)</span>
+            <span class="avx-balance-item"><span class="avx-balance-dot a"></span>4 YMM · broadcasts de A en paralelo</span>
+            <span class="avx-balance-item"><span class="avx-balance-dot x"></span>2 YMM · libres</span>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="avx-stage-info" id="avx4-stage-info">
+        <strong>Paso i=<span id="avx4-info-i">0</span>:</strong>
+        los <strong>4 broadcasts a0..a3</strong> ya están cargados en registros distintos antes del bloque FMA,
+        así que el procesador puede emitir <strong>2 FMAs por fila</strong> sin esperar a recargar A.
+        Tras las 4 filas: <strong>8 FMAs · 64 floats de C</strong> actualizados con <strong>2 loads de B + 4 broadcasts de A</strong>.
+        Comparado con el 6×16: menos acumuladores, pero más paralelismo de instrucción por independencia entre broadcasts.
+      </div>
+
+      <div class="avx-code-panel">
+        <div>
+          <div class="avx-code-title">microkernel · loop kc · paso p</div>
+          <pre class="avx-code-block"><span class="cm">// Carga fila p de B (16 floats) — 1 vez por p</span>
+<span class="kw-b">__m256 b0</span> = _mm256_loadu_ps(&amp;B[p*ldb + 0]);
+<span class="kw-b">__m256 b1</span> = _mm256_loadu_ps(&amp;B[p*ldb + 8]);
+
+<span class="cm">// 4 broadcasts SIMULTÁNEOS — sin dependencia entre sí</span>
+<span class="kw-a">a0</span> = _mm256_broadcast_ss(&amp;A[0*lda + p]);
+<span class="kw-a">a1</span> = _mm256_broadcast_ss(&amp;A[1*lda + p]);
+<span class="kw-a">a2</span> = _mm256_broadcast_ss(&amp;A[2*lda + p]);
+<span class="kw-a">a3</span> = _mm256_broadcast_ss(&amp;A[3*lda + p]);
+
+<span class="cm">// 8 FMAs independientes — el Zen 2 las pipelinea</span>
+<span class="kw-c">c00</span>=fmadd(<span class="kw-a">a0</span>,<span class="kw-b">b0</span>,<span class="kw-c">c00</span>); <span class="kw-c">c01</span>=fmadd(<span class="kw-a">a0</span>,<span class="kw-b">b1</span>,<span class="kw-c">c01</span>);
+<span class="kw-c">c10</span>=fmadd(<span class="kw-a">a1</span>,<span class="kw-b">b0</span>,<span class="kw-c">c10</span>); <span class="kw-c">c11</span>=fmadd(<span class="kw-a">a1</span>,<span class="kw-b">b1</span>,<span class="kw-c">c11</span>);
+<span class="kw-c">c20</span>=fmadd(<span class="kw-a">a2</span>,<span class="kw-b">b0</span>,<span class="kw-c">c20</span>); <span class="kw-c">c21</span>=fmadd(<span class="kw-a">a2</span>,<span class="kw-b">b1</span>,<span class="kw-c">c21</span>);
+<span class="kw-c">c30</span>=fmadd(<span class="kw-a">a3</span>,<span class="kw-b">b0</span>,<span class="kw-c">c30</span>); <span class="kw-c">c31</span>=fmadd(<span class="kw-a">a3</span>,<span class="kw-b">b1</span>,<span class="kw-c">c31</span>);</pre>
+        </div>
+        <div>
+          <div class="avx-code-title">balance · 1 paso p · vs 6×16</div>
+          <pre class="avx-code-block"><span class="cm">// 4×16 (Morton)</span>
+loads  de <span class="kw-b">B</span> : 2  · (16 floats)
+loads  de <span class="kw-a">A</span> : 4 broadcasts (en paralelo)
+loads  de <span class="kw-c">C</span> : 0  ← vive en registros
+FMAs           : 8 → <strong>64 flops/p</strong>
+
+<span class="cm">// Trade-off vs 6×16:</span>
+<span class="cm">// 6×16 → 12 FMAs/p, 1 broadcast reutilizado</span>
+<span class="cm">// 4×16 → 8  FMAs/p, 4 broadcasts paralelos</span>
+<span class="cm">// Menos C por iter, más independencia ILP</span>
+balance YMM     : 8 + 2 + 4 = <strong>14 / 16</strong></pre>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+</div>
+
+<nav class="nav">
+  <div class="nav-section">
+    <button class="nav-btn" id="prev-btn">← prev</button>
+    <button class="nav-btn" id="next-btn">next →</button>
+  </div>
+  <div class="nav-section"><span class="nav-title" id="nav-title">—</span></div>
+  <div class="nav-section"><span class="nav-counter"><span id="nav-current">1</span> / <span id="nav-total">1</span></span></div>
+</nav>
+
+<script>
+// Todo el código JS orquestado mediante un único DOMContentLoaded para evitar race conditions
+document.addEventListener('DOMContentLoaded', () => {
+
+  // --- 1. NAVEGACIÓN ---
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  let current = 0;
+
+  function show(idx){
+    slides.forEach((s,i)=> s.classList.toggle('active', i===idx));
+    document.getElementById('nav-current').textContent = idx+1;
+    document.getElementById('nav-total').textContent   = slides.length;
+    document.getElementById('nav-title').textContent   = slides[idx].dataset.title || '';
+    document.getElementById('prev-btn').disabled = (idx===0);
+    document.getElementById('next-btn').disabled = (idx===slides.length-1);
+    current = idx;
+  }
+  
+  document.getElementById('next-btn').addEventListener('click', () => { if(current < slides.length-1) show(current+1); });
+  document.getElementById('prev-btn').addEventListener('click', () => { if(current > 0) show(current-1); });
+  document.addEventListener('keydown', (e)=>{
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { if(current < slides.length-1) show(current+1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { if(current > 0) show(current-1); }
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(slides.length-1);
+  });
+  show(0);
+
+  // --- 2. RENDER GRÁFICOS ESTATICOS (SLIDE 2) ---
+  const svgMat = document.getElementById('matrix-svg');
+  if(svgMat) {
+    const N=15, cell=26, pad=32;
+    const W = pad + N*cell + 14, H = pad + N*cell + 14;
+    svgMat.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    const rC = ['--row-0','--row-1','--row-2','--row-3','--row-4','--row-5','--row-6','--row-7','--row-8','--row-9','--row-10','--row-11','--row-12','--row-13','--row-14'];
+    let content = '';
+    for(let i=0; i<N; i++){
+      for(let j=0; j<N; j++){
+        content += `<rect x="${pad + j*cell}" y="${pad + i*cell}" width="${cell}" height="${cell}" fill="var(${rC[i]})" fill-opacity="0.8" stroke="#f5f5f5" stroke-width="0.4"/>`;
+      }
+    }
+    content += `<rect x="${pad-1}" y="${pad-1}" width="${N*cell+2}" height="${N*cell+2}" fill="none" stroke="#1a1a1a" stroke-width="1.2"/>`;
+    svgMat.innerHTML = content;
+  }
+
+  const svgCache = document.getElementById('cache-svg');
+  if(svgCache) {
+    const N=15, TOTAL=N*N, FPL=16, NL=Math.ceil(TOTAL/FPL);
+    const cW=32, cH=20, pL=100, pT=32, gap=3;
+    const colors = ['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#34495e','#d35400','#16a085','#c0392b','#8e44ad','#2980b9','#27ae60','#f1c40f'];
+    let cContent = `<text x="${pL-8}" y="${pT-10}" font-family="JetBrains Mono" font-size="9" fill="#666">offset →</text>`;
+    for(let idx=0; idx<TOTAL; idx++){
+      cContent += `<rect x="${pL + (idx%FPL)*cW}" y="${pT + Math.floor(idx/FPL)*(cH+gap)}" width="${cW}" height="${cH}" fill="${colors[Math.floor(idx/N)]}" fill-opacity="0.8" stroke="#f5f5f5" stroke-width="0.3"/>`;
+    }
+    for(let line=0; line<NL; line++){
+      cContent += `<text x="${pL-8}" y="${pT + line*(cH+gap) + cH/2 + 2}" font-family="JetBrains Mono" font-size="9" fill="#1a1a1a">0x${(0x1000 + line*64).toString(16).padStart(4,'0')}</text>`;
+    }
+    cContent += `<line x1="${pL-4}" y1="${pT-2}" x2="${pL-4}" y2="${pT + NL*(cH+gap) - gap + 2}" stroke="#1a1a1a" stroke-width="1"/>`;
+    svgCache.innerHTML = cContent;
+  }
+
+  // --- 3. SIMULADOR DE LOOPS (SLIDE 3) ---
+  const M_L=4, K_L=4, N_L=4, L_SIZE=8, C_SLOTS=2;
+  const ORDER_INFO = {
+    'jki': { title: 'jki — inner: i, fijos: j, k', quality: 'peor', code: 'for j: for k: for i:\n    C[i][j] += A[i][k] * B[k][j]' },
+    'kji': { title: 'kji — inner: i, fijos: k, j', quality: 'peor', code: 'for k: for j: for i:\n    C[i][j] += A[i][k] * B[k][j]' },
+    'jik': { title: 'jik — inner: k, fijos: j, i', quality: 'medio', code: 'for j: for i: for k:\n    C[i][j] += A[i][k] * B[k][j]' },
+    'ijk': { title: 'ijk — inner: k, fijos: i, j', quality: 'medio', code: 'for i: for j: for k:\n    C[i][j] += A[i][k] * B[k][j]' },
+    'kij': { title: 'kij — inner: j, fijos: k, i', quality: 'mejor', code: 'for k: for i: for j:\n    C[i][j] += A[i][k] * B[k][j]' },
+    'ikj': { title: 'ikj — inner: j, fijos: i, k', quality: 'mejor', code: 'for i: for k: for j:\n    C[i][j] += A[i][k] * B[k][j]' }
+  };
+  let curOrd = 'jki', accs = [], sIdx = 0, cList = [], hits = 0, misses = 0, pInt = null;
+
+  function genAccs(ord) {
+    const lim={i:M_L,j:N_L,k:K_L}, [o,m,inr]=ord.split(''), out=[];
+    for(let a=0;a<lim[o];a++) for(let b=0;b<lim[m];b++) for(let c=0;c<lim[inr];c++){
+      let id={}; id[o]=a; id[m]=b; id[inr]=c;
+      out.push({ matrix: 'A', row: id.i, col: id.k, offset: id.i*K_L + id.k });
+      out.push({ matrix: 'B', row: id.k, col: id.j, offset: id.k*N_L + id.j });
+    }
+    return out;
+  }
+  
+  function rMat(cId, r, c, lbl) {
+    const cnt = document.getElementById(cId); if(!cnt) return;
+    cnt.style.gridTemplateColumns = `repeat(${c}, 80px)`;
+    cnt.innerHTML = Array.from({length: r*c}, (_,i) => `<div class="sim-matrix-cell" id="cell-${lbl}-${Math.floor(i/c)}-${i%c}"><div class="cell-label">${lbl.toLowerCase()}${Math.floor(i/c)}${i%c}</div><div class="cell-line">L${Math.floor(i/L_SIZE)}</div></div>`).join('');
+  }
+
+  function doSim(ac) {
+    const ln = Math.floor(ac.offset/L_SIZE), inC = cList.some(x => x.matrix===ac.matrix && x.line===ln);
+    if(inC){ hits++; return { result: 'hit', line: ln, evicted: null }; }
+    misses++; let ev = null;
+    if(cList.length >= C_SLOTS) ev = cList.shift();
+    cList.push({ matrix: ac.matrix, line: ln, loadedAt: sIdx });
+    return { result: 'miss', line: ln, evicted: ev };
+  }
+
+  function rCache(fSlot = -1) {
+    for (let s=0; s<C_SLOTS; s++) {
+      const el = document.getElementById(`sim-slot-${s}`); if(!el) continue;
+      
+      // FIX ANIMACIÓN: Forzar reflow para reiniciar la animación CSS si repite slot
+      el.classList.remove('filled-A', 'filled-B', 'flash');
+      void el.offsetWidth; // MAGIA: Fuerza repintado al navegador
+      
+      if(s < cList.length) {
+        const en = cList[s];
+        el.classList.add(`filled-${en.matrix}`);
+        if(s === fSlot) el.classList.add('flash');
+        
+        const start = en.line*L_SIZE, max = en.matrix==='A'?M_L*K_L:K_L*N_L, cols = en.matrix==='A'?K_L:N_L, cells=[];
+        for(let o=start; o<Math.min(start+L_SIZE, max); o++) cells.push(`<div class="sim-cache-cell">${en.matrix.toLowerCase()}${Math.floor(o/cols)}${o%cols}</div>`);
+        
+        el.innerHTML = `<div class="sim-cache-slot-header"><span>${en.matrix} · línea ${en.line}</span><span class="sim-cache-slot-tag">${cells.length} floats</span></div><div class="sim-cache-slot-contents">${cells.join('')}</div>`;
+      } else el.innerHTML = `<div class="sim-cache-slot-empty">slot ${s} · vacío</div>`;
+    }
+  }
+
+  function stepSim() {
+    if(sIdx >= accs.length) { clearInterval(pInt); pInt=null; document.getElementById('sim-play').disabled=false; document.getElementById('sim-pause').disabled=true; return; }
+    const ac = accs[sIdx], res = doSim(ac); sIdx++;
+    document.querySelectorAll('.sim-matrix-cell').forEach(c=>c.classList.remove('hit','miss'));
+    const cel = document.getElementById(`cell-${ac.matrix}-${ac.row}-${ac.col}`);
+    if(cel) cel.classList.add(res.result==='hit'?'hit':'miss');
+    
+    rCache(res.result==='miss' ? cList.length-1 : cList.findIndex(c=>c.matrix===ac.matrix && c.line===res.line));
+    
+    document.getElementById('sim-step-count').textContent = `${sIdx} / ${accs.length}`;
+    document.getElementById('sim-hits').textContent = hits;
+    document.getElementById('sim-misses').textContent = misses;
+    document.getElementById('sim-rate').textContent = (hits+misses)>0 ? (hits/(hits+misses)*100).toFixed(1)+'%' : '—';
+    
+    const stEl = document.getElementById('sim-status');
+    stEl.className = 'sim-status ' + res.result;
+    stEl.innerHTML = `<span class="pulse">${res.result.toUpperCase()}</span> · acceso a <strong>${ac.matrix.toLowerCase()}${ac.row}${ac.col}</strong> · ` + (res.result==='hit' ? `ya en caché` : `cargada línea <strong>${ac.matrix}-L${res.line}</strong>${res.evicted?` (desalojado ${res.evicted.matrix}-L${res.evicted.line})`:''}`);
+  }
+
+  function resSim(){
+    if(pInt) clearInterval(pInt); pInt=null;
+    document.getElementById('sim-play').disabled=false; document.getElementById('sim-pause').disabled=true;
+    sIdx=hits=misses=0; cList=[]; accs=genAccs(curOrd);
+    document.querySelectorAll('.sim-matrix-cell').forEach(c=>c.classList.remove('hit','miss'));
+    rCache(); 
+    document.getElementById('sim-step-count').textContent=`0 / ${accs.length}`;
+    document.getElementById('sim-status').className='sim-status';
+    document.getElementById('sim-status').textContent=`orden ${curOrd} · ${accs.length} accesos · pulsa play o step`;
+  }
+
+  document.querySelectorAll('.sim-order-btn').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('.sim-order-btn').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active'); curOrd = b.dataset.order;
+    const info = ORDER_INFO[curOrd];
+    document.getElementById('sim-snippet-title').textContent = info.title;
+    document.getElementById('sim-snippet-quality').className = 'sim-snippet-quality ' + info.quality;
+    document.getElementById('sim-snippet-quality').textContent = info.quality;
+    document.getElementById('sim-snippet-code').querySelector('code').textContent = info.code;
+    resSim();
+    if(typeof hljs !== 'undefined') hljs.highlightElement(document.getElementById('sim-snippet-code').querySelector('code'));
+  }));
+
+  document.getElementById('sim-play').addEventListener('click', () => {
+    document.getElementById('sim-play').disabled=true; document.getElementById('sim-pause').disabled=false;
+    pInt = setInterval(stepSim, 700);
+  });
+  document.getElementById('sim-pause').addEventListener('click', () => { clearInterval(pInt); pInt=null; document.getElementById('sim-play').disabled=false; document.getElementById('sim-pause').disabled=true; });
+  document.getElementById('sim-step').addEventListener('click', () => { clearInterval(pInt); pInt=null; document.getElementById('sim-play').disabled=false; document.getElementById('sim-pause').disabled=true; stepSim(); });
+  document.getElementById('sim-reset').addEventListener('click', resSim);
+  document.getElementById('sim-end').addEventListener('click', () => { while(sIdx<accs.length) stepSim(); });
+
+  rMat('sim-matrix-A', M_L, K_L, 'A'); rMat('sim-matrix-B', K_L, N_L, 'B');
+  resSim();
+
+
+  // --- 4. SIMULADOR TILING CACHE BLOCKING (SLIDE 4) ---
+  const gA=document.getElementById('grid-a'), gB=document.getElementById('grid-b'), gC=document.getElementById('grid-c');
+  if(gA && gB && gC) {
+    const M_T=12, K_T=12, N_T=8, DIVS=[2,3,4,6,12], CLIM=140;
+    let Mc=6, Kc=6, mSeq=[], cStep=0, isP=false, pTInt=null;
+
+    [gA,gB,gC].forEach(g => {
+      const r=g===gA?M_T:g===gB?K_T:M_T, c=g===gA?K_T:N_T;
+      g.style.gridTemplateRows=`repeat(${r}, 16px)`; g.style.gridTemplateColumns=`repeat(${c}, 16px)`;
+      g.innerHTML = Array.from({length: r*c}, (_,i) => `<div class="tile-cell" data-row="${Math.floor(i/c)}" data-col="${i%c}"></div>`).join('');
+    });
+
+    function updTile() {
+      Mc = DIVS[parseInt(document.getElementById('slide-mc').value)];
+      Kc = DIVS[parseInt(document.getElementById('slide-kc').value)];
+      document.getElementById('lbl-mc').textContent = Mc; document.getElementById('lbl-kc').textContent = Kc;
+
+      const fA=Mc*Kc, fB=Kc*N_T, fC=Mc*N_T, tot=fA+fB+fC;
+      document.getElementById('breakdown-a').textContent=fA; document.getElementById('breakdown-b').textContent=fB; document.getElementById('breakdown-c').textContent=fC;
+      document.getElementById('cache-total').textContent=tot;
+      
+      const bFill = document.getElementById('cache-bar-fill'), bdg = document.getElementById('cache-badge');
+      bFill.style.width = Math.min((tot/CLIM)*100, 100)+'%';
+      if(tot <= CLIM) { bFill.style.backgroundColor='#22c55e'; bdg.textContent="ESTADO ÓPTIMO"; bdg.className="cache-badge badge-safe"; }
+      else { bFill.style.backgroundColor='#ef4444'; bdg.textContent="SPILL MASIVO A L3"; bdg.className="cache-badge badge-overflow"; }
+
+      mSeq = []; for(let i=0; i<M_T; i+=Mc) for(let k=0; k<K_T; k+=Kc) mSeq.push({ii:i, kk:k});
+      if(cStep >= mSeq.length) cStep = mSeq.length-1;
+
+      document.getElementById('macro-sequence-list').innerHTML = mSeq.map((s,i) => `<span class="seq-item ${i===cStep?'active':''}">${s.ii},${s.kk}</span>`).join('');
+
+      [[gA,Mc,Kc],[gB,Kc,N_T],[gC,Mc,N_T]].forEach(([g, rs, cs]) => {
+        Array.from(g.children).forEach(cl => {
+          const r=parseInt(cl.dataset.row), c=parseInt(cl.dataset.col);
+          cl.classList.remove('b-top', 'b-left');
+          if(r>0 && r%rs===0) cl.classList.add('b-top'); if(c>0 && c%cs===0) cl.classList.add('b-left');
+        });
+      });
+      syncVis();
+    }
+
+    function syncVis() {
+      if(!mSeq.length) return;
+      const {ii, kk} = mSeq[cStep];
+      document.getElementById('idx-ii').textContent=ii; document.getElementById('idx-kk').textContent=kk;
+      Array.from(document.getElementById('macro-sequence-list').children).forEach((el,i)=>el.classList.toggle('active',i===cStep));
+      
+      Array.from(gA.children).forEach(cl=>{ const r=parseInt(cl.dataset.row), c=parseInt(cl.dataset.col); cl.classList.toggle('active-a', r>=ii&&r<ii+Mc && c>=kk&&c<kk+Kc); });
+      Array.from(gB.children).forEach(cl=>{ const r=parseInt(cl.dataset.row); cl.classList.toggle('active-b', r>=kk&&r<kk+Kc); });
+      Array.from(gC.children).forEach(cl=>{ const r=parseInt(cl.dataset.row); cl.classList.toggle('active-c', r>=ii&&r<ii+Mc); });
+    }
+
+    document.getElementById('slide-mc').addEventListener('input', updTile);
+    document.getElementById('slide-kc').addEventListener('input', updTile);
+    document.getElementById('tile-btn-next').addEventListener('click', ()=>{ if(isP) togP(); cStep=(cStep+1)%mSeq.length; syncVis(); });
+    document.getElementById('tile-btn-prev').addEventListener('click', ()=>{ if(isP) togP(); cStep=(cStep-1+mSeq.length)%mSeq.length; syncVis(); });
+    document.getElementById('tile-btn-reset').addEventListener('click', ()=>{ if(isP) togP(); cStep=0; syncVis(); });
+    
+    function togP() {
+      const btn=document.getElementById('tile-btn-play');
+      if(isP) { clearInterval(pTInt); btn.textContent="▶ Play"; isP=false; }
+      else { btn.textContent="⏸ Pause"; isP=true; pTInt=setInterval(()=>{ cStep=(cStep+1)%mSeq.length; syncVis(); if(cStep===0) togP(); }, 1000); }
+    }
+    document.getElementById('tile-btn-play').addEventListener('click', togP);
+    updTile();
+  }
+
+  // --- 4b-pre. SLIDE MICRO-TILE MR×NR (Option B) ---
+  (function() {
+    const MR=6, NR=16, MC=12, KC=12, NC=16;
+    const ROW_COLORS = [
+      'rgba(231,76,60,0.45)', 'rgba(52,152,219,0.45)', 'rgba(46,204,113,0.45)',
+      'rgba(243,156,18,0.45)', 'rgba(155,89,182,0.45)', 'rgba(26,188,156,0.45)'
+    ];
+    const ROW_COLORS_HL = ['var(--row-0)','var(--row-1)','var(--row-2)','var(--row-3)','var(--row-4)','var(--row-5)'];
+
+    let activeRow = 0;
+
+    // Mini grids
+    function buildMiniA() {
+      const g = document.getElementById('mktile-mini-a'); if(!g) return;
+      let h = '';
+      for(let r=0;r<MC;r++) for(let c=0;c<KC;c++) {
+        const isMR = r < MR;
+        h += `<div class="mktile-mini-cell${isMR?' highlight-mr':''}" data-row="${r}" data-col="${c}"></div>`;
+      }
+      g.innerHTML = h;
+    }
+    function buildMiniB() {
+      const g = document.getElementById('mktile-mini-b'); if(!g) return;
+      let h = '';
+      for(let r=0;r<KC;r++) for(let c=0;c<NC;c++) {
+        const isNR = c < NR;
+        h += `<div class="mktile-mini-cell${isNR?' highlight-nr':''}" data-row="${r}" data-col="${c}"></div>`;
+      }
+      g.innerHTML = h;
+    }
+    function buildMiniC(activeR) {
+      const g = document.getElementById('mktile-mini-c'); if(!g) return;
+      let h = '';
+      for(let r=0;r<MC;r++) for(let c=0;c<NC;c++) {
+        const inTile = r < MR && c < NR;
+        const isActive = inTile && r === activeR;
+        const cls = isActive ? ' highlight-mr' : inTile ? ' highlight-c' : ' dim-cell';
+        h += `<div class="mktile-mini-cell${cls}"></div>`;
+      }
+      g.innerHTML = h;
+    }
+
+    // Big tile 6×16
+    function buildBigGrid() {
+      const g = document.getElementById('mktile-big-grid'); if(!g) return;
+      let h = '';
+      for(let r=0;r<MR;r++) {
+        for(let c=0;c<8;c++) {
+          h += `<div class="mktile-big-cell" data-row="${r}" data-col="${c}">c${r}${c}</div>`;
+        }
+        h += `<div class="mktile-big-sep"></div>`;
+        for(let c=8;c<NR;c++) {
+          h += `<div class="mktile-big-cell" data-row="${r}" data-col="${c}">c${r}${c}</div>`;
+        }
+      }
+      g.innerHTML = h;
+      // click on cell → select row
+      g.querySelectorAll('.mktile-big-cell').forEach(cell => {
+        cell.addEventListener('click', () => setMKRow(parseInt(cell.dataset.row)));
+      });
+    }
+
+    function setMKRow(r) {
+      activeRow = r;
+      // big grid
+      const bigGrid = document.getElementById('mktile-big-grid');
+      if(bigGrid) {
+        bigGrid.querySelectorAll('.mktile-big-cell').forEach(cell => {
+          const cr = parseInt(cell.dataset.row);
+          cell.classList.remove('mktile-row-hl','mktile-dim');
+          cell.classList.add(cr === r ? 'mktile-row-hl' : 'mktile-dim');
+        });
+      }
+      // row buttons
+      document.querySelectorAll('#mktile-row-selector .mktile-row-btn').forEach(btn => {
+        btn.classList.toggle('active', parseInt(btn.dataset.row) === r);
+      });
+      // mini C
+      buildMiniC(r);
+      // mini A highlight active MR rows to MR (always same), but highlight active row specifically
+      const miniA = document.getElementById('mktile-mini-a');
+      if(miniA) miniA.querySelectorAll('.mktile-mini-cell').forEach(cell => {
+        const cr = parseInt(cell.dataset.row);
+        cell.classList.remove('highlight-mr');
+        if(cr < MR && cr === r) cell.classList.add('highlight-mr');
+        cell.style.background = cr === r ? ROW_COLORS_HL[r] : cr < MR ? ROW_COLORS[cr] : '';
+      });
+    }
+
+    document.querySelectorAll('#mktile-row-selector .mktile-row-btn').forEach(btn => {
+      btn.addEventListener('click', () => setMKRow(parseInt(btn.dataset.row)));
+    });
+
+    buildMiniA(); buildMiniB(); buildBigGrid();
+    setMKRow(0);
+  })();
+
+  // --- 4b. SIMULADOR MICROKERNEL AVX2 ---
+  const avxGrid = document.getElementById('avx-acc-grid');
+  if (avxGrid) {
+    const rowBtns = document.querySelectorAll('.avx-row-btn');
+    const ymmCs   = document.querySelectorAll('.avx-ymm-c');
+    const axiSpans = document.querySelectorAll('.ax-i');
+    const scalarA = document.getElementById('avx-scalar-a');
+    const fmaCount = document.getElementById('avx-fma-count');
+    const infoI = document.getElementById('avx-info-i');
+    const playBtn = document.getElementById('avx-play');
+    const stepBtn = document.getElementById('avx-step');
+    const resetBtn = document.getElementById('avx-reset');
+
+    let curRow = 0;
+    let avxInterval = null;
+
+    function setAvxRow(i) {
+      curRow = i;
+      // Botones
+      rowBtns.forEach(b => b.classList.toggle('active', parseInt(b.dataset.row) === i));
+      // Texto de A: actualizar todos los spans .ax-i
+      axiSpans.forEach(s => s.textContent = i);
+      scalarA.textContent = `A[${i},p]`;
+      infoI.textContent = i;
+      // Recalcular FMA count: cada fila acumula 2 FMAs ⇒ (i+1)*2 FMAs hasta esta fila
+      fmaCount.textContent = (i + 1) * 2;
+      // Resaltar fila activa en el acumulador, dim para las demás
+      ymmCs.forEach(yc => {
+        const r = parseInt(yc.dataset.row);
+        yc.classList.remove('active', 'dim');
+        if (r === i) {
+          // Forzar reflow para reiniciar la animación
+          void yc.offsetWidth;
+          yc.classList.add('active');
+        } else {
+          yc.classList.add('dim');
+        }
+      });
+    }
+
+    rowBtns.forEach(b => b.addEventListener('click', () => {
+      if (avxInterval) { clearInterval(avxInterval); avxInterval = null; playBtn.disabled = false; }
+      setAvxRow(parseInt(b.dataset.row));
+    }));
+
+    stepBtn.addEventListener('click', () => {
+      if (avxInterval) { clearInterval(avxInterval); avxInterval = null; playBtn.disabled = false; }
+      setAvxRow((curRow + 1) % 6);
+    });
+
+    playBtn.addEventListener('click', () => {
+      if (avxInterval) return;
+      playBtn.disabled = true;
+      avxInterval = setInterval(() => {
+        const next = (curRow + 1) % 6;
+        setAvxRow(next);
+        if (next === 5) {
+          // Detener el interval inmediatamente y reactivar play tras una pausa visual
+          clearInterval(avxInterval);
+          avxInterval = null;
+          setTimeout(() => { playBtn.disabled = false; }, 900);
+        }
+      }, 900);
+    });
+
+    resetBtn.addEventListener('click', () => {
+      if (avxInterval) { clearInterval(avxInterval); avxInterval = null; playBtn.disabled = false; }
+      setAvxRow(0);
+    });
+
+    setAvxRow(0);
+  }
+
+  // --- 4c. SLIDE 06: ENCODING MORTON ------------------------------------
+  (function() {
+    const iSlider = document.getElementById('me-i');
+    const jSlider = document.getElementById('me-j');
+    if (!iSlider || !jSlider) return;
+
+    const iDec = document.getElementById('me-i-dec');
+    const jDec = document.getElementById('me-j-dec');
+    const iBits = document.getElementById('me-i-bits');
+    const jBits = document.getElementById('me-j-bits');
+    const codeDec = document.getElementById('me-code-dec');
+    const codeBits = document.getElementById('me-code-bits');
+    const svg = document.getElementById('me-interleave-svg');
+    const stepsCnt = document.getElementById('me-spread-steps');
+    const targetVal = document.getElementById('me-target-val');
+    const playBtn = document.getElementById('me-play');
+    const stepBtn = document.getElementById('me-step');
+    const resetBtn = document.getElementById('me-reset');
+
+    const NB = 4; // bits para i y j (0..15)
+    const NCODE = 8; // bits del codigo
+    let curStep = -1;
+    let playInt = null;
+
+    function bitArr(val, n) {
+      const out = [];
+      for (let k = n - 1; k >= 0; k--) out.push((val >> k) & 1);
+      return out;
+    }
+
+    function makeBitDiv(b, cls) {
+      const d = document.createElement('div');
+      d.className = 'me-bit ' + (b ? cls : 'zero-bit');
+      d.textContent = b;
+      return d;
+    }
+
+    function renderBits(container, val, cls) {
+      container.innerHTML = '';
+      bitArr(val, NB).forEach(b => container.appendChild(makeBitDiv(b, cls)));
+    }
+
+    function mortonEncode(i, j) {
+      let code = 0;
+      for (let k = 0; k < NB; k++) {
+        code |= ((j >> k) & 1) << (2 * k);
+        code |= ((i >> k) & 1) << (2 * k + 1);
+      }
+      return code;
+    }
+
+    function renderCode(code) {
+      codeBits.innerHTML = '';
+      // 8 bits: MSB to LSB. Positions: 7 6 5 4 3 2 1 0
+      // Position 2k = bit de j_k, position 2k+1 = bit de i_k
+      for (let pos = NCODE - 1; pos >= 0; pos--) {
+        const bit = (code >> pos) & 1;
+        const isI = (pos % 2) === 1;
+        const cls = isI ? 'i-bit' : 'j-bit';
+        codeBits.appendChild(makeBitDiv(bit, cls));
+      }
+    }
+
+    function renderInterleaveSVG(i, j) {
+      const code = mortonEncode(i, j);
+      // SVG layout: row i at y=40, row j at y=110, row code at y=210
+      // i bits: 4 boxes from x=80 to x=200 (each box 28w, spacing 6)
+      // j bits: 4 boxes same x range, y=110
+      // code: 8 boxes from x=80 to x=440, y=210
+      const W = 520;
+      const bw = 28, bh = 28;
+      const gap = 6;
+      const iBitArr = bitArr(i, NB);
+      const jBitArr = bitArr(j, NB);
+      const codeArr = bitArr(code, NCODE);
+
+      // X positions for i and j (4 bits, MSB left)
+      const ijStart = 90;
+      const ijSpace = (bw + gap);
+      // i bits xs (k=3..0 left to right)
+      const iX = (k) => ijStart + (NB - 1 - k) * ijSpace;
+      // For code: NCODE bits, position p (0..7), drawn left to right with MSB first
+      const codeStart = 90;
+      const codeSpace = (bw + gap);
+      const codeX = (p) => codeStart + (NCODE - 1 - p) * codeSpace; // p=7 at left
+
+      let svgContent = '';
+
+      // Labels
+      svgContent += `<text x="60" y="60" font-family="JetBrains Mono" font-size="12" fill="#1a1a1a" text-anchor="end">i =</text>`;
+      svgContent += `<text x="60" y="125" font-family="JetBrains Mono" font-size="12" fill="#1a1a1a" text-anchor="end">j =</text>`;
+      svgContent += `<text x="60" y="240" font-family="JetBrains Mono" font-size="12" fill="#1a1a1a" text-anchor="end">code =</text>`;
+
+      // i row at y=40
+      for (let k = NB - 1; k >= 0; k--) {
+        const x = iX(k);
+        const b = iBitArr[NB - 1 - k];
+        const fill = b ? '#e74c3c' : '#fafafa';
+        const stroke = b ? '#e74c3c' : '#e8e8e8';
+        const txtCol = b ? 'white' : '#bbb';
+        svgContent += `<rect x="${x}" y="40" width="${bw}" height="${bh}" rx="3" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`;
+        svgContent += `<text x="${x + bw/2}" y="60" font-family="JetBrains Mono" font-size="13" font-weight="700" fill="${txtCol}" text-anchor="middle">${b}</text>`;
+        svgContent += `<text x="${x + bw/2}" y="83" font-family="JetBrains Mono" font-size="8" fill="#999" text-anchor="middle">i${k}</text>`;
+      }
+
+      // j row at y=110
+      for (let k = NB - 1; k >= 0; k--) {
+        const x = iX(k);
+        const b = jBitArr[NB - 1 - k];
+        const fill = b ? '#3498db' : '#fafafa';
+        const stroke = b ? '#3498db' : '#e8e8e8';
+        const txtCol = b ? 'white' : '#bbb';
+        svgContent += `<rect x="${x}" y="110" width="${bw}" height="${bh}" rx="3" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`;
+        svgContent += `<text x="${x + bw/2}" y="130" font-family="JetBrains Mono" font-size="13" font-weight="700" fill="${txtCol}" text-anchor="middle">${b}</text>`;
+        svgContent += `<text x="${x + bw/2}" y="153" font-family="JetBrains Mono" font-size="8" fill="#999" text-anchor="middle">j${k}</text>`;
+      }
+
+      // code row at y=220
+      for (let p = NCODE - 1; p >= 0; p--) {
+        const x = codeX(p);
+        const b = codeArr[NCODE - 1 - p];
+        const isI = (p % 2) === 1;
+        const fill = b ? (isI ? '#e74c3c' : '#3498db') : '#fafafa';
+        const stroke = b ? (isI ? '#e74c3c' : '#3498db') : '#e8e8e8';
+        const txtCol = b ? 'white' : '#bbb';
+        svgContent += `<rect x="${x}" y="220" width="${bw}" height="${bh}" rx="3" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`;
+        svgContent += `<text x="${x + bw/2}" y="240" font-family="JetBrains Mono" font-size="13" font-weight="700" fill="${txtCol}" text-anchor="middle">${b}</text>`;
+        svgContent += `<text x="${x + bw/2}" y="263" font-family="JetBrains Mono" font-size="8" fill="#999" text-anchor="middle">${p}</text>`;
+      }
+
+      // Arrows from i_k -> code position 2k+1, j_k -> 2k
+      for (let k = 0; k < NB; k++) {
+        const srcX = iX(k) + bw / 2;
+        const dstX_i = codeX(2 * k + 1) + bw / 2;
+        const dstX_j = codeX(2 * k) + bw / 2;
+        // i arrow
+        svgContent += `<path d="M ${srcX} 72 Q ${(srcX + dstX_i)/2} 145, ${dstX_i} 218" stroke="#e74c3c" stroke-width="1.2" fill="none" stroke-dasharray="2,2" opacity="0.7"/>`;
+        // j arrow
+        svgContent += `<path d="M ${srcX} 142 Q ${(srcX + dstX_j)/2} 180, ${dstX_j} 218" stroke="#3498db" stroke-width="1.2" fill="none" stroke-dasharray="2,2" opacity="0.7"/>`;
+      }
+
+      svg.innerHTML = svgContent;
+    }
+
+    // 5-step routine simulation
+    // Apply on 8-bit value (we extend the 4-bit j to 8 bits for display)
+    function buildSteps(val) {
+      // 5 steps. Inputs are 32-bit, but for visualization use 16-bit slots.
+      // We'll show the current y as a 16-bit binary string.
+      const steps = [
+        { title: 'inicio · y = val', mask: null, shift: 0, noop: true },
+        { title: 'paso 1 · y |= y << 16; mask 0x0000FFFF0000FFFF', mask: 0x0000FFFF, shift: 16, noop: true },
+        { title: 'paso 2 · y |= y << 8;  mask 0x00FF00FF00FF00FF', mask: 0x00FF00FFn, shift: 8, noop: true },
+        { title: 'paso 3 · y |= y << 4;  mask 0x0F0F0F0F0F0F0F0F', mask: 0x0F0F0F0F, shift: 4 },
+        { title: 'paso 4 · y |= y << 2;  mask 0x3333333333333333', mask: 0x33333333, shift: 2 },
+        { title: 'paso 5 · y |= y << 1;  mask 0x5555555555555555', mask: 0x55555555, shift: 1 }
+      ];
+      // Run 5 steps for real on 4-bit val
+      let y = BigInt(val);
+      const states = [y];
+      y = (y | (y << 16n)) & 0x0000FFFF0000FFFFn; states.push(y);
+      y = (y | (y << 8n))  & 0x00FF00FF00FF00FFn; states.push(y);
+      y = (y | (y << 4n))  & 0x0F0F0F0F0F0F0F0Fn; states.push(y);
+      y = (y | (y << 2n))  & 0x3333333333333333n; states.push(y);
+      y = (y | (y << 1n))  & 0x5555555555555555n; states.push(y);
+      // For 4-bit input, only steps 4 and 5 actually change anything.
+      const maskHex = [null, '0x0000FFFF0000FFFF', '0x00FF00FF00FF00FF', '0x0F0F0F0F0F0F0F0F', '0x3333333333333333', '0x5555555555555555'];
+      const titles = [
+        'inicio · y = val',
+        'paso 1 · OR shift 16, mask 16-bit groups',
+        'paso 2 · OR shift 8, mask 8-bit groups',
+        'paso 3 · OR shift 4, mask 4-bit groups',
+        'paso 4 · OR shift 2, mask 2-bit groups',
+        'paso 5 · OR shift 1, bits a posiciones pares'
+      ];
+      return states.map((y, i) => ({
+        title: titles[i],
+        mask: maskHex[i],
+        bits: y.toString(2).padStart(16, '0'),
+        // Identify if this step actually changes anything for the current val
+        noop: i > 0 && y === states[i - 1]
+      }));
+    }
+
+    function formatBits(s) {
+      // Group every 4 bits, color '1' as accent
+      let out = '';
+      for (let k = 0; k < s.length; k++) {
+        if (k > 0 && k % 4 === 0) out += ' ';
+        out += s[k] === '1' ? `<span class="b-on">1</span>` : '0';
+      }
+      return out;
+    }
+
+    function renderSteps(val, highlightIdx) {
+      const states = buildSteps(val);
+      stepsCnt.innerHTML = '';
+      states.forEach((s, idx) => {
+        const div = document.createElement('div');
+        let cls = 'me-routine-step';
+        if (idx === highlightIdx) cls += ' active';
+        else if (idx < highlightIdx) cls += ' done';
+        if (s.noop) cls += ' no-op';
+        div.className = cls;
+        div.innerHTML = `
+          <div class="me-routine-step-title">${s.title}${s.noop && idx > 0 ? ' · (no cambia para val pequeño)' : ''}</div>
+          ${s.mask ? `<div class="me-routine-step-mask">mask = ${s.mask}</div>` : ''}
+          <div class="me-routine-step-bits">${formatBits(s.bits)}</div>
+        `;
+        stepsCnt.appendChild(div);
+      });
+    }
+
+    function refresh() {
+      const i = parseInt(iSlider.value);
+      const j = parseInt(jSlider.value);
+      const code = mortonEncode(i, j);
+      iDec.textContent = i;
+      jDec.textContent = j;
+      codeDec.textContent = code;
+      renderBits(iBits, i, 'i-bit');
+      renderBits(jBits, j, 'j-bit');
+      renderCode(code);
+      renderInterleaveSVG(i, j);
+      targetVal.textContent = j;
+      curStep = -1;
+      renderSteps(j, 0);
+    }
+
+    iSlider.addEventListener('input', refresh);
+    jSlider.addEventListener('input', refresh);
+    stepBtn.addEventListener('click', () => {
+      if (playInt) { clearInterval(playInt); playInt = null; playBtn.disabled = false; }
+      curStep = (curStep + 1) % 6;
+      renderSteps(parseInt(jSlider.value), curStep);
+    });
+    playBtn.addEventListener('click', () => {
+      if (playInt) return;
+      playBtn.disabled = true;
+      curStep = -1;
+      playInt = setInterval(() => {
+        curStep++;
+        renderSteps(parseInt(jSlider.value), curStep);
+        if (curStep >= 5) {
+          clearInterval(playInt); playInt = null;
+          setTimeout(() => { playBtn.disabled = false; }, 600);
+        }
+      }, 800);
+    });
+    resetBtn.addEventListener('click', () => {
+      if (playInt) { clearInterval(playInt); playInt = null; playBtn.disabled = false; }
+      curStep = -1;
+      renderSteps(parseInt(jSlider.value), 0);
+    });
+
+    refresh();
+  })();
+
+  // --- 4d. SLIDE 07: LAYOUT Z-ORDER --------------------------------------
+  (function() {
+    const svg = document.getElementById('zorder-grid-svg');
+    if (!svg) return;
+    const memBar = document.getElementById('zorder-memory-bar');
+    const sizeSel = document.getElementById('zorder-size-selector');
+    const playBtn = document.getElementById('zorder-play');
+    const pauseBtn = document.getElementById('zorder-pause');
+    const stepBtn = document.getElementById('zorder-step');
+    const endBtn = document.getElementById('zorder-end');
+    const resetBtn = document.getElementById('zorder-reset');
+    const counter = document.getElementById('zorder-counter');
+    const dimLabel = document.getElementById('zorder-dim-label');
+    const info = document.getElementById('zorder-info');
+
+    let N = 8;
+    let curStep = 0;
+    let mortonSeq = []; // array of {i, j, code, q} ordered by code
+    let playInt = null;
+
+    function mortonEnc(i, j) {
+      let code = 0;
+      for (let k = 0; k < 8; k++) {
+        code |= ((j >> k) & 1) << (2 * k);
+        code |= ((i >> k) & 1) << (2 * k + 1);
+      }
+      return code;
+    }
+
+    function topQuadrant(i, j, N) {
+      // Quadrant of the TOP-LEVEL split (the 4 outer quadrants)
+      const h = N / 2;
+      return (i < h ? 0 : 2) + (j < h ? 0 : 1);
+    }
+
+    function buildSeq(N) {
+      const arr = [];
+      for (let i = 0; i < N; i++)
+        for (let j = 0; j < N; j++)
+          arr.push({ i, j, code: mortonEnc(i, j), q: topQuadrant(i, j, N) });
+      arr.sort((a, b) => a.code - b.code);
+      return arr;
+    }
+
+    function renderGrid() {
+      const W = 460;
+      const pad = 20;
+      const cell = (W - 2 * pad) / N;
+      const labels = N <= 8;
+      const fontSize = N <= 4 ? 14 : N <= 8 ? 10 : 6;
+      const qColors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12'];
+
+      let content = '';
+      // Cells
+      for (let i = 0; i < N; i++) {
+        for (let j = 0; j < N; j++) {
+          const x = pad + j * cell;
+          const y = pad + i * cell;
+          const code = mortonEnc(i, j);
+          // Find sequence position
+          const seqIdx = mortonSeq.findIndex(s => s.i === i && s.j === j);
+          const visited = seqIdx < curStep;
+          const isCurrent = seqIdx === curStep - 1;
+          const q = topQuadrant(i, j, N);
+          const baseFill = visited ? qColors[q] : '#f5f5f5';
+          const opacity = visited ? 0.85 : 1;
+          content += `<rect x="${x}" y="${y}" width="${cell}" height="${cell}" fill="${baseFill}" fill-opacity="${opacity}" stroke="#ccc" stroke-width="0.5"/>`;
+          if (labels) {
+            content += `<text x="${x + cell/2}" y="${y + cell/2 + fontSize/3}" font-family="JetBrains Mono" font-size="${fontSize}" fill="${visited ? 'white' : '#666'}" text-anchor="middle" font-weight="${isCurrent ? 700 : 500}">${code}</text>`;
+          }
+          if (isCurrent) {
+            content += `<rect x="${x + 1}" y="${y + 1}" width="${cell - 2}" height="${cell - 2}" fill="none" stroke="#1a1a1a" stroke-width="2.5"/>`;
+          }
+        }
+      }
+
+      // Z-curve path: connect cells in morton order, only visited part + lead to current
+      const drawCount = Math.min(curStep, mortonSeq.length);
+      if (drawCount >= 2) {
+        let path = '';
+        for (let k = 0; k < drawCount; k++) {
+          const { i, j } = mortonSeq[k];
+          const cx = pad + j * cell + cell/2;
+          const cy = pad + i * cell + cell/2;
+          path += (k === 0 ? `M ${cx} ${cy}` : ` L ${cx} ${cy}`);
+        }
+        content += `<path d="${path}" stroke="#1a1a1a" stroke-width="1.5" fill="none" stroke-linejoin="round" stroke-linecap="round" opacity="0.7"/>`;
+      }
+
+      // Quadrant boundaries (top-level split only, for clarity)
+      const half = N * cell / 2;
+      content += `<line x1="${pad + half}" y1="${pad}" x2="${pad + half}" y2="${pad + N * cell}" stroke="#1a1a1a" stroke-width="1.5" stroke-dasharray="4,3" opacity="0.4"/>`;
+      content += `<line x1="${pad}" y1="${pad + half}" x2="${pad + N * cell}" y2="${pad + half}" stroke="#1a1a1a" stroke-width="1.5" stroke-dasharray="4,3" opacity="0.4"/>`;
+
+      content += `<rect x="${pad}" y="${pad}" width="${N * cell}" height="${N * cell}" fill="none" stroke="#1a1a1a" stroke-width="1.2"/>`;
+
+      svg.innerHTML = content;
+    }
+
+    function renderMemory() {
+      const total = N * N;
+      const cols = Math.min(total, 16);
+      memBar.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      memBar.innerHTML = '';
+      for (let k = 0; k < total; k++) {
+        const cell = document.createElement('div');
+        cell.className = 'zorder-mem-cell';
+        const { i, j, q } = mortonSeq[k];
+        if (k < curStep) {
+          cell.classList.add('q-' + q);
+          cell.textContent = N <= 8 ? `${i},${j}` : '';
+        } else {
+          cell.classList.add('unvisited');
+          cell.textContent = '';
+        }
+        if (k === curStep - 1) cell.classList.add('active');
+        memBar.appendChild(cell);
+      }
+    }
+
+    function updateInfo() {
+      if (curStep === 0) {
+        info.innerHTML = `Sin pasos. Pulsa <strong>play</strong>. Las líneas punteadas marcan los 4 cuadrantes del split superior.`;
+      } else {
+        const last = mortonSeq[curStep - 1];
+        const qNames = ['TL', 'TR', 'BL', 'BR'];
+        info.innerHTML = `Paso ${curStep}: $(i,j) = (${last.i}, ${last.j})$ → A_morton[<strong>${last.code}</strong>] · cuadrante <strong>${qNames[last.q]}</strong> = ${last.q}`;
+        if (typeof renderMathInElement !== 'undefined') {
+          renderMathInElement(info, { delimiters: [{left: "$", right: "$", display: false}], throwOnError: false });
+        }
+      }
+    }
+
+    function render() {
+      counter.innerHTML = `<strong>${curStep} / ${N * N}</strong>`;
+      dimLabel.textContent = `${N}×${N}`;
+      renderGrid();
+      renderMemory();
+      updateInfo();
+    }
+
+    function setSize(n) {
+      N = n;
+      mortonSeq = buildSeq(N);
+      curStep = 0;
+      render();
+    }
+
+    function doStep() {
+      if (curStep >= mortonSeq.length) {
+        if (playInt) { clearInterval(playInt); playInt = null; playBtn.disabled = false; pauseBtn.disabled = true; }
+        return;
+      }
+      curStep++;
+      render();
+    }
+
+    sizeSel.querySelectorAll('.zorder-size-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        if (playInt) { clearInterval(playInt); playInt = null; playBtn.disabled = false; pauseBtn.disabled = true; }
+        sizeSel.querySelectorAll('.zorder-size-btn').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        setSize(parseInt(b.dataset.size));
+      });
+    });
+
+    playBtn.addEventListener('click', () => {
+      playBtn.disabled = true; pauseBtn.disabled = false;
+      const speed = N >= 16 ? 80 : N >= 8 ? 180 : 350;
+      playInt = setInterval(doStep, speed);
+    });
+    pauseBtn.addEventListener('click', () => {
+      if (playInt) { clearInterval(playInt); playInt = null; }
+      playBtn.disabled = false; pauseBtn.disabled = true;
+    });
+    stepBtn.addEventListener('click', () => {
+      if (playInt) { clearInterval(playInt); playInt = null; playBtn.disabled = false; pauseBtn.disabled = true; }
+      doStep();
+    });
+    endBtn.addEventListener('click', () => {
+      if (playInt) { clearInterval(playInt); playInt = null; playBtn.disabled = false; pauseBtn.disabled = true; }
+      curStep = mortonSeq.length; render();
+    });
+    resetBtn.addEventListener('click', () => {
+      if (playInt) { clearInterval(playInt); playInt = null; playBtn.disabled = false; pauseBtn.disabled = true; }
+      curStep = 0; render();
+    });
+
+    setSize(8);
+  })();
+
+  // --- 4e. SLIDE 08: MORTON-DE-BLOQUES -----------------------------------
+  (function() {
+    const elemSVG = document.getElementById('mblk-grid-elem');
+    if (!elemSVG) return;
+    const blockSVG = document.getElementById('mblk-grid-block');
+    const memElem = document.getElementById('mblk-mem-elem');
+    const memBlock = document.getElementById('mblk-mem-block');
+    const rowSel = document.getElementById('mblk-row-selector');
+    const rowDisplays = document.querySelectorAll('.mblk-row-display');
+    const strideElem = document.getElementById('mblk-stride-elem');
+
+    const N = 8;
+    const MR = 4; // tile size
+    let activeRow = 0;
+
+    function mortonEnc(i, j) {
+      let code = 0;
+      for (let k = 0; k < 4; k++) {
+        code |= ((j >> k) & 1) << (2 * k);
+        code |= ((i >> k) & 1) << (2 * k + 1);
+      }
+      return code;
+    }
+
+    // For element-morton: code(i,j) gives memory position
+    function elemPos(i, j) { return mortonEnc(i, j); }
+
+    // For block-morton: tile coord (i/MR, j/MR) gives tile rank in Z-order,
+    // then row-major within tile.
+    function blockPos(i, j) {
+      const ti = Math.floor(i / MR), tj = Math.floor(j / MR);
+      const tileCode = mortonEnc(ti, tj);
+      const localI = i % MR, localJ = j % MR;
+      return tileCode * (MR * MR) + localI * MR + localJ;
+    }
+
+    function topQuadrant(i, j) {
+      const h = N / 2;
+      return (i < h ? 0 : 2) + (j < h ? 0 : 1);
+    }
+
+    function renderMatrixSVG(svg, posFn) {
+      const W = 360;
+      const pad = 14;
+      const cell = (W - 2 * pad) / N;
+      const qColors = ['rgba(231,76,60,0.35)', 'rgba(52,152,219,0.35)', 'rgba(46,204,113,0.35)', 'rgba(243,156,18,0.35)'];
+      const qColorsActive = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12'];
+
+      let content = '';
+      for (let i = 0; i < N; i++) {
+        for (let j = 0; j < N; j++) {
+          const x = pad + j * cell;
+          const y = pad + i * cell;
+          const q = topQuadrant(i, j);
+          const isActive = i === activeRow;
+          const fill = isActive ? qColorsActive[q] : qColors[q];
+          const opacity = isActive ? 0.9 : 1;
+          content += `<rect x="${x}" y="${y}" width="${cell}" height="${cell}" fill="${fill}" fill-opacity="${opacity}" stroke="#ddd" stroke-width="0.5"/>`;
+          const pos = posFn(i, j);
+          const txtCol = isActive ? 'white' : 'rgba(0,0,0,0.55)';
+          content += `<text x="${x + cell/2}" y="${y + cell/2 + 3}" font-family="JetBrains Mono" font-size="9" font-weight="${isActive ? 700 : 500}" fill="${txtCol}" text-anchor="middle">${pos}</text>`;
+        }
+      }
+
+      // Tile boundaries (only for the block svg)
+      if (posFn === blockPos) {
+        // Draw 4x4 tile borders
+        for (let t = 0; t <= N; t += MR) {
+          const v = pad + t * cell;
+          content += `<line x1="${v}" y1="${pad}" x2="${v}" y2="${pad + N * cell}" stroke="#1a1a1a" stroke-width="1.5" opacity="0.7"/>`;
+          content += `<line x1="${pad}" y1="${v}" x2="${pad + N * cell}" y2="${v}" stroke="#1a1a1a" stroke-width="1.5" opacity="0.7"/>`;
+        }
+      } else {
+        // Outer border only
+        content += `<rect x="${pad}" y="${pad}" width="${N * cell}" height="${N * cell}" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>`;
+      }
+
+      // Highlight the active row path within the matrix
+      const cy = pad + activeRow * cell + cell / 2;
+      content += `<line x1="${pad}" y1="${cy}" x2="${pad + N * cell}" y2="${cy}" stroke="#1a1a1a" stroke-width="2" opacity="0.4" stroke-dasharray="2,2"/>`;
+
+      svg.innerHTML = content;
+    }
+
+    function renderMemoryBar(container, posFn) {
+      const total = N * N;
+      // Build memory: for each position in memory, find which (i,j) is there
+      const memory = new Array(total);
+      for (let i = 0; i < N; i++)
+        for (let j = 0; j < N; j++) {
+          memory[posFn(i, j)] = { i, j };
+        }
+
+      container.innerHTML = '';
+      // 64 elements over 16 cols = 4 rows
+      memory.forEach((cellInfo, p) => {
+        const div = document.createElement('div');
+        div.className = 'mblk-mem-cell';
+        const q = topQuadrant(cellInfo.i, cellInfo.j);
+        const qColors = ['rgba(231,76,60,0.35)', 'rgba(52,152,219,0.35)', 'rgba(46,204,113,0.35)', 'rgba(243,156,18,0.35)'];
+        const qColorsActive = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12'];
+        const isActive = cellInfo.i === activeRow;
+        div.style.background = isActive ? qColorsActive[q] : qColors[q];
+        if (isActive) {
+          div.style.color = 'white';
+          div.style.fontWeight = '700';
+          div.classList.add('active');
+        }
+        div.textContent = `${cellInfo.i},${cellInfo.j}`;
+        container.appendChild(div);
+      });
+    }
+
+    function render() {
+      rowDisplays.forEach(d => d.textContent = activeRow);
+      renderMatrixSVG(elemSVG, elemPos);
+      renderMatrixSVG(blockSVG, blockPos);
+      renderMemoryBar(memElem, elemPos);
+      renderMemoryBar(memBlock, blockPos);
+    }
+
+    rowSel.querySelectorAll('.zorder-size-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        rowSel.querySelectorAll('.zorder-size-btn').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        activeRow = parseInt(b.dataset.row);
+        render();
+      });
+    });
+
+    render();
+  })();
+
+  // --- 4f. SLIDE 09: MICROKERNEL AVX2 4×16 -------------------------------
+  (function() {
+    const grid = document.getElementById('avx4-acc-grid');
+    if (!grid) return;
+    const slide = grid.closest('.slide');
+    const rowBtns = slide.querySelectorAll('.avx-row-btn');
+    const ymmCs = slide.querySelectorAll('.avx-ymm-c');
+    const broadcastRows = slide.querySelectorAll('.avx4-broadcast-row');
+    const fmaCount = document.getElementById('avx4-fma-count');
+    const infoI = document.getElementById('avx4-info-i');
+    const playBtn = document.getElementById('avx4-play');
+    const stepBtn = document.getElementById('avx4-step');
+    const resetBtn = document.getElementById('avx4-reset');
+
+    let curRow = 0;
+    let interval = null;
+
+    function setRow(i) {
+      curRow = i;
+      rowBtns.forEach(b => b.classList.toggle('active', parseInt(b.dataset.row) === i));
+      infoI.textContent = i;
+      fmaCount.textContent = (i + 1) * 2;
+
+      ymmCs.forEach(yc => {
+        const r = parseInt(yc.dataset.row);
+        yc.classList.remove('active', 'dim');
+        if (r === i) { void yc.offsetWidth; yc.classList.add('active'); }
+        else yc.classList.add('dim');
+      });
+
+      broadcastRows.forEach(br => {
+        const r = parseInt(br.dataset.row);
+        br.classList.remove('active', 'dim');
+        if (r === i) br.classList.add('active');
+        else if (r < i) br.classList.add('dim');
+      });
+    }
+
+    rowBtns.forEach(b => b.addEventListener('click', () => {
+      if (interval) { clearInterval(interval); interval = null; playBtn.disabled = false; }
+      setRow(parseInt(b.dataset.row));
+    }));
+
+    stepBtn.addEventListener('click', () => {
+      if (interval) { clearInterval(interval); interval = null; playBtn.disabled = false; }
+      setRow((curRow + 1) % 4);
+    });
+
+    playBtn.addEventListener('click', () => {
+      if (interval) return;
+      playBtn.disabled = true;
+      interval = setInterval(() => {
+        const next = (curRow + 1) % 4;
+        setRow(next);
+        if (next === 3) {
+          clearInterval(interval); interval = null;
+          setTimeout(() => { playBtn.disabled = false; }, 900);
+        }
+      }, 900);
+    });
+
+    resetBtn.addEventListener('click', () => {
+      if (interval) { clearInterval(interval); interval = null; playBtn.disabled = false; }
+      setRow(0);
+    });
+
+    setRow(0);
+  })();
+
+  // --- 5. RENDERIZADO DE LIBRERIAS EXTERNAS (KaTeX + HLJS) ---
+  if(typeof renderMathInElement !== 'undefined') {
+    renderMathInElement(document.body, { delimiters: [{left: "$$", right: "$$", display: true}, {left: "$", right: "$", display: false}], throwOnError: false });
+  }
+  if(typeof hljs !== 'undefined') {
+    document.querySelectorAll('pre code').forEach((el)=> hljs.highlightElement(el));
+  }
+});
+</script>
+</body>
+</html>

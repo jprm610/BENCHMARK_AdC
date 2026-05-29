@@ -1,7 +1,6 @@
 # --- C build artifacts ---
 bin/
 build/
-results/
 *.o
 *.a
 *.so
@@ -15,11 +14,7 @@ perf.data.old
 callgrind.out.*
 cachegrind.out.*
 
-# Measurement and plot outputs (regenerated; tracked separately if needed)
-results/*.csv
-results/*.txt
-plots/*.png
-plots/*.pdf
+# Note: results/ and plots/ are tracked in this repo as final deliverables.
 
 # --- Editor / OS ---
 .vscode/

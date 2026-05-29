@@ -1,0 +1,2 @@
+INFO bench_tiled_ikj_omp: m=512 n=128 I_meas=1 runs=1 bs=384 threads_max=6
+INFO bench_tiled_ikj_omp: m=512 n=128 I_meas=1 runs=1 bs=384 threads_max=6
